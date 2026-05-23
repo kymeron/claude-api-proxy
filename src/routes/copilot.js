@@ -28,18 +28,6 @@ import {
 } from '../utils/token-estimation.js';
 import {aggregateStreamResponse} from '../services/codebuddy/api.js';
 import logger from '../utils/logger.js';
-import {appendFileSync, mkdirSync, existsSync} from 'fs';
-import {join} from 'path';
-
-const CACHE_DEBUG_FILE = join(process.cwd(), '.copilot', 'cache_debug.jsonl');
-
-function logCacheDebug(entry) {
-    try {
-        const dir = join(process.cwd(), '.copilot');
-        if (!existsSync(dir)) mkdirSync(dir, {recursive: true});
-        appendFileSync(CACHE_DEBUG_FILE, JSON.stringify({ts: new Date().toISOString(), ...entry}) + '\n');
-    } catch {}
-}
 
 /* ==================== 工具函数 ==================== */
 
@@ -199,7 +187,6 @@ async function handleOpenAIChatCompletions(req, res) {
                             streamInputTokens = data.usage.prompt_tokens || 0;
                             streamOutputTokens = data.usage.completion_tokens || 0;
                             streamCacheHitTokens = extractCacheHitTokens(data.usage);
-                            logCacheDebug({mode: 'openai_stream', model: data.model, usage: data.usage});
                         }
                     } catch {}
                 }
@@ -244,9 +231,6 @@ async function handleOpenAIChatCompletions(req, res) {
             const inputTokens = parsed.usage?.prompt_tokens || 0;
             const outputTokens = parsed.usage?.completion_tokens || 0;
             const cacheHitTokens = extractCacheHitTokens(parsed.usage);
-            if (parsed.usage) {
-                logCacheDebug({mode: 'openai_nonstream', model: parsed.model, usage: parsed.usage});
-            }
             copilotStore.incrementApiCallCount();
             if (inputTokens > 0 || outputTokens > 0) {
                 copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
@@ -366,7 +350,6 @@ async function handleAnthropicMessages(req, res) {
                                 streamInputTokens = openAIChunk.usage.prompt_tokens || streamInputTokens;
                                 streamOutputTokens = openAIChunk.usage.completion_tokens || streamOutputTokens;
                                 streamCacheHitTokens = extractCacheHitTokens(openAIChunk.usage) || streamCacheHitTokens;
-                                logCacheDebug({mode: 'anthropic_stream', model: openAIChunk.model, usage: openAIChunk.usage});
                             }
 
                             for (const event of anthropicEvents) {
@@ -439,9 +422,6 @@ async function handleAnthropicMessages(req, res) {
             const inputTokens = openAIResponse.usage?.prompt_tokens || 0;
             const outputTokens = openAIResponse.usage?.completion_tokens || 0;
             const cacheHitTokens = extractCacheHitTokens(openAIResponse.usage);
-            if (openAIResponse.usage) {
-                logCacheDebug({mode: 'anthropic_nonstream', model: openAIResponse.model, usage: openAIResponse.usage});
-            }
             copilotStore.incrementApiCallCount();
             if (inputTokens > 0 || outputTokens > 0) {
                 copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
@@ -611,7 +591,6 @@ async function handleResponsesAPI(req, res) {
                         streamInputTokens = data.usage.prompt_tokens || 0;
                         streamOutputTokens = data.usage.completion_tokens || 0;
                         streamCacheHitTokens = extractCacheHitTokens(data.usage);
-                        logCacheDebug({mode: 'responses_stream', model: data.model, usage: data.usage});
                     }
                     if (data.model) streamModel = data.model;
 
@@ -653,9 +632,6 @@ async function handleResponsesAPI(req, res) {
             const inputTokens = chatResponse.usage?.prompt_tokens || 0;
             const outputTokens = chatResponse.usage?.completion_tokens || 0;
             const cacheHitTokens = extractCacheHitTokens(chatResponse.usage);
-            if (chatResponse.usage) {
-                logCacheDebug({mode: 'responses_nonstream', model: chatResponse.model, usage: chatResponse.usage});
-            }
             copilotStore.incrementApiCallCount();
             copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
             copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
