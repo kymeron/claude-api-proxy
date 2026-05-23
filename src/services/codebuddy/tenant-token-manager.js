@@ -7,7 +7,7 @@
 import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync} from 'fs';
 import {join, basename} from 'path';
 import logger from '../../utils/logger.js';
-import {DEFAULT_BASE_URL} from './config.js';
+import {DEFAULT_BASE_URL, getCodebuddyBaseUrl, BLOCKED_DOMAINS} from './config.js';
 
 class TenantTokenManager {
     /**
@@ -28,10 +28,18 @@ class TenantTokenManager {
         this.rotationCount = options.rotationCount ?? 1;
         this.disabledIndexes = [];
 
+        // 会话亲和性：conversationId → { index, lastAccess }
+        // 同一会话始终使用同一凭证，避免凭证切换导致上游缓存 miss
+        this.sessionAffinity = new Map();
+
         this.ensureDirExists();
         this.loadAllTokens();
         this.loadState();
+        this.disableBlockedDomainCredentials();
     }
+
+    /** 会话亲和映射过期时间（30分钟无活动自动清理） */
+    static SESSION_AFFINITY_TTL = 30 * 60 * 1000;
 
     /**
      * 确保凭证目录存在
@@ -157,6 +165,39 @@ class TenantTokenManager {
     }
 
     /**
+     * 自动禁用包含已废弃域名的凭证，并切换到下一个可用凭证
+     */
+    disableBlockedDomainCredentials() {
+        if (BLOCKED_DOMAINS.length === 0 || this.credentials.length === 0) return;
+
+        let changed = false;
+        for (let i = 0; i < this.credentials.length; i++) {
+            const baseUrl = getCodebuddyBaseUrl(this.credentials[i].data.base_url);
+            try {
+                const host = new URL(baseUrl).host;
+                if (BLOCKED_DOMAINS.includes(host) && !this.disabledIndexes.includes(i)) {
+                    this.disabledIndexes.push(i);
+                    logger.debug(`Auto-disabled credential #${i} (blocked domain: ${host}): ${basename(this.credentials[i].filePath)}`);
+                    changed = true;
+                }
+            } catch {
+                // 忽略无效 URL
+            }
+        }
+
+        if (changed) {
+            // 当前凭证被禁用时，切换到下一个可用凭证
+            if (this.disabledIndexes.includes(this.currentIndex)) {
+                const nextAvailable = this.credentials.findIndex(
+                    (_, i) => !this.disabledIndexes.includes(i) && !this.isTokenExpired(this.credentials[i].data)
+                );
+                this.currentIndex = nextAvailable >= 0 ? nextAvailable : 0;
+            }
+            this.saveState();
+        }
+    }
+
+    /**
      * 检查 token 是否过期
      * @param {Object} credentialData
      * @returns {boolean}
@@ -185,11 +226,32 @@ class TenantTokenManager {
 
     /**
      * 获取下一个可用的凭证
+     * 支持会话亲和性：传入 conversationId 时，同一会话始终返回同一凭证
+     * @param {string} [conversationId] - 会话 ID，用于凭证亲和性
      * @returns {Object|null}
      */
-    getNextCredential() {
+    getNextCredential(conversationId) {
         if (this.credentials.length === 0) {
             return null;
+        }
+
+        // 惰性清理过期的会话亲和映射
+        this._cleanupSessionAffinity();
+
+        // 会话亲和性：同一会话优先使用上次分配的凭证
+        if (conversationId) {
+            const affinity = this.sessionAffinity.get(conversationId);
+            if (affinity) {
+                const cred = this.credentials[affinity.index];
+                if (cred && !this.disabledIndexes.includes(affinity.index) && !this.isTokenExpired(cred.data)) {
+                    affinity.lastAccess = Date.now();
+                    logger.debug(`Session affinity hit: conversationId=${conversationId}, credential index=${affinity.index}`);
+                    return cred.data;
+                }
+                // 凭证已失效，清除亲和映射，下面重新分配
+                this.sessionAffinity.delete(conversationId);
+                logger.debug(`Session affinity expired: conversationId=${conversationId}, credential index=${affinity.index}`);
+            }
         }
 
         const validCredentials = [];
@@ -242,6 +304,9 @@ class TenantTokenManager {
         if (!shouldRotate) {
             const credential = this.credentials[this.currentIndex];
             logger.debug(`Using fixed credential: ${basename(credential.filePath)}`);
+            if (conversationId) {
+                this.sessionAffinity.set(conversationId, {index: this.currentIndex, lastAccess: Date.now()});
+            }
             return credential.data;
         }
 
@@ -255,7 +320,24 @@ class TenantTokenManager {
         const credential = this.credentials[this.currentIndex];
         this.usageCount++;
 
+        if (conversationId) {
+            this.sessionAffinity.set(conversationId, {index: this.currentIndex, lastAccess: Date.now()});
+        }
         return credential.data;
+    }
+
+    /**
+     * 惰性清理过期的会话亲和映射
+     * 在每次 getNextCredential 时顺便执行，不依赖定时器
+     */
+    _cleanupSessionAffinity() {
+        if (this.sessionAffinity.size === 0) return;
+        const now = Date.now();
+        for (const [convId, affinity] of this.sessionAffinity) {
+            if (now - affinity.lastAccess > TenantTokenManager.SESSION_AFFINITY_TTL) {
+                this.sessionAffinity.delete(convId);
+            }
+        }
     }
 
     /**
@@ -279,6 +361,7 @@ class TenantTokenManager {
                     writeFileSync(existing.filePath, JSON.stringify(credentialData, null, 4), 'utf8');
                     logger.debug(`Updated existing credential for user: ${userId}`);
                     this.loadAllTokens();
+                    this.autoSelectByUserId(userId);
                     return true;
                 } catch (error) {
                     logger.error(`Failed to update credential: ${error.message}`);
@@ -306,10 +389,23 @@ class TenantTokenManager {
             writeFileSync(filePath, JSON.stringify(credentialData, null, 4), 'utf8');
             logger.debug(`Added new tenant credential: ${filename}`);
             this.loadAllTokens();
+            this.autoSelectByUserId(userId);
             return true;
         } catch (error) {
             logger.error(`Failed to save credential: ${error.message}`);
             return false;
+        }
+    }
+
+    /**
+     * 根据 user_id 自动将凭证设为活跃
+     * @param {string} userId
+     */
+    autoSelectByUserId(userId) {
+        if (!userId) return;
+        const idx = this.credentials.findIndex(c => c.data.user_id === userId);
+        if (idx >= 0) {
+            this.setManualCredential(idx);
         }
     }
 
@@ -498,12 +594,20 @@ class TenantTokenManager {
                 timeRemainingStr,
                 isExpired,
                 isDisabled: this.disabledIndexes.includes(index),
+                isDomainBlocked: (() => {
+                    try {
+                        return BLOCKED_DOMAINS.includes(new URL(getCodebuddyBaseUrl(data.base_url)).host);
+                    } catch {
+                        return false;
+                    }
+                })(),
                 tokenType: data.token_type || 'Bearer',
                 scope: data.scope,
                 domain: data.domain,
                 hasRefreshToken: !!data.refresh_token,
-                baseUrl: data.base_url || DEFAULT_BASE_URL,
+                baseUrl: getCodebuddyBaseUrl(data.base_url),
                 enterpriseId: data.enterprise_id || '',
+                enterpriseName: data.enterprise_name || '',
                 departmentInfo: data.department_info || ''
             };
         });

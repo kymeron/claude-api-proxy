@@ -40,10 +40,6 @@
                 align-items: center;
                 gap: 16px;
             }
-            .header-right span {
-                font-size: 0.9rem;
-                opacity: 0.9;
-            }
             .card {
                 background: white;
                 border-radius: 12px;
@@ -316,12 +312,12 @@
                 position: absolute;
                 top: 8px;
                 right: 8px;
-                background: rgba(255,255,255,0.1);
+                background: rgba(255, 255, 255, 0.1);
                 color: #e2e8f0;
                 border: none;
             }
             .guide-copy-btn:hover {
-                background: rgba(255,255,255,0.2);
+                background: rgba(255, 255, 255, 0.2);
             }
 
             /* 上游管理样式 */
@@ -489,7 +485,7 @@
                 display: inline-block;
                 width: 14px;
                 height: 14px;
-                border: 2px solid rgba(255,255,255,0.3);
+                border: 2px solid rgba(255, 255, 255, 0.3);
                 border-top: 2px solid white;
                 border-radius: 50%;
                 animation: spin 0.8s linear infinite;
@@ -527,21 +523,39 @@
                     <input type="text" id="upstreamBaseUrl" placeholder="https://api.deepseek.com" />
                 </div>
                 <div class="form-group">
+                    <label for="upstreamProtocol">上游协议</label>
+                    <select id="upstreamProtocol" style="width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 0.9rem;">
+                        <option value="openai">OpenAI Chat Completions</option>
+                        <option value="responses">OpenAI Responses API</option>
+                        <option value="anthropic">Anthropic Messages API</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label for="upstreamApiKey">API Key</label>
                     <input type="password" id="upstreamApiKey" placeholder="sk-xxx..." />
                 </div>
                 <div class="form-group">
                     <label for="upstreamProxy">代理地址（可选）</label>
-                    <input type="text" id="upstreamProxy" placeholder="http://127.0.0.1:7890" />
+                    <input type="text" id="upstreamProxy" />
                 </div>
                 <div class="form-group">
                     <label>模型映射 (model_map)</label>
-                    <p style="font-size:0.78rem;color:#9ca3af;margin-bottom:6px">每行一个映射: 客户端模型名=上游实际模型名，如 claude-sonnet-4-6=glm-5.1</p>
-                    <textarea id="upstreamModelMap" rows="3" style="width:100%;padding:10px 14px;border:1px solid #d1d5db;border-radius:8px;font-size:0.85rem;font-family:monospace;resize:vertical" placeholder="claude-sonnet-4-6=glm-5.1&#10;claude-opus-4-7=glm-5.1&#10;claude-haiku-4-6=glm-4.7"></textarea>
-                </div>
-                <div class="form-group" style="display:flex;align-items:center;gap:8px">
-                    <input type="checkbox" id="upstreamModelAuto" style="width:16px;height:16px" />
-                    <label for="upstreamModelAuto" style="margin:0;font-size:0.9rem">model_auto 兜底模式（未匹配的模型名自动使用 model_map 中的第一个映射模型）</label>
+                    <p style="font-size: 0.78rem; color: #9ca3af; margin-bottom: 6px">
+                        每行一个映射: 客户端模型名=上游实际模型名，如 sonnet=glm-5.1
+                    </p>
+                    <textarea
+                        id="upstreamModelMap"
+                        rows="3"
+                        style="
+                            width: 100%;
+                            padding: 10px 14px;
+                            border: 1px solid #d1d5db;
+                            border-radius: 8px;
+                            font-size: 0.85rem;
+                            font-family: monospace;
+                            resize: vertical;
+                        "
+                        placeholder="sonnet=glm-5.1&#10;opus=glm-5.1&#10;haiku=glm-4.7"></textarea>
                 </div>
                 <div class="modal-actions">
                     <button class="btn btn-secondary" onclick="closeUpstreamModal()">取消</button>
@@ -666,20 +680,23 @@
                 const apiCallsData = [];
                 const inputTokensData = [];
                 const outputTokensData = [];
+                const cacheHitTokensData = [];
 
                 for (let d = 1; d <= daysInMonth; d++) {
                     const dayKey = String(d).padStart(2, '0');
-                    const dayData = dailyData[dayKey] || {api_calls: 0, input_tokens: 0, output_tokens: 0};
+                    const dayData = dailyData[dayKey] || {api_calls: 0, input_tokens: 0, output_tokens: 0, cache_hit_tokens: 0};
                     dates.push(d);
                     apiCallsData.push(dayData.api_calls);
                     inputTokensData.push(dayData.input_tokens);
                     outputTokensData.push(dayData.output_tokens);
+                    cacheHitTokensData.push(dayData.cache_hit_tokens || 0);
                 }
 
                 // 按月份聚合更新统计卡片
                 const totalApiCalls = apiCallsData.reduce((s, v) => s + v, 0);
                 const totalInputTokens = inputTokensData.reduce((s, v) => s + v, 0);
                 const totalOutputTokens = outputTokensData.reduce((s, v) => s + v, 0);
+                const totalCacheHitTokens = cacheHitTokensData.reduce((s, v) => s + v, 0);
                 const callEl = document.getElementById('apiCallCount');
                 if (callEl) {
                     callEl.textContent = formatStat(totalApiCalls);
@@ -694,6 +711,17 @@
                 if (outEl) {
                     outEl.textContent = formatStat(totalOutputTokens);
                     outEl.title = new Intl.NumberFormat('zh-CN').format(totalOutputTokens);
+                }
+                const cacheHitEl = document.getElementById('cacheHitTokensCount');
+                if (cacheHitEl) {
+                    cacheHitEl.textContent = formatStat(totalCacheHitTokens);
+                    cacheHitEl.title = new Intl.NumberFormat('zh-CN').format(totalCacheHitTokens);
+                }
+                const cacheRateEl = document.getElementById('cacheHitRate');
+                if (cacheRateEl) {
+                    const cacheRate = totalInputTokens > 0 ? Math.round(totalCacheHitTokens / totalInputTokens * 100) : 0;
+                    cacheRateEl.textContent = cacheRate + '%';
+                    cacheRateEl.title = cacheRate + '%';
                 }
 
                 // 折线图 - API请求次数
@@ -733,7 +761,7 @@
                     );
                 }
 
-                // 柱状图 - Tokens
+                // 柱状图 - Tokens（堆叠：缓存命中/未命中/输出）
                 const tokensEl = document.getElementById('tokensChart');
                 if (tokensEl) {
                     if (!tokensChartInstance) {
@@ -747,31 +775,40 @@
                                 extraCssText: 'min-width: 300px',
                                 formatter: function (params) {
                                     const day = String(params[0].dataIndex + 1).padStart(2, '0');
-                                    const total = params.reduce((s, p) => s + p.value, 0);
-                                    let tip = `<div style="display:flex;justify-content:space-between"><b>${monthKey}-${day}</b><b>${formatNumber(total)} tokens</b></div>`;
-                                    const barColors = ['#93b5f6', '#3b5998'];
+                                    const barColors = ['#a0dcfd', '#60b3fe', '#0c70f3'];
+                                    const totalAll = params.reduce((s, p) => s + p.value, 0);
+                                    let tip = `<div style="display:flex;justify-content:space-between"><b>${monthKey}-${day}</b><b>${formatNumber(totalAll)} tokens</b></div>`;
                                     params.forEach((p, i) => {
-                                        tip += `<div style="display:flex;justify-content:space-between;align-items:center; color: '#666'"><span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${barColors[i]};margin-right:4px;vertical-align:middle"></span>${p.seriesName}</span><span>${formatNumber(p.value)} tokens</span></div>`;
+                                        tip += `<div style="display:flex;justify-content:space-between;align-items:center"><span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${barColors[i]};margin-right:4px;vertical-align:middle"></span>${p.seriesName}</span><span>${formatNumber(p.value)} tokens</span></div>`;
                                     });
                                     return tip;
                                 }
                             },
-                            legend: {data: ['输入', '输出'], top: '30px', right: '0', textStyle: {fontSize: 12}},
+                            legend: {data: ['输入(命中缓存)', '输入(未命中缓存)', '输出'], top: '30px', right: '0', textStyle: {fontSize: 12}},
                             grid: {left: '80px', right: '30px', top: '70px', bottom: '30px'},
                             xAxis: {type: 'category', data: dates, name: '日', axisLabel: {fontSize: 11}},
                             yAxis: {type: 'value', name: 'Tokens', axisLabel: {fontSize: 11}, splitNumber: 1},
                             series: [
                                 {
-                                    name: '输入',
+                                    name: '输入(命中缓存)',
                                     type: 'bar',
-                                    data: inputTokensData,
-                                    itemStyle: {color: '#93b5f6'}
+                                    stack: 'total',
+                                    data: cacheHitTokensData,
+                                    itemStyle: {color: '#a0dcfd'}
+                                },
+                                {
+                                    name: '输入(未命中缓存)',
+                                    type: 'bar',
+                                    stack: 'total',
+                                    data: inputTokensData.map((v, i) => v - (cacheHitTokensData[i] || 0)),
+                                    itemStyle: {color: '#60b3fe'}
                                 },
                                 {
                                     name: '输出',
                                     type: 'bar',
+                                    stack: 'total',
                                     data: outputTokensData,
-                                    itemStyle: {color: '#3b5998'}
+                                    itemStyle: {color: '#0c70f3'}
                                 }
                             ]
                         },
@@ -826,6 +863,19 @@
                         cOutEl.textContent = formatStat(data.custom_output_tokens || 0);
                         cOutEl.title = new Intl.NumberFormat('zh-CN').format(data.custom_output_tokens || 0);
                     }
+                    const cCacheHitEl = document.getElementById('customCacheHitTokensCount');
+                    if (cCacheHitEl) {
+                        cCacheHitEl.textContent = formatStat(data.custom_cache_hit_tokens || 0);
+                        cCacheHitEl.title = new Intl.NumberFormat('zh-CN').format(data.custom_cache_hit_tokens || 0);
+                    }
+                    const cCacheRateEl = document.getElementById('customCacheHitRate');
+                    if (cCacheRateEl) {
+                        const cacheRate = (data.custom_input_tokens || 0) > 0
+                            ? Math.round((data.custom_cache_hit_tokens || 0) / data.custom_input_tokens * 100)
+                            : 0;
+                        cCacheRateEl.textContent = cacheRate + '%';
+                        cCacheRateEl.title = cacheRate + '%';
+                    }
                 } catch {}
             }
 
@@ -846,14 +896,6 @@
                     <h2>上游配置管理
                         <button class="btn btn-primary btn-small" onclick="openAddUpstreamModal()" style="margin-left: auto;">+ 添加上游</button>
                     </h2>
-                    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;font-size:0.85rem;color:#6b7280;flex-wrap:wrap">
-                        <span style="font-weight:500;color:#374151">重试策略:</span>
-                        <span>单上游重试</span>
-                        <input type="number" id="retryCount" min="1" max="3" step="1" style="width:50px;padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem" />
-                        <span>次</span>
-                        <button class="btn btn-secondary btn-small" onclick="saveRetryConfig()">保存</button>
-                        <span id="retryConfigStatus" style="font-size:0.78rem;color:#9ca3af"></span>
-                    </div>
                     <div id="upstreamsList">
                         <div class="empty-state"><p>加载中...</p></div>
                     </div>
@@ -878,14 +920,14 @@
                             <div class="guide-step-num">1</div>
                             <div class="guide-step-body">
                                 <div class="guide-step-title">添加上游配置</div>
-                                <div class="guide-step-desc">点击上方「+ 添加上游」，填写上游的 Base URL（openAI兼容）、API Key，以及模型映射（如 <code>claude-sonnet-4-6=your-upstream-model</code>）</div>
+                                <div class="guide-step-desc">点击上方「+ 添加上游」，先选择上游协议类型（OpenAI Chat、Responses API 或 Anthropic Messages），再填写 Base URL、API Key，以及模型映射（如 <code>sonnet=your-upstream-model</code>）</div>
                             </div>
                         </div>
                         <div class="guide-step">
                             <div class="guide-step-num">2</div>
                             <div class="guide-step-body">
                                 <div class="guide-step-title">兼容 Anthropic 接口协议工具</div>
-                                <div class="guide-step-desc">如 Claude Code、Claude Desktop 等，编辑 <code>~/.claude/settings.json</code> ：</div>
+                                <div class="guide-step-desc">如 Claude Code、Claude Desktop 等，编辑 <code>~/.claude/settings.json</code>：</div>
                                 <div class="guide-code-block">
                                     <button class="btn-icon guide-copy-btn" onclick="copyGuideConfig()" title="复制">📋</button>
                                     <pre id="guideConfigCode"></pre>
@@ -902,6 +944,18 @@
                                     <pre id="guideOpenAIUrl"></pre>
                                 </div>
                                 <div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key</div>
+                            </div>
+                        </div>
+                        <div class="guide-step">
+                            <div class="guide-step-num">4</div>
+                            <div class="guide-step-body">
+                                <div class="guide-step-title">兼容 OpenAI Responses API 工具</div>
+                                <div class="guide-step-desc">如 Cherry Studio 等，将 Base URL 设置为：</div>
+                                <div class="guide-code-block">
+                                    <button class="btn-icon guide-copy-btn" onclick="copyGuideResponsesUrl()" title="复制">📋</button>
+                                    <pre id="guideResponsesUrl"></pre>
+                                </div>
+                                <div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key，需在工具中选择 <code>Responses API</code> 模式</div>
                             </div>
                         </div>
                     </div>
@@ -928,6 +982,14 @@
                             <div class="stat-value" id="outputTokensCount" title="0">0</div>
                             <div class="stat-label">输出 Tokens</div>
                         </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="cacheHitTokensCount" title="0">0</div>
+                            <div class="stat-label">缓存命中 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="cacheHitRate" title="0">0%</div>
+                            <div class="stat-label">缓存命中率</div>
+                        </div>
                     </div>
                     <div id="apiCallsChart" class="chart-container"></div>
                     <div id="tokensChart" class="chart-container"></div>
@@ -947,6 +1009,14 @@
                         <div class="stat-item">
                             <div class="stat-value" id="customOutputTokensCount" title="0">0</div>
                             <div class="stat-label">输出 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customCacheHitTokensCount" title="0">0</div>
+                            <div class="stat-label">缓存命中 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customCacheHitRate" title="0%">0%</div>
+                            <div class="stat-label">缓存命中率</div>
                         </div>
                     </div>
                     <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 12px;">
@@ -972,14 +1042,18 @@
     "ANTHROPIC_AUTH_TOKEN": "dummy",
     "ANTHROPIC_BASE_URL": "${baseUrl}/relay/anthropic",
     "ANTHROPIC_CUSTOM_HEADERS": "x-api-key: ${apiKeyPlain || apiKeyMasked}",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-6",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7"
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus"
   }
 }`;
                 const openaiUrlEl = document.getElementById('guideOpenAIUrl');
                 if (openaiUrlEl) {
                     openaiUrlEl.textContent = `${baseUrl}/relay/v1`;
+                }
+                const responsesUrlEl = document.getElementById('guideResponsesUrl');
+                if (responsesUrlEl) {
+                    responsesUrlEl.textContent = `${baseUrl}/relay/v1`;
                 }
             }
 
@@ -991,6 +1065,12 @@
 
             function copyGuideOpenAIUrl() {
                 const el = document.getElementById('guideOpenAIUrl');
+                if (!el) return;
+                copyText(el.textContent);
+            }
+
+            function copyGuideResponsesUrl() {
+                const el = document.getElementById('guideResponsesUrl');
                 if (!el) return;
                 copyText(el.textContent);
             }
@@ -1022,7 +1102,6 @@
                     const data = await response.json();
                     upstreams = data.upstreams || [];
                     renderUpstreams();
-                    loadRetryConfig();
                 } catch (error) {
                     showToast('加载上游列表失败: ' + error.message, 'error');
                 }
@@ -1047,15 +1126,20 @@
                                 ? '<span class="tag tag-active">#1 活跃</span>'
                                 : `<span class="tag tag-priority">#${idx + 1}</span>`;
                             const proxyText = up.proxy || '直连';
+                            const protocolText = up.protocol || 'openai';
                             const maskedKey = maskApiKey(up.api_key || '');
-                            const modelsList = '';
-                            const modelMapEntries = up.model_map && typeof up.model_map === 'object' ? Object.entries(up.model_map) : [];
-                            const modelMapTags = modelMapEntries.map(([k, v]) => `<span class="tag tag-model" style="background:#e0f2fe;color:#0369a1">${k}→${v}</span>`).join(' ');
-                            const modelAutoTag = up.model_auto ? '<span class="tag" style="background:#dbeafe;color:#1d4ed8">auto兜底</span>' : '';
-
-                            const setActiveBtn = !isActive && up.enabled
-                                ? `<button class="btn btn-secondary btn-small" onclick="setActiveUpstream(${idx})">设为活跃</button>`
-                                : '';
+                            const modelMapEntries =
+                                up.model_map && typeof up.model_map === 'object' ? Object.entries(up.model_map) : [];
+                            const modelMapTags = modelMapEntries
+                                .map(
+                                    ([k, v]) =>
+                                        `<span class="tag tag-model" style="background:#e0f2fe;color:#0369a1">${k}→${v}</span>`
+                                )
+                                .join(' ');
+                            const setActiveBtn =
+                                !isActive && up.enabled
+                                    ? `<button class="btn btn-secondary btn-small" onclick="setActiveUpstream(${idx})">设为活跃</button>`
+                                    : '';
 
                             const testBtn = `<button class="btn btn-success btn-small" id="testBtn${idx}" onclick="testUpstream(${idx})">测试连接</button>`;
                             const editBtn = `<button class="btn btn-secondary btn-small" onclick="openEditUpstreamModal(${idx})">编辑</button>`;
@@ -1073,8 +1157,9 @@
                             <div class="upstream-info" style="flex:1">
                                 <h4>${up.name || '未命名'} ${activeTag}</h4>
                                 <p>${up.base_url || ''}</p>
+                                <p class="upstream-proxy">协议: ${protocolText}</p>
                                 <p class="upstream-proxy">代理: ${proxyText}</p>
-                                <p style="font-size:0.78rem;margin-top:4px">${modelMapTags ? "映射: " + modelMapTags : ""}${modelAutoTag ? " " + modelAutoTag : ""}</p>
+                                <p style="font-size:0.78rem;margin-top:4px">${modelMapTags ? '映射: ' + modelMapTags : ''}</p>
                                 <span id="testResult${idx}" class="test-result"></span>
                             </div>
                             <div class="upstream-actions">
@@ -1103,14 +1188,14 @@
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
                 // 移除所有 drag-over
-                document.querySelectorAll('.upstream-item').forEach(el => el.classList.remove('drag-over'));
+                document.querySelectorAll('.upstream-item').forEach((el) => el.classList.remove('drag-over'));
                 if (dragSourceIndex !== null && dragSourceIndex !== index) {
                     event.currentTarget.classList.add('drag-over');
                 }
             }
 
             function onDragEnd(event) {
-                document.querySelectorAll('.upstream-item').forEach(el => {
+                document.querySelectorAll('.upstream-item').forEach((el) => {
                     el.classList.remove('dragging', 'drag-over');
                 });
                 dragSourceIndex = null;
@@ -1133,10 +1218,10 @@
                 document.getElementById('upstreamModalSubmit').textContent = '添加';
                 document.getElementById('upstreamName').value = '';
                 document.getElementById('upstreamBaseUrl').value = '';
+                document.getElementById('upstreamProtocol').value = 'openai';
                 document.getElementById('upstreamApiKey').value = '';
                 document.getElementById('upstreamProxy').value = '';
-                document.getElementById('upstreamModelMap').value = '';
-                document.getElementById('upstreamModelAuto').checked = false;
+                document.getElementById('upstreamModelMap').value = 'sonnet=\nopus=\nhaiku=';
                 document.getElementById('upstreamModal').classList.add('show');
             }
 
@@ -1149,14 +1234,15 @@
                 document.getElementById('upstreamModalSubmit').textContent = '保存';
                 document.getElementById('upstreamName').value = up.name || '';
                 document.getElementById('upstreamBaseUrl').value = up.base_url || '';
+                document.getElementById('upstreamProtocol').value = up.protocol || 'openai';
                 document.getElementById('upstreamApiKey').value = up.api_key_full || '';
                 document.getElementById('upstreamProxy').value = up.proxy || '';
 
                 const modelMap = up.model_map || {};
-                const modelMapText = Object.entries(modelMap).map(([k, v]) => `${k}=${v}`).join('\n');
+                const modelMapText = Object.entries(modelMap)
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join('\n');
                 document.getElementById('upstreamModelMap').value = modelMapText;
-                document.getElementById('upstreamModelAuto').checked = !!up.model_auto;
-
                 document.getElementById('upstreamModal').classList.add('show');
             }
 
@@ -1168,6 +1254,7 @@
             async function submitUpstream() {
                 const name = document.getElementById('upstreamName').value.trim();
                 const base_url = document.getElementById('upstreamBaseUrl').value.trim();
+                const protocol = document.getElementById('upstreamProtocol').value;
                 const api_key = document.getElementById('upstreamApiKey').value.trim();
                 const proxy = document.getElementById('upstreamProxy').value.trim();
 
@@ -1192,14 +1279,13 @@
                 }
 
                 const models = Object.values(model_map);
-                const model_auto = document.getElementById('upstreamModelAuto').checked;
 
                 const submitBtn = document.getElementById('upstreamModalSubmit');
                 submitBtn.classList.add('btn-loading');
                 submitBtn.disabled = true;
 
                 try {
-                    const body = {name, base_url, api_key, proxy, models, model_map, model_auto};
+                    const body = {name, base_url, protocol, api_key, proxy: proxy || undefined, models, model_map};
                     let url, method;
                     if (editingUpstreamIndex !== null) {
                         url = `/relayFE/upstreams/${editingUpstreamIndex}`;
@@ -1273,41 +1359,6 @@
                     }
                 }
                 loadUpstreams();
-            }
-
-            async function loadRetryConfig() {
-                try {
-                    const resp = await fetch(`${API_BASE}/retry-config`);
-                    if (resp.ok) {
-                        const data = await resp.json();
-                        document.getElementById('retryCount').value = data.retryCount || 2;
-                    }
-                } catch {}
-            }
-
-            async function saveRetryConfig() {
-                const retryCount = parseInt(document.getElementById('retryCount').value);
-                if (!retryCount || retryCount <= 0 || retryCount > 3) {
-                    showToast('重试次数必须为1-3的整数', 'error');
-                    return;
-                }
-                const statusEl = document.getElementById('retryConfigStatus');
-                try {
-                    const resp = await fetch(`${API_BASE}/retry-config`, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({retryCount})
-                    });
-                    if (resp.ok) {
-                        statusEl.textContent = '已保存';
-                        statusEl.style.color = '#10b981';
-                        setTimeout(() => statusEl.textContent = '', 2000);
-                    } else {
-                        showToast('保存失败', 'error');
-                    }
-                } catch {
-                    showToast('保存失败', 'error');
-                }
             }
 
             async function setActiveUpstream(index) {

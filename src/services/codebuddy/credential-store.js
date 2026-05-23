@@ -31,9 +31,11 @@ class CredentialStore {
         this.apiCallCount = 0;
         this.inputTokens = 0;
         this.outputTokens = 0;
+        this.cacheHitTokens = 0;
         this.customApiCallCount = 0;
         this.customInputTokens = 0;
         this.customOutputTokens = 0;
+        this.customCacheHitTokens = 0;
         this.dirtyCount = 0;
         this.DIRTY_FLUSH_THRESHOLD = 10;
 
@@ -100,9 +102,11 @@ class CredentialStore {
                 this.apiCallCount = data.api_call_count || 0;
                 this.inputTokens = data.input_tokens || 0;
                 this.outputTokens = data.output_tokens || 0;
+                this.cacheHitTokens = data.cache_hit_tokens || 0;
                 this.customApiCallCount = data.custom_api_call_count || 0;
                 this.customInputTokens = data.custom_input_tokens || 0;
                 this.customOutputTokens = data.custom_output_tokens || 0;
+                this.customCacheHitTokens = data.custom_cache_hit_tokens || 0;
             } catch {}
         }
     }
@@ -112,9 +116,11 @@ class CredentialStore {
             api_call_count: this.apiCallCount,
             input_tokens: this.inputTokens,
             output_tokens: this.outputTokens,
+            cache_hit_tokens: this.cacheHitTokens,
             custom_api_call_count: this.customApiCallCount,
             custom_input_tokens: this.customInputTokens,
-            custom_output_tokens: this.customOutputTokens
+            custom_output_tokens: this.customOutputTokens,
+            custom_cache_hit_tokens: this.customCacheHitTokens
         }, null, 2), 'utf8');
         this.dirtyCount = 0;
     }
@@ -160,11 +166,13 @@ class CredentialStore {
         }
     }
 
-    incrementTokenUsage(inputTokens, outputTokens) {
+    incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens = 0) {
         this.inputTokens += inputTokens || 0;
         this.outputTokens += outputTokens || 0;
+        this.cacheHitTokens += cacheHitTokens || 0;
         this.customInputTokens += inputTokens || 0;
         this.customOutputTokens += outputTokens || 0;
+        this.customCacheHitTokens += cacheHitTokens || 0;
         this.dirtyCount++;
         if (this.dirtyCount >= this.DIRTY_FLUSH_THRESHOLD) {
             this._saveUsage();
@@ -182,9 +190,11 @@ class CredentialStore {
             api_call_count: this.apiCallCount,
             input_tokens: this.inputTokens,
             output_tokens: this.outputTokens,
+            cache_hit_tokens: this.cacheHitTokens,
             custom_api_call_count: this.customApiCallCount,
             custom_input_tokens: this.customInputTokens,
-            custom_output_tokens: this.customOutputTokens
+            custom_output_tokens: this.customOutputTokens,
+            custom_cache_hit_tokens: this.customCacheHitTokens
         };
     }
 
@@ -192,11 +202,12 @@ class CredentialStore {
         this.customApiCallCount = 0;
         this.customInputTokens = 0;
         this.customOutputTokens = 0;
+        this.customCacheHitTokens = 0;
         this._saveUsage();
     }
 
     // Daily usage
-    recordDailyUsage(inputTokens, outputTokens) {
+    recordDailyUsage(inputTokens, outputTokens, cacheHitTokens = 0) {
         const dailyDir = this.baseDir;
         const dailyFile = join(dailyDir, 'daily_usage.json');
         let dailyData = {};
@@ -212,12 +223,13 @@ class CredentialStore {
             dailyData[monthKey] = {};
         }
         if (!dailyData[monthKey][dayKey]) {
-            dailyData[monthKey][dayKey] = {api_calls: 0, input_tokens: 0, output_tokens: 0};
+            dailyData[monthKey][dayKey] = {api_calls: 0, input_tokens: 0, output_tokens: 0, cache_hit_tokens: 0};
         }
 
         dailyData[monthKey][dayKey].api_calls++;
         dailyData[monthKey][dayKey].input_tokens += inputTokens || 0;
         dailyData[monthKey][dayKey].output_tokens += outputTokens || 0;
+        dailyData[monthKey][dayKey].cache_hit_tokens = (dailyData[monthKey][dayKey].cache_hit_tokens || 0) + (cacheHitTokens || 0);
 
         // Cleanup old months (> 3 months ago)
         const cutoff = new Date(now.getFullYear(), now.getMonth() - 3, 1);

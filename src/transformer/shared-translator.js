@@ -107,12 +107,14 @@ function decodeDocumentToText(block) {
         } catch {
             // PDF 文本提取失败，回退
         }
+        // 无法提取文本，将 PDF 作为 base64 data URL 传递
         return null;
     }
 
     // 未知类型：尝试 base64 解码为文本
     try {
         const decoded = Buffer.from(source.data, 'base64').toString('utf8');
+        // 简单判断是否包含大量不可打印字符（二进制文件）
         const nonPrintable = decoded.split('').filter((c) => {
             const code = c.charCodeAt(0);
             return code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d;
@@ -132,6 +134,7 @@ function decodeDocumentToText(block) {
 function extractPDFText(buffer) {
     const text = buffer.toString('latin1');
 
+    // 提取括号内文本对象 (PDF 文本对象格式: (text) Tj 或 [(text1)(text2)] TJ)
     const texts = [];
     const parenRegex = /\(([^\\)]*(?:\\.[^\\)]*)*)\)/g;
     let match;
@@ -181,6 +184,7 @@ export function mapContent(blocks) {
                 if (extractedText) {
                     return {type: 'text', text: extractedText};
                 }
+                // 无法提取文本，将文档作为 base64 data URL 传递
                 const source = block.source;
                 if (source && source.type === 'base64' && source.data) {
                     return {
@@ -207,34 +211,29 @@ export function mapContent(blocks) {
 }
 
 /**
- * 在用户消息前注入中文思考引导语，防止多轮对话后思考语言漂移
+ * 透传用户消息内容，不在中间注入任何标记
+ * 中文思考规则已完全收敛到 system 前缀中，避免中间注入打断缓存前缀匹配
  */
 export function prependThinkingHint(content) {
-    if (typeof content === 'string') {
-        return '[重要提醒：你的思考过程必须使用中文，不要用英文思考！]\n' + content;
-    }
     return content;
 }
 
 /**
- * 在工具返回结果中注入中文思考引导语，防止工具调用后思考语言漂移到英文
+ * 透传工具返回结果内容，不在中间注入任何标记
  */
 export function prependToolThinkingHint(content) {
-    if (typeof content === 'string') {
-        return '[重要：工具返回结果必须用中文分析和思考！]\n' + content;
-    }
     return content;
 }
-
-/**
- * 在 assistant 消息后注入中文思考提醒，防止下一轮思考语言漂移到英文
- */
-const THINKING_LANG_REMINDER = {role: 'system', content: '[关键规则] 你的思考过程必须使用中文！不要用英文思考！'};
 
 /**
  * 将行为规则注入到 OpenAI 格式的 messages 数组中
  * 如果存在 system 消息则前置，否则新建
- * 同时在每条 assistant 消息后插入中文思考提醒
+ * 不在消息中间插入内容，以保持缓存前缀连续性
+ *
+ * 缓存优化：
+ * 1. 剥离客户端 system 中的动态内容（x-tencent-billing-header 等），追加到
+ *    messages 最后一条 user 消息尾部，避免动态内容破坏 system 前缀一致性
+ * 2. 检测客户端 system 是否已包含代理行为规则，避免重复注入
  * @param {Array} messages - OpenAI 格式的 messages 数组
  * @returns {Array} 注入后的 messages 数组
  */
@@ -244,30 +243,140 @@ export function injectBehaviorRules(messages) {
 
     const systemIndex = messages.findIndex((m) => m.role === 'system');
 
-    // 注入前置 system 规则
     if (systemIndex >= 0) {
-        result.push({
-            ...messages[systemIndex],
-            content: behaviorRules + '\n\n' + messages[systemIndex].content
-        });
+        const originalSystem = messages[systemIndex].content;
+        const systemStr =
+            typeof originalSystem === 'string' ? originalSystem : originalSystem.map((p) => p.text ?? '').join('\n');
+        // 客户端 system 已包含代理行为规则时跳过注入，避免重复
+        const alreadyHasRules = systemStr.includes('<proxy:thinking>');
+        // 剥离动态行（如 x-tencent-billing-header），保持 system 前缀稳定
+        // 动态行直接丢弃：它们的值每次请求都变（如 cch=xxx 哈希），
+        // 即使追加到 user 消息尾部也会污染 messages 前缀导致缓存 miss
+        const stableContent = extractStableContent(systemStr);
+        const systemPrefix = alreadyHasRules ? '' : behaviorRules + '\n\n';
+        result.push({...messages[systemIndex], content: systemPrefix + stableContent});
+
+        for (let i = 0; i < messages.length; i++) {
+            if (i === systemIndex) continue;
+            result.push(messages[i]);
+        }
     } else {
         result.push({role: 'system', content: behaviorRules});
-    }
-
-    // 在每条 assistant 消息后插入中文思考提醒
-    for (let i = 0; i < messages.length; i++) {
-        const m = messages[i];
-        if (i === systemIndex) continue;
-
-        result.push(m);
-
-        // fix: deepseek和kimi不能在工具调用的消息插入系统提示词，会导致消息块顺序错误
-        if (m.role === 'assistant' && !m.tool_calls) {
-            result.push({...THINKING_LANG_REMINDER});
-        }
+        for (const m of messages) result.push(m);
     }
 
     return result;
+}
+
+/**
+ * 从 system 内容中提取稳定部分，丢弃动态行
+ * 动态行 = <proxy:xxx> 标签外的非空行，且匹配 header/key-value 格式
+ * 这些行由客户端注入（billing header、session 信息等），每次请求值不同
+ * 直接丢弃而非追加到 user 消息，避免动态内容污染 messages 前缀导致缓存 miss
+ */
+function extractStableContent(systemContent) {
+    const lines = systemContent.split('\n');
+    const stableLines = [];
+    let insideProxyTag = false;
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('<proxy:') && trimmed.endsWith('>')) {
+            insideProxyTag = true;
+            stableLines.push(line);
+            continue;
+        }
+        if (insideProxyTag && trimmed.startsWith('</proxy:')) {
+            insideProxyTag = false;
+            stableLines.push(line);
+            continue;
+        }
+        if (insideProxyTag) {
+            stableLines.push(line);
+            continue;
+        }
+        if (trimmed === '') {
+            stableLines.push(line);
+            continue;
+        }
+        if (isDynamicLine(trimmed)) continue;
+        stableLines.push(line);
+    }
+
+    return stableLines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trimEnd();
+}
+
+function isDynamicLine(line) {
+    if (/^x-[a-z]/i.test(line)) return true;
+    if (/^(currentDate|currentDateIso|sessionId|memory):/i.test(line)) return true;
+    return false;
+}
+
+/**
+ * 递归排序对象 key，确保相同内容产生相同的 JSON 序列化
+ * 上游 prompt caching 要求请求前缀逐字节一致，嵌套对象 key 顺序不同会导致 miss
+ */
+function sortObjectKeys(obj) {
+    if (Array.isArray(obj)) return obj.map(sortObjectKeys);
+    if (obj !== null && typeof obj === 'object') {
+        const sorted = {};
+        for (const key of Object.keys(obj).sort()) {
+            sorted[key] = sortObjectKeys(obj[key]);
+        }
+        return sorted;
+    }
+    return obj;
+}
+
+/**
+ * 统一 payload 字段顺序和默认值，确保相同内容产生相同字节序列
+ * 上游 prompt caching 要求请求前缀逐字节一致，字段顺序不同会导致缓存 miss
+ */
+const FIELD_ORDER = [
+    'model',
+    'messages',
+    'tools',
+    'tool_choice',
+    'max_tokens',
+    'temperature',
+    'top_p',
+    'reasoning_effort',
+    'stream',
+    'stream_options',
+    'stop'
+];
+
+export function normalizePayload(payload, meta = {}) {
+    const ordered = {};
+    for (const key of FIELD_ORDER) {
+        if (payload[key] !== undefined) ordered[key] = payload[key];
+    }
+    for (const key of Object.keys(payload)) {
+        if (!(key in ordered)) ordered[key] = payload[key];
+    }
+
+    // 空字符串 '' 表示用户明确关闭 thinking，不注入默认值，也不发送给上游
+    if (ordered.reasoning_effort === '') {
+        delete ordered.reasoning_effort;
+    } else if (ordered.reasoning_effort === undefined) {
+        ordered.reasoning_effort = 'high';
+    }
+    if (ordered.stream && !ordered.stream_options) {
+        ordered.stream_options = {include_usage: true};
+    }
+
+    // tools 排序：递归排序 key + 按 function.name 排序，保证 JSON.stringify 输出稳定
+    // messages 不排序：开销大且改变结构会破坏已有缓存兼容性
+    if (ordered.tools) {
+        ordered.tools = ordered.tools
+            .map((t) => sortObjectKeys(t))
+            .sort((a, b) => (a.function?.name || '').localeCompare(b.function?.name || ''));
+    }
+
+    return ordered;
 }
 
 /**
@@ -336,4 +445,132 @@ export function openAIToAnthropic(openAIResponse) {
             output_tokens: openAIResponse.usage?.completion_tokens || 0
         }
     };
+}
+
+/**
+ * 将上游 OpenAI 格式的流式 SSE 数据重写后输出给客户端
+ * 核心修复：对 reasoning_content 做缓冲合并，避免 thinking 被逐 token 刷成多个独立块
+ *
+ * @param {http.ServerResponse} res - 客户端响应
+ * @param {ReadableStream} responseBody - 上游流
+ * @param {Function} onUsage - usage 统计回调 (inputTokens, outputTokens, cacheHitTokens, credit, model)
+ */
+export function rewriteOpenAIStream(res, responseBody, onUsage) {
+    let reasoningBuffer = ''; // 缓冲 reasoning_content 片段
+    let lineBuffer = '';
+    let streamInputTokens = 0;
+    let streamOutputTokens = 0;
+    let streamCacheHitTokens = 0;
+    let streamCredit = 0;
+    let streamModel = '';
+
+    function flushReasoning() {
+        if (!reasoningBuffer) return;
+        const chunk = {
+            id: `chatcmpl-${Date.now()}`,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model: streamModel || 'unknown',
+            choices: [
+                {
+                    index: 0,
+                    delta: {role: 'assistant', reasoning_content: reasoningBuffer},
+                    finish_reason: null
+                }
+            ]
+        };
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        reasoningBuffer = '';
+    }
+
+    responseBody.on('data', (chunk) => {
+        lineBuffer += chunk.toString('utf8');
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop();
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith(':')) {
+                res.write(line + '\n');
+                continue;
+            }
+            if (!trimmed.startsWith('data: ')) {
+                res.write(line + '\n');
+                continue;
+            }
+
+            const raw = trimmed.slice(6).trim();
+            if (raw === '[DONE]') {
+                flushReasoning();
+                res.write('data: [DONE]\n\n');
+                continue;
+            }
+
+            let data;
+            try {
+                data = JSON.parse(raw);
+            } catch {
+                res.write(line + '\n');
+                continue;
+            }
+
+            // 提取 usage
+            if (data.usage) {
+                streamInputTokens = data.usage.prompt_tokens || 0;
+                streamOutputTokens = data.usage.completion_tokens || 0;
+                streamCacheHitTokens =
+                    data.usage.prompt_cache_hit_tokens || data.usage.prompt_tokens_details?.cached_tokens || 0;
+                streamCredit = data.usage.credit || 0;
+            }
+            if (data.model) streamModel = data.model;
+
+            const choice = data.choices?.[0];
+            const delta = choice?.delta;
+            if (!choice || !delta) {
+                res.write(line + '\n');
+                continue;
+            }
+
+            // 提取 reasoning 文本
+            let reasoningText = null;
+            if (delta.reasoning_content) {
+                reasoningText = delta.reasoning_content;
+            } else if (typeof delta.thinking === 'string') {
+                reasoningText = delta.thinking;
+            } else if (typeof delta.thinking === 'object' && delta.thinking !== null) {
+                reasoningText = delta.thinking.content || null;
+            }
+
+            if (reasoningText) {
+                // 缓冲 reasoning，不立即输出
+                reasoningBuffer += reasoningText;
+                continue;
+            }
+
+            // 遇到非 reasoning 内容（content/tool_calls/finish_reason），先 flush 缓冲的 reasoning
+            if (delta.content || Array.isArray(delta.tool_calls) || choice.finish_reason) {
+                flushReasoning();
+            }
+
+            // 正常内容直接透传
+            res.write(line + '\n');
+        }
+    });
+
+    responseBody.on('end', () => {
+        flushReasoning();
+        if (lineBuffer.trim()) {
+            res.write(lineBuffer + '\n');
+        }
+        if (onUsage) {
+            onUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, streamCredit, streamModel);
+        }
+        res.end();
+    });
+
+    responseBody.on('error', (err) => {
+        logger.error('OpenAI stream rewrite error:', err);
+        flushReasoning();
+        res.end();
+    });
 }

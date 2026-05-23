@@ -6,6 +6,7 @@
  */
 
 import logger from '../../utils/logger.js';
+import {cleanJsonSchema} from '../../utils/helpers.js';
 import {
     generateId as sharedGenerateId,
     mapStopReason,
@@ -320,7 +321,7 @@ function translateTools(anthropicTools) {
         function: {
             name: tool.name,
             description: tool.description,
-            parameters: tool.input_schema
+            parameters: cleanJsonSchema(tool.input_schema)
         }
     }));
 }

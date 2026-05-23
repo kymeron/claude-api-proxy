@@ -8,7 +8,10 @@ import {request, readBody} from '../../utils/http-client.js';
 import {HttpsProxyAgent} from 'https-proxy-agent';
 import {SocksProxyAgent} from 'socks-proxy-agent';
 import {buildUrl} from '../../utils/helpers.js';
+import {normalizePayload} from '../../transformer/shared-translator.js';
 import logger from '../../utils/logger.js';
+
+const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
 // ==================== 代理 Agent 缓存 ====================
 
@@ -56,6 +59,8 @@ export function getProxyAgent(proxyUrl) {
     }
 }
 
+// ==================== 协议感知 ====================
+
 /**
  * 判断上游是否指向本地 Copilot 端点
  */
@@ -66,6 +71,83 @@ function isLocalCopilotUpstream(base_url) {
     } catch {
         return false;
     }
+}
+
+function buildProtocolAwareUrl(upstream, endpoint) {
+    if (!isAnthropicUpstream(upstream)) {
+        return buildUrl(upstream.base_url, endpoint);
+    }
+
+    try {
+        const url = new URL(upstream.base_url);
+        const pathname = url.pathname.replace(/\/+$/, '');
+        const needsV1 = pathname.endsWith('/anthropic') || pathname.endsWith('/messages');
+        const normalizedBaseUrl = needsV1 ? `${upstream.base_url.replace(/\/+$/, '')}/v1` : upstream.base_url;
+        return buildUrl(normalizedBaseUrl, endpoint);
+    } catch {
+        const trimmed = upstream.base_url.replace(/\/+$/, '');
+        const normalizedBaseUrl = /\/anthropic$/.test(trimmed) ? `${trimmed}/v1` : trimmed;
+        return buildUrl(normalizedBaseUrl, endpoint);
+    }
+}
+
+export function normalizeUpstreamProtocol(protocol) {
+    const normalized = String(protocol || '').trim().toLowerCase();
+    return normalized || 'openai';
+}
+
+export function isAnthropicUpstream(upstream) {
+    return normalizeUpstreamProtocol(upstream?.protocol) === 'anthropic';
+}
+
+export function isResponsesUpstream(upstream) {
+    return normalizeUpstreamProtocol(upstream?.protocol) === 'responses';
+}
+
+// ==================== 请求辅助 ====================
+
+function buildBaseHeaders(upstream, extraHeaders = {}) {
+    const headers = {
+        'User-Agent': 'Relay/1.0',
+        ...extraHeaders
+    };
+
+    if (isAnthropicUpstream(upstream)) {
+        headers['x-api-key'] = upstream.api_key;
+        headers['anthropic-version'] = extraHeaders['anthropic-version'] || DEFAULT_ANTHROPIC_VERSION;
+        delete headers.Authorization;
+        return headers;
+    }
+
+    headers.Authorization = `Bearer ${upstream.api_key}`;
+    return headers;
+}
+
+function applyProxyAndCopilot(upstream, headers, options) {
+    if (isLocalCopilotUpstream(upstream.base_url) && upstream.proxy && !isAnthropicUpstream(upstream)) {
+        headers['X-Copilot-Proxy'] = upstream.proxy;
+    }
+
+    const proxyAgent = getProxyAgent(upstream.proxy);
+    if (proxyAgent) {
+        options.agent = proxyAgent;
+    }
+}
+
+async function requestJson(url, upstream, {method = 'POST', headers = {}, body, timeout = 300000} = {}) {
+    const finalHeaders = buildBaseHeaders(upstream, headers);
+    const options = {
+        method,
+        headers: finalHeaders,
+        timeout
+    };
+
+    if (body !== undefined) {
+        options.body = body;
+    }
+
+    applyProxyAndCopilot(upstream, finalHeaders, options);
+    return request(url, options);
 }
 
 // ==================== Chat Completions ====================
@@ -84,45 +166,111 @@ function isLocalCopilotUpstream(base_url) {
  * @throws {Error} 上游返回非 2xx 时抛出包含响应体的错误
  */
 export async function createChatCompletions(payload, upstream, meta = {}) {
-    const url = buildUrl(upstream.base_url, 'chat/completions');
-
-    const headers = {
-        'Authorization': `Bearer ${upstream.api_key}`,
-        'Content-Type': 'application/json',
-        'User-Agent': 'Relay/1.0'
-    };
-
-    // 透传代理到本地 Copilot 端点
-    if (isLocalCopilotUpstream(upstream.base_url) && upstream.proxy) {
-        headers['X-Copilot-Proxy'] = upstream.proxy;
-    }
-
-    const options = {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-        timeout: 300000 // 聊天请求可能较慢，默认 5 分钟
-    };
-
-    // 代理配置
-    const proxyAgent = getProxyAgent(upstream.proxy);
-    if (proxyAgent) {
-        options.agent = proxyAgent;
-    }
+    const url = buildProtocolAwareUrl(upstream, 'chat/completions');
 
     const proxyMode = upstream.proxy ? upstream.proxy : '直连';
-    const reasoningEffort = payload.reasoning_effort || 'N/A';
-    logger.info(`Relay API: [${upstream.name}] model=${payload.model || 'unknown'} proxy=${proxyMode} effort=${reasoningEffort}`);
+    const reasoningEffort = payload.reasoning_effort || 'high';
+    logger.info(
+        `[${upstream.name}]: ${upstream.base_url}, model: ${payload.model || 'unknown'}, effort: ${reasoningEffort}, proxy: ${proxyMode}`
+    );
 
-    const response = await request(url, options);
+    const response = await requestJson(url, upstream, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(normalizePayload(payload, {source: 'relay', upstream: upstream.name})),
+        timeout: 300000
+    });
 
     // 非 2xx 时读取响应体并抛出异常
     if (response.status < 200 || response.status >= 300) {
         const errorBody = await readBody(response.body);
         const errorMsg = errorBody.length > 500 ? errorBody.substring(0, 500) + '...' : errorBody;
-        throw new Error(
-            `Relay API: [${upstream.name}] 上游返回 HTTP ${response.status}: ${errorMsg}`
-        );
+        logger.error(`[${upstream.name}] 上游返回 HTTP ${response.status}: ${errorMsg.slice(0, 300)}`);
+        throw new Error(`[${upstream.name}]: 上游返回 HTTP ${response.status}: ${errorMsg}`);
+    }
+
+    return response;
+}
+
+// ==================== Responses API ====================
+
+export async function createResponses(payload, upstream, meta = {}, endpoint = 'responses') {
+    const url = buildProtocolAwareUrl(upstream, endpoint);
+    const proxyMode = upstream.proxy ? upstream.proxy : '直连';
+
+    logger.info(
+        `[${upstream.name}]: ${url}, model: ${payload.model || 'unknown'}, protocol: responses, proxy: ${proxyMode}`
+    );
+
+    const response = await requestJson(url, upstream, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        timeout: 300000
+    });
+
+    if (response.status < 200 || response.status >= 300) {
+        const errorBody = await readBody(response.body);
+        const errorMsg = errorBody.length > 500 ? errorBody.substring(0, 500) + '...' : errorBody;
+        logger.error(`[${upstream.name}] Responses 上游返回 HTTP ${response.status}: ${errorMsg.slice(0, 300)}`);
+        throw new Error(`[${upstream.name}]: Responses 上游返回 HTTP ${response.status}: ${errorMsg}`);
+    }
+
+    return response;
+}
+
+// ==================== Anthropic Protocol ====================
+
+export async function createAnthropicMessages(payload, upstream, meta = {}, requestHeaders = {}) {
+    const url = buildProtocolAwareUrl(upstream, 'messages');
+    const proxyMode = upstream.proxy ? upstream.proxy : '直连';
+
+    logger.info(
+        `[${upstream.name}]: ${url}, model: ${payload.model || 'unknown'}, protocol: anthropic, proxy: ${proxyMode}`
+    );
+
+    const response = await requestJson(url, upstream, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'anthropic-version': requestHeaders['anthropic-version'] || DEFAULT_ANTHROPIC_VERSION,
+            ...(requestHeaders['anthropic-beta'] ? {'anthropic-beta': requestHeaders['anthropic-beta']} : {})
+        },
+        body: JSON.stringify(payload),
+        timeout: 300000
+    });
+
+    if (response.status < 200 || response.status >= 300) {
+        const errorBody = await readBody(response.body);
+        const errorMsg = errorBody.length > 500 ? errorBody.substring(0, 500) + '...' : errorBody;
+        logger.error(`[${upstream.name}] Anthropic 上游返回 HTTP ${response.status}: ${errorMsg.slice(0, 300)}`);
+        throw new Error(`[${upstream.name}]: Anthropic 上游返回 HTTP ${response.status}: ${errorMsg}`);
+    }
+
+    return response;
+}
+
+export async function createAnthropicCountTokens(payload, upstream, requestHeaders = {}) {
+    const url = buildProtocolAwareUrl(upstream, 'messages/count_tokens');
+    const response = await requestJson(url, upstream, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'anthropic-version': requestHeaders['anthropic-version'] || DEFAULT_ANTHROPIC_VERSION,
+            ...(requestHeaders['anthropic-beta'] ? {'anthropic-beta': requestHeaders['anthropic-beta']} : {})
+        },
+        body: JSON.stringify(payload),
+        timeout: 30000
+    });
+
+    if (response.status < 200 || response.status >= 300) {
+        const errorBody = await readBody(response.body);
+        const errorMsg = errorBody.length > 500 ? errorBody.substring(0, 500) + '...' : errorBody;
+        throw new Error(`[${upstream.name}]: count_tokens 失败 HTTP ${response.status}: ${errorMsg}`);
     }
 
     return response;
@@ -140,50 +288,37 @@ export async function createChatCompletions(payload, upstream, meta = {}) {
  * @returns {Promise<object>} 解析后的 /models 响应 JSON
  * @throws {Error} 请求失败或响应无法解析时抛出
  */
-export async function getUpstreamModels(upstream) {
-    const url = buildUrl(upstream.base_url, 'models');
-
-    const headers = {
-        'Authorization': `Bearer ${upstream.api_key}`,
-        'Accept': 'application/json',
-        'User-Agent': 'Relay/1.0'
-    };
-
-    // 透传代理到本地 Copilot 端点
-    if (isLocalCopilotUpstream(upstream.base_url) && upstream.proxy) {
-        headers['X-Copilot-Proxy'] = upstream.proxy;
-    }
-
-    const options = {
-        method: 'GET',
-        headers,
-        timeout: 15000
-    };
-
-    // 代理配置
-    const proxyAgent = getProxyAgent(upstream.proxy);
-    if (proxyAgent) {
-        options.agent = proxyAgent;
-    }
+export async function getUpstreamModels(upstream, requestHeaders = {}) {
+    const url = buildProtocolAwareUrl(upstream, 'models');
 
     const proxyMode = upstream.proxy ? upstream.proxy : '直连';
-    logger.info(`Relay API: GET ${url} proxy=${proxyMode}`);
+    logger.info(`[${upstream.name}]:GET ${url} proxy=${proxyMode}`);
 
-    const response = await request(url, options);
+    const response = await requestJson(url, upstream, {
+        method: 'GET',
+        headers: {
+            Accept: 'application/json',
+            ...(isAnthropicUpstream(upstream)
+                ? {
+                      'anthropic-version': requestHeaders['anthropic-version'] || DEFAULT_ANTHROPIC_VERSION,
+                      ...(requestHeaders['anthropic-beta'] ? {'anthropic-beta': requestHeaders['anthropic-beta']} : {})
+                  }
+                : {})
+        },
+        timeout: 15000
+    });
 
     // 非 2xx 时读取响应体并抛出异常
     if (response.status < 200 || response.status >= 300) {
         const errorBody = await readBody(response.body);
         const errorMsg = errorBody.length > 500 ? errorBody.substring(0, 500) + '...' : errorBody;
-        throw new Error(
-            `Relay API: 获取模型列表失败 HTTP ${response.status}: ${errorMsg}`
-        );
+        throw new Error(`[${upstream.name}]:获取模型列表失败 HTTP ${response.status}: ${errorMsg}`);
     }
 
     const body = await readBody(response.body);
     try {
         return JSON.parse(body);
     } catch (e) {
-        throw new Error(`Relay API: 模型列表响应 JSON 解析失败: ${e.message}`);
+        throw new Error(`[${upstream.name}]:模型列表响应 JSON 解析失败: ${e.message}`);
     }
 }

@@ -15,6 +15,12 @@ import {
     createStreamState
 } from '../services/copilot/anthropic-translator.js';
 import {
+    responsesRequestToChat,
+    chatResponseToResponses,
+    createResponsesStreamState,
+    chatChunkToResponsesEvents
+} from '../transformer/responses-translator.js';
+import {
     estimateMessageTokens,
     estimateContentBlockTokens
 } from '../utils/token-estimation.js';
@@ -23,9 +29,19 @@ import logger from '../utils/logger.js';
 
 /* ==================== 工具函数 ==================== */
 
+/**
+ * 从上游 usage 中提取缓存命中 token 数
+ */
+function extractCacheHitTokens(usage) {
+    if (!usage) return 0;
+    if (usage.prompt_cache_hit_tokens) return usage.prompt_cache_hit_tokens;
+    if (usage.prompt_tokens_details?.cached_tokens) return usage.prompt_tokens_details.cached_tokens;
+    return 0;
+}
+
 function extractProxyFromHeaders(req) {
     // 优先从 store 读取代理配置
-    const storeProxy = copilotStore.getProxyConfig().https_proxy || copilotStore.getProxyConfig().http_proxy;
+    const storeProxy = copilotStore.getProxyUrl();
     if (storeProxy) return storeProxy;
 
     // 兼容：从请求头读取（仅本地请求）
@@ -84,7 +100,7 @@ async function authenticateAndGetToken(req) {
     }
 
     try {
-        const proxyUrl = copilotStore.getProxyConfig().https_proxy || copilotStore.getProxyConfig().http_proxy;
+        const proxyUrl = copilotStore.getProxyUrl();
         const copilotToken = await ensureCopilotToken(proxyUrl);
         return {copilotToken};
     } catch (error) {
@@ -139,6 +155,7 @@ async function handleOpenAIChatCompletions(req, res) {
 
             let streamInputTokens = 0;
             let streamOutputTokens = 0;
+            let streamCacheHitTokens = 0;
             let lineBuffer = '';
 
             response.body.on('data', (chunk) => {
@@ -156,6 +173,7 @@ async function handleOpenAIChatCompletions(req, res) {
                         if (data.usage) {
                             streamInputTokens = data.usage.prompt_tokens || 0;
                             streamOutputTokens = data.usage.completion_tokens || 0;
+                            streamCacheHitTokens = extractCacheHitTokens(data.usage);
                         }
                     } catch {}
                 }
@@ -165,16 +183,15 @@ async function handleOpenAIChatCompletions(req, res) {
                 if (lineBuffer.trim()) {
                     res.write(lineBuffer);
                 }
-                // 记录用量
                 if (streamInputTokens > 0 || streamOutputTokens > 0) {
                     copilotStore.incrementApiCallCount();
-                    copilotStore.incrementTokenUsage(streamInputTokens, streamOutputTokens);
-                    copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens);
+                    copilotStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                    copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
                 } else {
                     copilotStore.incrementApiCallCount();
                     const estimated = estimateMessageTokens(openAIPayload.messages || []);
-                    copilotStore.incrementTokenUsage(estimated, 0);
-                    copilotStore.recordDailyUsage(estimated, 0);
+                    copilotStore.incrementTokenUsage(estimated, 0, 0);
+                    copilotStore.recordDailyUsage(estimated, 0, 0);
                 }
                 res.end();
             });
@@ -200,14 +217,15 @@ async function handleOpenAIChatCompletions(req, res) {
             }
             const inputTokens = parsed.usage?.prompt_tokens || 0;
             const outputTokens = parsed.usage?.completion_tokens || 0;
+            const cacheHitTokens = extractCacheHitTokens(parsed.usage);
             copilotStore.incrementApiCallCount();
             if (inputTokens > 0 || outputTokens > 0) {
-                copilotStore.incrementTokenUsage(inputTokens, outputTokens);
-                copilotStore.recordDailyUsage(inputTokens, outputTokens);
+                copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
+                copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
             } else {
                 const estimated = estimateMessageTokens(openAIPayload.messages || []);
-                copilotStore.incrementTokenUsage(estimated, 0);
-                copilotStore.recordDailyUsage(estimated, 0);
+                copilotStore.incrementTokenUsage(estimated, 0, 0);
+                copilotStore.recordDailyUsage(estimated, 0, 0);
             }
             sendJson(res, 200, parsed);
         }
@@ -297,6 +315,7 @@ async function handleAnthropicMessages(req, res) {
             let buffer = '';
             let streamInputTokens = 0;
             let streamOutputTokens = 0;
+            let streamCacheHitTokens = 0;
 
             const processLines = (lines) => {
                 for (const line of lines) {
@@ -317,6 +336,7 @@ async function handleAnthropicMessages(req, res) {
                             if (openAIChunk.usage) {
                                 streamInputTokens = openAIChunk.usage.prompt_tokens || streamInputTokens;
                                 streamOutputTokens = openAIChunk.usage.completion_tokens || streamOutputTokens;
+                                streamCacheHitTokens = extractCacheHitTokens(openAIChunk.usage) || streamCacheHitTokens;
                             }
 
                             for (const event of anthropicEvents) {
@@ -357,13 +377,13 @@ async function handleAnthropicMessages(req, res) {
                 // 记录用量
                 if (streamInputTokens > 0 || streamOutputTokens > 0) {
                     copilotStore.incrementApiCallCount();
-                    copilotStore.incrementTokenUsage(streamInputTokens, streamOutputTokens);
-                    copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens);
+                    copilotStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                    copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
                 } else {
                     copilotStore.incrementApiCallCount();
                     const estimated = estimateMessageTokens(openAIPayload.messages || []);
-                    copilotStore.incrementTokenUsage(estimated, 0);
-                    copilotStore.recordDailyUsage(estimated, 0);
+                    copilotStore.incrementTokenUsage(estimated, 0, 0);
+                    copilotStore.recordDailyUsage(estimated, 0, 0);
                 }
                 if (!res.destroyed) {
                     res.end();
@@ -388,14 +408,15 @@ async function handleAnthropicMessages(req, res) {
             const anthropicResponse = openAIToAnthropic(openAIResponse);
             const inputTokens = openAIResponse.usage?.prompt_tokens || 0;
             const outputTokens = openAIResponse.usage?.completion_tokens || 0;
+            const cacheHitTokens = extractCacheHitTokens(openAIResponse.usage);
             copilotStore.incrementApiCallCount();
             if (inputTokens > 0 || outputTokens > 0) {
-                copilotStore.incrementTokenUsage(inputTokens, outputTokens);
-                copilotStore.recordDailyUsage(inputTokens, outputTokens);
+                copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
+                copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
             } else {
                 const estimated = estimateMessageTokens(anthropicPayload.messages || []);
-                copilotStore.incrementTokenUsage(estimated, 0);
-                copilotStore.recordDailyUsage(estimated, 0);
+                copilotStore.incrementTokenUsage(estimated, 0, 0);
+                copilotStore.recordDailyUsage(estimated, 0, 0);
             }
             sendJson(res, 200, anthropicResponse);
         }
@@ -490,18 +511,139 @@ async function handleAnthropicModels(req, res) {
     }
 }
 
+/* ==================== Responses API 模式 ==================== */
+
+/**
+ * 处理 OpenAI Responses API 请求 (/copilot/v1/responses)
+ */
+async function handleResponsesAPI(req, res) {
+    try {
+        const proxyUrl = extractProxyFromHeaders(req);
+        const authResult = await authenticateAndGetToken(req);
+        if (authResult.error) {
+            sendOpenAIError(res, authResult.error.status, authResult.error.message);
+            return;
+        }
+
+        const body = await parseBody(req);
+        const responsesReq = JSON.parse(body);
+
+        // Responses -> Chat Completions
+        const chatReq = responsesRequestToChat(responsesReq);
+
+        const response = await createChatCompletions(
+            authResult.copilotToken,
+            copilotState.vsCodeVersion,
+            chatReq,
+            copilotState.accountType,
+            proxyUrl
+        );
+
+        if (response.status >= 400) {
+            const errorBody = await readBody(response.body);
+            sendOpenAIError(res, response.status, `Upstream error: ${errorBody.slice(0, 500)}`);
+            return;
+        }
+
+        if (responsesReq.stream) {
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                Connection: 'keep-alive'
+            });
+
+            const streamState = createResponsesStreamState();
+            let buffer = Buffer.alloc(0);
+            let streamInputTokens = 0;
+            let streamOutputTokens = 0;
+            let streamCacheHitTokens = 0;
+            let streamModel = '';
+
+            response.body.on('data', (chunk) => {
+                buffer = Buffer.concat([buffer, chunk]);
+                let start = 0;
+                let newLineIndex;
+                while ((newLineIndex = buffer.indexOf(10, start)) !== -1) {
+                    const line = buffer.toString('utf8', start, newLineIndex).trim();
+                    start = newLineIndex + 1;
+                    if (!line || line.startsWith(':')) continue;
+                    if (!line.startsWith('data: ')) continue;
+                    const raw = line.slice(6).trim();
+                    if (raw === '[DONE]') continue;
+
+                    let data;
+                    try { data = JSON.parse(raw); } catch { continue; }
+
+                    if (data.usage) {
+                        streamInputTokens = data.usage.prompt_tokens || 0;
+                        streamOutputTokens = data.usage.completion_tokens || 0;
+                        streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                    }
+                    if (data.model) streamModel = data.model;
+
+                    const events = chatChunkToResponsesEvents(data, streamState);
+                    for (const ev of events) {
+                        res.write(`event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`);
+                    }
+                }
+                if (start > 0) buffer = buffer.subarray(start);
+            });
+
+            response.body.on('end', () => {
+                if (!streamState.started || !streamState.finished) {
+                    if (streamState.reasoningOpen) {
+                        res.write(`event: response.reasoning_summary_part.done\ndata: ${JSON.stringify({type: 'response.reasoning_summary_part.done', output_index: streamState.outputIndex, summary_index: 0, item_id: streamState.reasoningItemId, part: {type: 'summary_text', text: streamState.reasoningText}})}\n\n`);
+                        res.write(`event: response.output_item.done\ndata: ${JSON.stringify({type: 'response.output_item.done', output_index: streamState.outputIndex, item: {type: 'reasoning', id: streamState.reasoningItemId, status: 'completed', summary: [{type: 'summary_text', text: streamState.reasoningText}]}})}\n\n`);
+                        streamState.outputIndex++;
+                    }
+                    if (streamState.messageOpen) {
+                        res.write(`event: response.content_part.done\ndata: ${JSON.stringify({type: 'response.content_part.done', output_index: streamState.outputIndex, content_index: 0, part: {type: 'output_text', text: streamState.textBuffer, annotations: []}})}\n\n`);
+                        res.write(`event: response.output_item.done\ndata: ${JSON.stringify({type: 'response.output_item.done', output_index: streamState.outputIndex, item: {type: 'message', id: streamState.currentMessageId, status: 'completed', role: 'assistant', content: [{type: 'output_text', text: streamState.textBuffer, annotations: []}]}})}\n\n`);
+                    }
+                    res.write(`event: response.completed\ndata: ${JSON.stringify({type: 'response.completed', response: {id: streamState.responseId, object: 'response', created_at: Math.floor(Date.now() / 1000), status: 'completed', model: streamModel || 'unknown', output: [], usage: {input_tokens: streamInputTokens, output_tokens: streamOutputTokens, total_tokens: streamInputTokens + streamOutputTokens}}})}\n\n`);
+                }
+                copilotStore.incrementApiCallCount();
+                copilotStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                res.end();
+            });
+
+            response.body.on('error', (err) => {
+                logger.error('Responses stream error:', err);
+                res.end();
+            });
+        } else {
+            const responseBody = await readBody(response.body);
+            const chatResponse = JSON.parse(responseBody);
+
+            const inputTokens = chatResponse.usage?.prompt_tokens || 0;
+            const outputTokens = chatResponse.usage?.completion_tokens || 0;
+            const cacheHitTokens = extractCacheHitTokens(chatResponse.usage);
+            copilotStore.incrementApiCallCount();
+            copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
+            copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+
+            sendJson(res, 200, chatResponseToResponses(chatResponse));
+        }
+    } catch (error) {
+        logger.error('Copilot: Failed to handle Responses API:', error);
+        sendOpenAIError(res, 500, error.message || 'Internal server error');
+    }
+}
+
 /* ==================== 根路径 ==================== */
 
 function handleRoot(req, res) {
     sendJson(res, 200, {
         name: 'GitHub Copilot API Proxy',
         version: '1.0.0',
-        modes: ['openai', 'anthropic'],
+        modes: ['openai', 'anthropic', 'responses'],
         authenticated: isAuthenticated(),
         user: copilotState.userInfo,
         endpoints: {
             openai: {
                 chatCompletions: 'POST /copilot/v1/chat/completions - OpenAI format',
+                responses: 'POST /copilot/v1/responses - OpenAI Responses API',
                 models: 'GET /copilot/v1/models - OpenAI format models'
             },
             anthropic: {
@@ -552,6 +694,7 @@ export async function routeCopilotRequest(req, res) {
 
     // ========== OpenAI 模式 ==========
     if (pathname === '/copilot/v1/chat/completions' && method === 'POST') return handleOpenAIChatCompletions(req, res);
+    if (pathname === '/copilot/v1/responses' && method === 'POST') return handleResponsesAPI(req, res);
     if (pathname === '/copilot/v1/models' && method === 'GET') return handleOpenAIModels(req, res);
 
     // ========== 根路径 ==========

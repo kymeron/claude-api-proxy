@@ -11,12 +11,13 @@ import logger from '../../utils/logger.js';
 
 /**
  * 启动 GitHub 设备码认证，返回设备码信息供 FE 展示
+ * @param {string} [proxyUrl] - 代理地址
  * @returns {Promise<{device_code: string, user_code: string, verification_uri: string, expires_in: number, interval: number}>}
  */
-export async function startDeviceAuth() {
+export async function startDeviceAuth(proxyUrl) {
     logger.info('Starting GitHub device authentication flow...');
 
-    const deviceCodeData = await getDeviceCode();
+    const deviceCodeData = await getDeviceCode(proxyUrl);
 
     logger.info(`Device code generated: ${deviceCodeData.user_code}`);
     logger.info(`Verification URI: ${deviceCodeData.verification_uri}`);
@@ -28,10 +29,11 @@ export async function startDeviceAuth() {
  * 单次查询 GitHub 设备码授权状态
  * 由前端控制轮询频率，每次调用查一次 GitHub 立即返回
  * @param {string} deviceCode - 设备代码
+ * @param {string} [proxyUrl] - 代理地址
  * @returns {Promise<{githubToken: string, userInfo: object}>}
  * @throws {Error} error.code 为 'authorization_pending' | 'slow_down' | 'expired_token'
  */
-export async function pollDeviceAuth(deviceCode) {
+export async function pollDeviceAuth(deviceCode, proxyUrl) {
     const response = await request(`${GITHUB_BASE_URL}/login/oauth/access_token`, {
         method: 'POST',
         headers: {
@@ -42,7 +44,8 @@ export async function pollDeviceAuth(deviceCode) {
             client_id: GITHUB_CLIENT_ID,
             device_code: deviceCode,
             grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
-        })
+        }),
+        proxyUrl
     });
 
     const body = await readBody(response.body);
@@ -58,10 +61,20 @@ export async function pollDeviceAuth(deviceCode) {
         const githubToken = data.access_token;
         copilotState.saveGithubToken(githubToken);
 
-        const userInfo = await getUser(githubToken, copilotState.vsCodeVersion);
+        const userInfo = await getUser(githubToken, copilotState.vsCodeVersion, proxyUrl);
         copilotState.saveUserInfo(userInfo);
 
         logger.info(`Successfully authenticated as ${userInfo.login}`);
+
+        // 认证成功后自动获取 Copilot token
+        try {
+            const tokenData = await getCopilotToken(githubToken, copilotState.vsCodeVersion, proxyUrl);
+            copilotState.saveCopilotToken(tokenData.token, tokenData.expires_at);
+            logger.info('Copilot token automatically fetched after authentication');
+        } catch (err) {
+            logger.warn(`Failed to fetch Copilot token after auth: ${err.message}. Will retry on first API call.`);
+        }
+
         return {githubToken, userInfo};
     }
 

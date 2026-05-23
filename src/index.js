@@ -5,9 +5,7 @@
  * @module index
  */
 
-import {readFileSync} from 'fs';
-import {fileURLToPath} from 'url';
-import {dirname, join} from 'path';
+import './load-env.js';
 import {networkInterfaces} from 'os';
 import {createServer} from './server.js';
 import {isAuthenticated, refreshCopilotToken} from './services/copilot/auth.js';
@@ -15,31 +13,6 @@ import {copilotStore} from './services/copilot/copilot-store.js';
 import {credentialStore} from './services/codebuddy/credential-store.js';
 import {relayStore} from './services/relay/relay-store.js';
 import logger from './utils/logger.js';
-
-// 加载 .env 配置文件
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const envFile = join(__dirname, '..', '.env');
-
-try {
-    const envContent = readFileSync(envFile, 'utf8');
-    envContent.split('\n').forEach((line) => {
-        line = line.trim();
-        if (!line || line.startsWith('#')) return;
-
-        const [key, ...valueParts] = line.split('=');
-        if (key && valueParts.length > 0) {
-            let value = valueParts.join('=').trim();
-            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-                value = value.slice(1, -1);
-            }
-            process.env[key.trim()] = value;
-        }
-    });
-    console.log('✓ 已加载 .env 配置');
-} catch (err) {
-    console.log('⚠ 未找到 .env 文件，使用默认配置');
-}
 
 // 配置
 const PORT = parseInt(process.env.PORT, 10) || 3080;
@@ -67,7 +40,7 @@ function initializeCopilot() {
     if (isAuthenticated()) {
         (async () => {
             try {
-                const proxyUrl = copilotStore.getProxyConfig().https_proxy || copilotStore.getProxyConfig().http_proxy;
+                const proxyUrl = copilotStore.getProxyUrl();
                 await refreshCopilotToken(proxyUrl);
             } catch (error) {
                 logger.warn('Failed to refresh Copilot token:', error.message);
@@ -129,11 +102,17 @@ function initializeRelay() {
         });
 
         // 优雅关闭
-        const shutdown = (signal) => {
+        const shutdown = async (signal) => {
             console.log(`\n${signal} received, shutting down gracefully...`);
-            credentialStore.flushApiCallCounts();
-            copilotStore.flushApiCallCounts();
-            relayStore.flushApiCallCounts();
+            try {
+                await Promise.all([
+                    credentialStore.flushApiCallCounts(),
+                    copilotStore.flushApiCallCounts(),
+                    relayStore.flushApiCallCounts()
+                ]);
+            } catch (err) {
+                console.error('Error flushing data during shutdown:', err.message);
+            }
             server.close(() => {
                 console.log('Server closed');
                 process.exit(0);

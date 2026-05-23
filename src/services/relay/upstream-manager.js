@@ -1,37 +1,19 @@
 /**
  * 上游配置管理器
- * 管理多个上游配置（base_url + api_key + proxy）、活跃上游手动切换、重试
+ * 管理多个上游配置（base_url + api_key + proxy）、活跃上游手动切换
+ * 使用文件存储（upstreams.json、settings.json）
  * @module services/relay/upstream-manager
  */
 
 import {readFileSync, writeFileSync, existsSync, mkdirSync} from 'fs';
 import {join} from 'path';
+import {request, readBody} from '../../utils/http-client.js';
+import {getProxyAgent} from './api.js';
 import {buildUrl} from '../../utils/helpers.js';
 import logger from '../../utils/logger.js';
 
 const UPSTREAMS_FILE = 'upstreams.json';
 const SETTINGS_FILE = 'settings.json';
-
-// 单上游重试次数，范围 1-3
-const DEFAULT_RETRY_COUNT = 3;
-const MIN_RETRY_COUNT = 1;
-const MAX_RETRY_COUNT = 5;
-
-/**
- * 获取兜底模型名：优先 model_map 第一个 value，其次 models[0]
- */
-function _getFallbackModel(upstream) {
-    if (upstream.model_map && typeof upstream.model_map === 'object') {
-        const values = Object.values(upstream.model_map);
-        if (values.length > 0) return values[0];
-    }
-    if (Array.isArray(upstream.models) && upstream.models.length > 0) {
-        return upstream.models[0];
-    }
-    return null;
-}
-
-export {MIN_RETRY_COUNT, MAX_RETRY_COUNT};
 
 export class UpstreamManager {
     constructor(tenantDir) {
@@ -41,8 +23,6 @@ export class UpstreamManager {
         this.upstreams = [];
         // 活跃上游索引，-1 表示使用第一个启用的上游
         this._activeIndex = -1;
-        // 单上游重试次数
-        this._retryCount = DEFAULT_RETRY_COUNT;
         this._loadUpstreams();
         this._loadSettings();
     }
@@ -75,9 +55,6 @@ export class UpstreamManager {
                 if (typeof data.activeIndex === 'number') {
                     this._activeIndex = data.activeIndex;
                 }
-                if (typeof data.retryCount === 'number') {
-                    this._retryCount = Math.max(MIN_RETRY_COUNT, Math.min(MAX_RETRY_COUNT, data.retryCount));
-                }
             }
         } catch (error) {
             logger.error(`Relay: 加载设置失败: ${error.message}`);
@@ -88,8 +65,7 @@ export class UpstreamManager {
         try {
             if (!existsSync(this.tenantDir)) mkdirSync(this.tenantDir, {recursive: true});
             writeFileSync(this.settingsPath, JSON.stringify({
-                activeIndex: this._activeIndex,
-                retryCount: this._retryCount
+                activeIndex: this._activeIndex
             }, null, 2), 'utf8');
         } catch (error) {
             logger.error(`Relay: 保存设置失败: ${error.message}`);
@@ -110,8 +86,7 @@ export class UpstreamManager {
             proxy: u.proxy || '',
             models: u.models || [],
             model_map: u.model_map || {},
-            model_auto: u.model_auto || false,
-            retry_count: u.retry_count || 0,
+            protocol: u.protocol || '',
             enabled: u.enabled !== false,
             created_at: u.created_at,
             is_active: i === activeIdx
@@ -179,23 +154,10 @@ export class UpstreamManager {
      */
     recordFailure(_index, _reason) {}
 
-    setRetryCount(count) {
-        if (count && count > 0) {
-            this._retryCount = Math.max(MIN_RETRY_COUNT, Math.min(MAX_RETRY_COUNT, count));
-            this._saveSettings();
-        }
-    }
-
-    getRetryCount() {
-        return this._retryCount;
-    }
-
     /**
      * 解析请求模型名到该上游实际使用的模型名
      * 1. model_map 精确匹配
-     * 2. 请求模型为 'auto'，优先 model_map 第一个 value，其次 models[0]
-     * 3. model_auto=true 兜底，优先 model_map 第一个 value，其次 models[0]
-     * 4. 以上都不匹配则透传原始模型名
+     * 2. 以上都不匹配则透传原始模型名
      */
     resolveModel(requestedModel, upstreamIndex) {
         if (upstreamIndex < 0 || upstreamIndex >= this.upstreams.length) return requestedModel;
@@ -209,34 +171,8 @@ export class UpstreamManager {
             }
         }
 
-        // 2. 请求模型为 'auto'
-        if (requestedModel === 'auto') {
-            const fallback = _getFallbackModel(upstream);
-            if (fallback) {
-                return fallback;
-            }
-        }
-
-        // 3. model_auto 兜底
-        if (upstream.model_auto === true) {
-            const fallback = _getFallbackModel(upstream);
-            if (fallback) {
-                return fallback;
-            }
-        }
-
-        // 4. 透传
+        // 2. 透传
         return requestedModel;
-    }
-
-    /**
-     * 获取指定上游的重试次数（上游级配置 > 租户级默认值）
-     */
-    getUpstreamRetryCount(index) {
-        if (index < 0 || index >= this.upstreams.length) return this._retryCount;
-        const upstream = this.upstreams[index];
-        const count = upstream.retry_count && upstream.retry_count > 0 ? upstream.retry_count : this._retryCount;
-        return Math.max(MIN_RETRY_COUNT, Math.min(MAX_RETRY_COUNT, count));
     }
 
     addUpstream(data) {
@@ -247,8 +183,7 @@ export class UpstreamManager {
             proxy: data.proxy || '',
             models: data.models || [],
             model_map: data.model_map || {},
-            model_auto: data.model_auto || false,
-            retry_count: data.retry_count || 0,
+            protocol: data.protocol || '',
             enabled: data.enabled !== false,
             created_at: Math.floor(Date.now() / 1000)
         };
@@ -270,8 +205,7 @@ export class UpstreamManager {
         if (data.enabled !== undefined) upstream.enabled = data.enabled;
         if (data.models !== undefined) upstream.models = data.models;
         if (data.model_map !== undefined) upstream.model_map = data.model_map;
-        if (data.model_auto !== undefined) upstream.model_auto = data.model_auto;
-        if (data.retry_count !== undefined) upstream.retry_count = data.retry_count;
+        if (data.protocol !== undefined) upstream.protocol = data.protocol;
         this._saveUpstreams();
         return {index, ...upstream};
     }
@@ -328,10 +262,6 @@ export class UpstreamManager {
      * 从上游获取模型列表
      */
     async _fetchFromModelsEndpoint(upstream) {
-        const {request, readBody} = await import('../../utils/http-client.js');
-        const {HttpsProxyAgent} = await import('https-proxy-agent');
-        const {SocksProxyAgent} = await import('socks-proxy-agent');
-
         const url = buildUrl(upstream.base_url, 'models');
         const headers = {
             Authorization: `Bearer ${upstream.api_key}`,
@@ -340,10 +270,9 @@ export class UpstreamManager {
         };
         const options = {method: 'GET', headers, timeout: 15000};
 
-        if (upstream.proxy) {
-            options.agent = upstream.proxy.startsWith('socks')
-                ? new SocksProxyAgent(upstream.proxy)
-                : new HttpsProxyAgent(upstream.proxy);
+        const proxyAgent = getProxyAgent(upstream.proxy);
+        if (proxyAgent) {
+            options.agent = proxyAgent;
         }
 
         try {
@@ -384,41 +313,21 @@ export class UpstreamManager {
             }
         }
 
-        const {request, readBody} = await import('../../utils/http-client.js');
-        const {HttpsProxyAgent} = await import('https-proxy-agent');
-        const {SocksProxyAgent} = await import('socks-proxy-agent');
-
-        const url = buildUrl(upstream.base_url, 'chat/completions');
-        const headers = {
-            Authorization: `Bearer ${upstream.api_key}`,
-            'Content-Type': 'application/json',
-            'User-Agent': 'Relay/1.0'
-        };
-
-        const payload = {
-            model,
-            messages: [{role: 'user', content: 'hi'}],
-            max_tokens: 1,
-            stream: false
-        };
-
-        const options = {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(payload),
-            timeout: 30000
-        };
-
-        if (upstream.proxy) {
-            options.agent = upstream.proxy.startsWith('socks')
-                ? new SocksProxyAgent(upstream.proxy)
-                : new HttpsProxyAgent(upstream.proxy);
-        }
+        const protocol = upstream.protocol || 'openai';
 
         try {
-            const response = await request(url, options);
+            let response;
+            if (protocol === 'anthropic') {
+                response = await this._testAnthropic(upstream, model);
+            } else if (protocol === 'responses') {
+                response = await this._testResponses(upstream, model);
+            } else {
+                // 默认 openai 协议
+                response = await this._testOpenAI(upstream, model);
+            }
+
             if (response.status >= 200 && response.status < 300) {
-                return {success: true, message: `连接成功 (model: ${model})`};
+                return {success: true, message: `连接成功 (protocol: ${protocol}, model: ${model})`};
             }
             const body = await readBody(response.body);
             const errorMsg = body.length > 300 ? body.substring(0, 300) + '...' : body;
@@ -426,6 +335,88 @@ export class UpstreamManager {
         } catch (err) {
             return {success: false, message: err.message};
         }
+    }
+
+    /**
+     * OpenAI 协议测试：POST chat/completions
+     */
+    async _testOpenAI(upstream, model) {
+        const url = buildUrl(upstream.base_url, 'chat/completions');
+        const headers = {
+            Authorization: `Bearer ${upstream.api_key}`,
+            'Content-Type': 'application/json',
+            'User-Agent': 'Relay/1.0'
+        };
+        const payload = {
+            model,
+            messages: [{role: 'user', content: 'hi'}],
+            max_tokens: 1,
+            stream: false
+        };
+        const options = {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+            timeout: 30000
+        };
+        const proxyAgent = getProxyAgent(upstream.proxy);
+        if (proxyAgent) options.agent = proxyAgent;
+        return await request(url, options);
+    }
+
+    /**
+     * Anthropic 协议测试：POST /v1/messages
+     */
+    async _testAnthropic(upstream, model) {
+        const url = buildUrl(upstream.base_url, 'v1/messages');
+        const headers = {
+            'x-api-key': upstream.api_key,
+            'anthropic-version': '2023-06-01',
+            'Content-Type': 'application/json',
+            'User-Agent': 'Relay/1.0'
+        };
+        const payload = {
+            model,
+            max_tokens: 1,
+            stream: false,
+            messages: [{role: 'user', content: 'hi'}]
+        };
+        const options = {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+            timeout: 30000
+        };
+        const proxyAgent = getProxyAgent(upstream.proxy);
+        if (proxyAgent) options.agent = proxyAgent;
+        return await request(url, options);
+    }
+
+    /**
+     * Responses 协议测试：POST /v1/responses
+     */
+    async _testResponses(upstream, model) {
+        const url = buildUrl(upstream.base_url, 'v1/responses');
+        const headers = {
+            Authorization: `Bearer ${upstream.api_key}`,
+            'Content-Type': 'application/json',
+            'User-Agent': 'Relay/1.0'
+        };
+        const payload = {
+            model,
+            input: 'hi',
+            max_output_tokens: 1,
+            stream: false
+        };
+        const options = {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+            timeout: 30000
+        };
+        const proxyAgent = getProxyAgent(upstream.proxy);
+        if (proxyAgent) options.agent = proxyAgent;
+        return await request(url, options);
     }
 
     getEnabledCount() {

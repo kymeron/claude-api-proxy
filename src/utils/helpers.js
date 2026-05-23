@@ -30,27 +30,12 @@ export function buildUrl(baseUrl, endpoint) {
         finalEndpoint = finalEndpoint.slice(1);
     }
 
-    // 提取 endpoint 中的版本号（如 v1/chat/completions -> v1）
-    const endpointVersionMatch = finalEndpoint.match(/^(v\d+)\//);
-    const endpointVersion = endpointVersionMatch ? endpointVersionMatch[1] : null;
-
-    // 检查 baseUrl 末尾是否已有版本号
-    const baseUrlVersionMatch = finalUrl.match(/\/(v\d+)\/?$/);
-    const baseUrlVersion = baseUrlVersionMatch ? baseUrlVersionMatch[1] : null;
-
-    // 如果 baseUrl 末尾的版本号与 endpoint 开头的版本号相同，移除 baseUrl 末尾的版本号
-    if (baseUrlVersion && endpointVersion && baseUrlVersion === endpointVersion) {
-        finalUrl = finalUrl.replace(/\/v\d+\/?$/, '');
-    }
-
     // 确保 baseUrl 以 / 结尾
     if (!finalUrl.endsWith('/')) {
         finalUrl += '/';
     }
 
-    const result = finalUrl + finalEndpoint;
-
-    return result;
+    return finalUrl + finalEndpoint;
 }
 
 /**

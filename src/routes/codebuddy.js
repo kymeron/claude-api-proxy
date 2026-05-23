@@ -5,10 +5,41 @@
 
 import {createChatCompletions, getModels} from '../services/codebuddy/api.js';
 import {anthropicToOpenAI, openAIToAnthropic, ClaudeStreamState, SSEWriter} from '../services/codebuddy/translator.js';
+import {rewriteOpenAIStream, injectBehaviorRules} from '../transformer/shared-translator.js';
+import {
+    responsesRequestToChat,
+    chatResponseToResponses,
+    createResponsesStreamState,
+    chatChunkToResponsesEvents,
+    compactRequestToChat,
+    chatResponseToCompact
+} from '../transformer/responses-translator.js';
 import {authenticateRequest, getCredential} from '../services/codebuddy/auth.js';
 import {credentialStore} from '../services/codebuddy/credential-store.js';
-import {DEFAULT_BASE_URL} from '../services/codebuddy/config.js';
+import {BLOCKED_DOMAINS, getCodebuddyBaseUrl} from '../services/codebuddy/config.js';
 import logger from '../utils/logger.js';
+
+/**
+ * 从上游 usage 中提取缓存命中 token 数
+ * DeepSeek: prompt_cache_hit_tokens
+ * OpenAI: prompt_tokens_details.cached_tokens
+ */
+function extractCacheHitTokens(usage) {
+    if (!usage) return 0;
+    if (usage.prompt_cache_hit_tokens) return usage.prompt_cache_hit_tokens;
+    if (usage.prompt_tokens_details?.cached_tokens) return usage.prompt_tokens_details.cached_tokens;
+    return 0;
+}
+
+/**
+ * 选择用于统计记录的模型名
+ * 优先使用上游返回的模型名，但如果上游返回的是端点 ID（ep- 前缀）等不可读标识，
+ * 则回退到客户端请求的模型名
+ */
+function pickModelName(upstreamModel, clientModel) {
+    if (upstreamModel && !upstreamModel.startsWith('ep-')) return upstreamModel;
+    return clientModel || upstreamModel;
+}
 
 /**
  * 发送 JSON 响应
@@ -107,8 +138,8 @@ async function handleOpenAIChatCompletions(req, res) {
         const body = await parseBody(req);
         const openAIPayload = JSON.parse(body);
 
-        // 请求上游在流式响应末尾返回 usage
-        openAIPayload.stream_options = {include_usage: true};
+        // 注入行为规则（统一在路由层注入一次）
+        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
 
         // 直接调用 CodeBuddy API（已经是 OpenAI 格式）
         const response = await createChatCompletions(openAIPayload, {
@@ -119,7 +150,7 @@ async function handleOpenAIChatCompletions(req, res) {
             requestId: req.headers['x-request-id']
         });
 
-        // 直接透传响应
+        // 流式响应：使用 rewriteOpenAIStream 对 reasoning_content 做缓冲合并，避免 thinking 被逐 token 刷成多个块
         if (openAIPayload.stream) {
             res.writeHead(200, {
                 'Content-Type': 'text/event-stream',
@@ -127,40 +158,10 @@ async function handleOpenAIChatCompletions(req, res) {
                 Connection: 'keep-alive'
             });
 
-            let streamInputTokens = 0;
-            let streamOutputTokens = 0;
-            let lineBuffer = '';
-
-            response.body.on('data', (chunk) => {
-                res.write(chunk);
-                lineBuffer += chunk.toString('utf8');
-                const lines = lineBuffer.split('\n');
-                lineBuffer = lines.pop();
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed.startsWith('data: ')) continue;
-                    const raw = trimmed.slice(6).trim();
-                    if (raw === '[DONE]') continue;
-                    try {
-                        const data = JSON.parse(raw);
-                        if (data.usage) {
-                            streamInputTokens = data.usage.prompt_tokens || 0;
-                            streamOutputTokens = data.usage.completion_tokens || 0;
-                        }
-                    } catch {}
-                }
-            });
-
-            response.body.on('end', () => {
+            rewriteOpenAIStream(res, response.body, (inputTokens, outputTokens, cacheHitTokens, credit, model) => {
                 credentialStore.incrementApiCallCount();
-                credentialStore.incrementTokenUsage(streamInputTokens, streamOutputTokens);
-                credentialStore.recordDailyUsage(streamInputTokens, streamOutputTokens);
-                res.end();
-            });
-
-            response.body.on('error', (err) => {
-                logger.error('Stream error:', err);
-                res.end();
+                credentialStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
+                credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
             });
         } else {
             const {aggregateStreamResponse} = await import('../services/codebuddy/api.js');
@@ -168,9 +169,10 @@ async function handleOpenAIChatCompletions(req, res) {
 
             const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
             const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
+            const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
             credentialStore.incrementApiCallCount();
-            credentialStore.incrementTokenUsage(inputTokens, outputTokens);
-            credentialStore.recordDailyUsage(inputTokens, outputTokens);
+            credentialStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
+            credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
 
             const openAIResponse = {
                 id: aggregated.id || `chatcmpl_${Date.now()}`,
@@ -255,8 +257,8 @@ async function handleAnthropicMessages(req, res) {
         // 转换为 OpenAI 格式
         const openAIPayload = anthropicToOpenAI(anthropicPayload);
 
-        // 请求上游在流式响应末尾返回 usage
-        openAIPayload.stream_options = {include_usage: true};
+        // 注入行为规则（translateMessages 不再内部注入，统一在路由层注入一次）
+        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
 
         // 调用 CodeBuddy API
         const response = await createChatCompletions(openAIPayload, {
@@ -283,6 +285,8 @@ async function handleAnthropicMessages(req, res) {
             let partialTextBuffer = '';
             let streamInputTokens = 0;
             let streamOutputTokens = 0;
+            let streamCacheHitTokens = 0;
+            let streamModel = '';
 
             const responseBody = response.body;
 
@@ -315,7 +319,9 @@ async function handleAnthropicMessages(req, res) {
                     if (data.usage) {
                         streamInputTokens = data.usage.prompt_tokens || 0;
                         streamOutputTokens = data.usage.completion_tokens || 0;
+                        streamCacheHitTokens = extractCacheHitTokens(data.usage);
                     }
+                    if (data.model) streamModel = data.model;
 
                     state.startMessage(data.model);
 
@@ -396,8 +402,8 @@ async function handleAnthropicMessages(req, res) {
                 }
                 state.endMessage(state.finalStopReason);
                 credentialStore.incrementApiCallCount();
-                credentialStore.incrementTokenUsage(streamInputTokens, streamOutputTokens);
-                credentialStore.recordDailyUsage(streamInputTokens, streamOutputTokens);
+                credentialStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                credentialStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
                 res.end();
             });
 
@@ -415,9 +421,10 @@ async function handleAnthropicMessages(req, res) {
 
             const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
             const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
+            const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
             credentialStore.incrementApiCallCount();
-            credentialStore.incrementTokenUsage(inputTokens, outputTokens);
-            credentialStore.recordDailyUsage(inputTokens, outputTokens);
+            credentialStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
+            credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
 
             const openAIResponse = {
                 id: aggregated.id || `msg_${Date.now()}`,
@@ -443,9 +450,6 @@ async function handleAnthropicMessages(req, res) {
                 }
             };
 
-            logger.info(
-                `CodeBuddy response - content length: ${aggregated.content?.length || 0}, tool calls: ${aggregated.toolCalls.length}`
-            );
             const anthropicResponse = openAIToAnthropic(openAIResponse);
 
             sendJson(res, 200, anthropicResponse);
@@ -511,6 +515,193 @@ async function handleAnthropicModels(req, res) {
 }
 
 /**
+ * 处理 OpenAI Responses API 请求 (/codebuddy/v1/responses)
+ * 将 Responses 格式转为 Chat Completions 发给上游，再将响应转回 Responses 格式
+ */
+async function handleResponsesAPI(req, res) {
+    try {
+        const authResult = authenticateAndGetCredential(req.headers);
+        if (authResult.error) {
+            sendOpenAIError(res, authResult.error.status, authResult.error.message);
+            return;
+        }
+
+        const body = await parseBody(req);
+        const responsesReq = JSON.parse(body);
+
+        // Responses -> Chat Completions
+        const chatReq = responsesRequestToChat(responsesReq);
+        chatReq.messages = injectBehaviorRules(chatReq.messages);
+
+        const response = await createChatCompletions(chatReq, {
+            credential: authResult.credential,
+            conversationId: req.headers['x-conversation-id'],
+            conversationRequestId: req.headers['x-conversation-request-id'],
+            conversationMessageId: req.headers['x-conversation-message-id'],
+            requestId: req.headers['x-request-id']
+        });
+
+        if (responsesReq.stream) {
+            // 流式：解析 Chat SSE -> Responses SSE
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                Connection: 'keep-alive'
+            });
+
+            const streamState = createResponsesStreamState();
+            let buffer = Buffer.alloc(0);
+            let streamInputTokens = 0;
+            let streamOutputTokens = 0;
+            let streamCacheHitTokens = 0;
+            let streamModel = '';
+
+            response.body.on('data', (chunk) => {
+                buffer = Buffer.concat([buffer, chunk]);
+                let start = 0;
+                let newLineIndex;
+                while ((newLineIndex = buffer.indexOf(10, start)) !== -1) {
+                    const line = buffer.toString('utf8', start, newLineIndex).trim();
+                    start = newLineIndex + 1;
+                    if (!line || line.startsWith(':')) continue;
+                    if (!line.startsWith('data: ')) continue;
+                    const raw = line.slice(6).trim();
+                    if (raw === '[DONE]') continue;
+
+                    let data;
+                    try { data = JSON.parse(raw); } catch { continue; }
+
+                    if (data.usage) {
+                        streamInputTokens = data.usage.prompt_tokens || 0;
+                        streamOutputTokens = data.usage.completion_tokens || 0;
+                        streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                    }
+                    if (data.model) streamModel = data.model;
+
+                    const events = chatChunkToResponsesEvents(data, streamState);
+                    for (const ev of events) {
+                        res.write(`event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`);
+                    }
+                }
+                if (start > 0) buffer = buffer.subarray(start);
+            });
+
+            response.body.on('end', () => {
+                // 如果没有正常完成，兜底发送 response.completed
+                if (!streamState.started || !streamState.finished) {
+                    if (streamState.reasoningOpen) {
+                        res.write(`event: response.reasoning_summary_part.done\ndata: ${JSON.stringify({type: 'response.reasoning_summary_part.done', output_index: streamState.outputIndex, summary_index: 0, item_id: streamState.reasoningItemId, part: {type: 'summary_text', text: streamState.reasoningText}})}\n\n`);
+                        res.write(`event: response.output_item.done\ndata: ${JSON.stringify({type: 'response.output_item.done', output_index: streamState.outputIndex, item: {type: 'reasoning', id: streamState.reasoningItemId, status: 'completed', summary: [{type: 'summary_text', text: streamState.reasoningText}]}})}\n\n`);
+                        streamState.outputIndex++;
+                    }
+                    if (streamState.messageOpen) {
+                        res.write(`event: response.content_part.done\ndata: ${JSON.stringify({type: 'response.content_part.done', output_index: streamState.outputIndex, content_index: 0, part: {type: 'output_text', text: streamState.textBuffer, annotations: []}})}\n\n`);
+                        res.write(`event: response.output_item.done\ndata: ${JSON.stringify({type: 'response.output_item.done', output_index: streamState.outputIndex, item: {type: 'message', id: streamState.currentMessageId, status: 'completed', role: 'assistant', content: [{type: 'output_text', text: streamState.textBuffer, annotations: []}]}})}\n\n`);
+                    }
+                    res.write(`event: response.completed\ndata: ${JSON.stringify({type: 'response.completed', response: {id: streamState.responseId, object: 'response', created_at: Math.floor(Date.now() / 1000), status: 'completed', model: streamModel || 'unknown', output: [], usage: {input_tokens: streamInputTokens, output_tokens: streamOutputTokens, total_tokens: streamInputTokens + streamOutputTokens}}})}\n\n`);
+                }
+                credentialStore.incrementApiCallCount();
+                credentialStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                credentialStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                res.end();
+            });
+
+            response.body.on('error', (err) => {
+                logger.error('Responses stream error:', err);
+                res.end();
+            });
+        } else {
+            // 非流式
+            const {aggregateStreamResponse} = await import('../services/codebuddy/api.js');
+            const aggregated = await aggregateStreamResponse(response.body);
+
+            const inputTokens = aggregated.usage?.prompt_tokens || 0;
+            const outputTokens = aggregated.usage?.completion_tokens || 0;
+            const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+            credentialStore.incrementApiCallCount();
+            credentialStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
+            credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+
+            const chatResponse = {
+                id: aggregated.id || `chatcmpl_${Date.now()}`,
+                object: 'chat.completion',
+                created: Math.floor(Date.now() / 1000),
+                model: aggregated.model || chatReq.model,
+                choices: [{
+                    index: 0,
+                    message: {
+                        role: 'assistant',
+                        content: aggregated.content || null,
+                        reasoning_content: aggregated.reasoningContent || undefined,
+                        tool_calls: aggregated.toolCalls.length > 0 ? aggregated.toolCalls : undefined
+                    },
+                    finish_reason: aggregated.finishReason || 'stop'
+                }],
+                usage: aggregated.usage || {prompt_tokens: 0, completion_tokens: 0, total_tokens: 0}
+            };
+
+            sendJson(res, 200, chatResponseToResponses(chatResponse));
+        }
+    } catch (error) {
+        logger.error('Failed to handle Responses API:', error);
+        sendOpenAIError(res, 500, error.message || 'Internal server error');
+    }
+}
+
+/**
+ * 处理 OpenAI Responses Compact 请求 (/codebuddy/v1/responses/compact)
+ */
+async function handleResponsesCompact(req, res) {
+    try {
+        const authResult = authenticateAndGetCredential(req.headers);
+        if (authResult.error) {
+            sendOpenAIError(res, authResult.error.status, authResult.error.message);
+            return;
+        }
+
+        const body = await parseBody(req);
+        const compactReq = JSON.parse(body);
+
+        // Compact -> Chat Completions
+        const chatReq = compactRequestToChat(compactReq);
+        chatReq.messages = injectBehaviorRules(chatReq.messages);
+
+        const response = await createChatCompletions(chatReq, {
+            credential: authResult.credential,
+            conversationId: req.headers['x-conversation-id']
+        });
+
+        const {aggregateStreamResponse} = await import('../services/codebuddy/api.js');
+        const aggregated = await aggregateStreamResponse(response.body);
+
+        const inputTokens = aggregated.usage?.prompt_tokens || 0;
+        const outputTokens = aggregated.usage?.completion_tokens || 0;
+        const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+        credentialStore.incrementApiCallCount();
+        credentialStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
+        credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+
+        const chatResponse = {
+            id: aggregated.id || `chatcmpl_${Date.now()}`,
+            object: 'chat.completion',
+            created: Math.floor(Date.now() / 1000),
+            model: aggregated.model || chatReq.model,
+            choices: [{
+                index: 0,
+                message: {role: 'assistant', content: aggregated.content || null},
+                finish_reason: aggregated.finishReason || 'stop'
+            }],
+            usage: aggregated.usage || {prompt_tokens: 0, completion_tokens: 0, total_tokens: 0}
+        };
+
+        sendJson(res, 200, chatResponseToCompact(chatResponse));
+    } catch (error) {
+        logger.error('Failed to handle Responses Compact:', error);
+        sendOpenAIError(res, 500, error.message || 'Internal server error');
+    }
+}
+
+/**
  * 处理凭证管理端点
  */
 async function handleCredentials(req, res, method, pathname) {
@@ -539,6 +730,17 @@ async function handleCredentials(req, res, method, pathname) {
             if (!data.bearer_token) {
                 sendOpenAIError(res, 400, 'bearer_token is required');
                 return;
+            }
+
+            // 阻止使用已废弃域名
+            try {
+                const credentialHost = new URL(getCodebuddyBaseUrl(data.base_url)).host;
+                if (BLOCKED_DOMAINS.includes(credentialHost)) {
+                    sendOpenAIError(res, 400, `域名 ${credentialHost} 已废弃，不允许添加凭证`);
+                    return;
+                }
+            } catch {
+                // base_url 格式无效，由下游处理
             }
 
             const success = tm.addCredentialWithData(data, data.filename);
@@ -627,6 +829,8 @@ function handleRoot(req, res) {
         endpoints: {
             openai: {
                 chatCompletions: 'POST /codebuddy/v1/chat/completions - OpenAI format',
+                responses: 'POST /codebuddy/v1/responses - Responses API',
+                responsesCompact: 'POST /codebuddy/v1/responses/compact - Responses Compact API',
                 models: 'GET /codebuddy/v1/models - OpenAI format models'
             },
             anthropic: {
@@ -698,12 +902,20 @@ export async function routeCodebuddyRequest(req, res) {
         return handleOpenAIChatCompletions(req, res);
     }
 
+    if (pathname === '/codebuddy/v1/responses/compact' && method === 'POST') {
+        return handleResponsesCompact(req, res);
+    }
+
+    if (pathname === '/codebuddy/v1/responses' && method === 'POST') {
+        return handleResponsesAPI(req, res);
+    }
+
     if (pathname === '/codebuddy/v1/models' && method === 'GET') {
         return handleOpenAIModels(req, res);
     }
 
     // OpenAI 模式的根路径
-    if (pathname === '/codebuddy' || pathname === '/codebuddy/') {
+    if (pathname === '/codebuddy' || pathname === '/codebuddy/' || pathname === '/codebuddy/v1' || pathname === '/codebuddy/v1/') {
         return handleRoot(req, res);
     }
 

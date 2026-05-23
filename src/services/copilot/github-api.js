@@ -40,10 +40,12 @@ function createProxyAgent(proxyUrl) {
 
 /**
  * 获取设备代码
+ * @param {string} [proxyUrl] - 代理地址
+ * @param {number} [timeout=30000] - 请求超时（毫秒），默认 30s
  * @returns {Promise<{device_code: string, user_code: string, verification_uri: string, expires_in: number, interval: number}>}
  */
-export async function getDeviceCode() {
-    const response = await request(`${GITHUB_BASE_URL}/login/device/code`, {
+export async function getDeviceCode(proxyUrl, timeout = 30000) {
+    const options = {
         method: 'POST',
         headers: {
             ...standardHeaders(),
@@ -52,8 +54,12 @@ export async function getDeviceCode() {
         body: JSON.stringify({
             client_id: GITHUB_CLIENT_ID,
             scope: GITHUB_APP_SCOPES
-        })
-    });
+        }),
+        timeout,
+        proxyUrl
+    };
+
+    const response = await request(`${GITHUB_BASE_URL}/login/device/code`, options);
 
     if (response.status !== 200) {
         throw new Error(`Failed to get device code: ${response.status}`);
@@ -118,10 +124,11 @@ export async function pollAccessToken(deviceCode, interval = 5, expiresIn = 900)
  * @param {string} vsCodeVersion - VS Code 版本
  * @returns {Promise<{login: string, id: number, avatar_url: string}>}
  */
-export async function getUser(githubToken, vsCodeVersion) {
+export async function getUser(githubToken, vsCodeVersion, proxyUrl) {
     const response = await request(`${GITHUB_API_BASE_URL}/user`, {
         method: 'GET',
-        headers: githubHeaders(githubToken, vsCodeVersion)
+        headers: githubHeaders(githubToken, vsCodeVersion),
+        proxyUrl
     });
 
     const body = await readBody(response.body);

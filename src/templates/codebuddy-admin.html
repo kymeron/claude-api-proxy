@@ -40,10 +40,6 @@
                 align-items: center;
                 gap: 16px;
             }
-            .header-right span {
-                font-size: 0.9rem;
-                opacity: 0.9;
-            }
             .card {
                 background: white;
                 border-radius: 12px;
@@ -154,6 +150,17 @@
                 border-left-color: #f59e0b;
                 opacity: 0.6;
             }
+            .credential-item.domain-blocked {
+                border-left-color: #dc2626;
+                opacity: 0.5;
+                background: repeating-linear-gradient(
+                    -45deg,
+                    transparent,
+                    transparent 8px,
+                    rgba(220, 38, 38, 0.06) 8px,
+                    rgba(220, 38, 38, 0.06) 16px
+                );
+            }
             .credential-item.active-credential {
                 border-left-color: #10b981;
                 background: #f0fdf4;
@@ -237,44 +244,6 @@
                 align-items: center;
                 gap: 10px;
             }
-            .toggle-switch {
-                position: relative;
-                width: 48px;
-                height: 26px;
-                background: #d1d5db;
-                border-radius: 13px;
-                cursor: pointer;
-                transition: background 0.3s;
-            }
-            .toggle-switch.active {
-                background: #667eea;
-            }
-            .toggle-switch::after {
-                content: '';
-                position: absolute;
-                top: 3px;
-                left: 3px;
-                width: 20px;
-                height: 20px;
-                background: white;
-                border-radius: 50%;
-                transition: transform 0.3s;
-            }
-            .toggle-switch.active::after {
-                transform: translateX(22px);
-            }
-            .rotation-input {
-                width: 60px;
-                padding: 6px 10px;
-                border: 1px solid #d1d5db;
-                border-radius: 6px;
-                font-size: 0.9rem;
-                text-align: center;
-            }
-            .rotation-input:focus {
-                outline: none;
-                border-color: #667eea;
-            }
             .api-key-display {
                 background: #f1f5f9;
                 padding: 14px 18px;
@@ -329,17 +298,17 @@
             }
             .stats-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 16px;
+                grid-template-columns: repeat(6, 1fr);
+                gap: 12px;
             }
             .stat-item {
                 background: #f8fafc;
                 border-radius: 8px;
-                padding: 20px;
+                padding: 16px;
                 text-align: center;
             }
             .stat-value {
-                font-size: 2rem;
+                font-size: 1.5rem;
                 font-weight: 700;
                 color: #667eea;
                 line-height: 1.2;
@@ -422,6 +391,35 @@
                 font-size: 0.82rem;
                 color: #7c3aed;
             }
+            .guide-model-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 6px;
+                font-size: 0.82rem;
+            }
+            .guide-model-table th {
+                background: #f1f5f9;
+                padding: 6px 10px;
+                text-align: left;
+                border-bottom: 1px solid #e2e8f0;
+                font-weight: 600;
+                color: #374151;
+            }
+            .guide-model-table th:last-child {
+                text-align: center;
+                width: 50px;
+            }
+            .guide-model-table td {
+                padding: 5px 10px;
+                border-bottom: 1px solid #f1f5f9;
+                color: #4b5563;
+            }
+            .guide-model-table td:last-child {
+                text-align: center;
+            }
+            .guide-model-table td code {
+                font-size: 0.78rem;
+            }
             .guide-code-block {
                 position: relative;
                 background: #1e293b;
@@ -444,12 +442,12 @@
                 position: absolute;
                 top: 8px;
                 right: 8px;
-                background: rgba(255,255,255,0.1);
+                background: rgba(255, 255, 255, 0.1);
                 color: #e2e8f0;
                 border: none;
             }
             .guide-copy-btn:hover {
-                background: rgba(255,255,255,0.2);
+                background: rgba(255, 255, 255, 0.2);
             }
         </style>
         <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
@@ -475,13 +473,14 @@
             const API_BASE = '/codebuddyFE';
             let currentAuthState = null;
             let pollInterval = null;
-            let rotationConfig = {autoRotationEnabled: true, rotationCount: 1, manualSelectedIndex: null};
+            let manualSelectedIndex = null;
             let apiKeyVisible = false;
             let apiKeyPlain = '';
             let apiKeyMasked = '';
             let currentMonth = '';
             let apiCallsChartInstance = null;
             let tokensChartInstance = null;
+            let creditChartInstance = null;
 
             function showToast(message, type = 'success') {
                 const toast = document.getElementById('toast');
@@ -496,11 +495,7 @@
                 try {
                     const response = await fetch(API_BASE + '/status');
                     const data = await response.json();
-                    rotationConfig = {
-                        autoRotationEnabled: data.autoRotationEnabled,
-                        rotationCount: data.rotationCount,
-                        manualSelectedIndex: data.manualSelectedIndex
-                    };
+                    manualSelectedIndex = data.manualSelectedIndex;
 
                     // Render the page with status data
                     renderTenantPage({
@@ -510,7 +505,9 @@
                         hasCredentials: data.hasCredentials,
                         customApiCallCount: data.usage?.custom_api_call_count || 0,
                         customInputTokens: data.usage?.custom_input_tokens || 0,
-                        customOutputTokens: data.usage?.custom_output_tokens || 0
+                        customOutputTokens: data.usage?.custom_output_tokens || 0,
+                        customCacheHitTokens: data.usage?.custom_cache_hit_tokens || 0,
+                        customCredit: data.usage?.custom_credit || 0
                     });
 
                     loadCredentials();
@@ -518,10 +515,6 @@
                     currentMonth = getCurrentMonth();
                     loadAvailableMonths();
                     await loadDailyChartData();
-
-                    // Update API key display
-                    const apiKeyEl = document.getElementById('apiKeyDisplay');
-                    if (apiKeyEl) apiKeyEl.textContent = data.apiKeyPrefix || 'N/A';
                 } catch (error) {
                     showToast('加载信息失败: ' + error.message, 'error');
                 }
@@ -597,20 +590,32 @@
                 const apiCallsData = [];
                 const inputTokensData = [];
                 const outputTokensData = [];
+                const cacheHitTokensData = [];
+                const creditData = [];
 
                 for (let d = 1; d <= daysInMonth; d++) {
                     const dayKey = String(d).padStart(2, '0');
-                    const dayData = dailyData[dayKey] || {api_calls: 0, input_tokens: 0, output_tokens: 0};
+                    const dayData = dailyData[dayKey] || {
+                        api_calls: 0,
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_hit_tokens: 0,
+                        credit: 0
+                    };
                     dates.push(d);
                     apiCallsData.push(dayData.api_calls);
                     inputTokensData.push(dayData.input_tokens);
                     outputTokensData.push(dayData.output_tokens);
+                    cacheHitTokensData.push(dayData.cache_hit_tokens || 0);
+                    creditData.push(dayData.credit || 0);
                 }
 
                 // 按月份聚合更新统计卡片
                 const totalApiCalls = apiCallsData.reduce((s, v) => s + v, 0);
                 const totalInputTokens = inputTokensData.reduce((s, v) => s + v, 0);
                 const totalOutputTokens = outputTokensData.reduce((s, v) => s + v, 0);
+                const totalCacheHitTokens = cacheHitTokensData.reduce((s, v) => s + v, 0);
+                const totalCredit = creditData.reduce((s, v) => s + v, 0);
                 const callEl = document.getElementById('apiCallCount');
                 if (callEl) {
                     callEl.textContent = formatStat(totalApiCalls);
@@ -625,6 +630,23 @@
                 if (outEl) {
                     outEl.textContent = formatStat(totalOutputTokens);
                     outEl.title = new Intl.NumberFormat('zh-CN').format(totalOutputTokens);
+                }
+                const cacheHitEl = document.getElementById('cacheHitTokensCount');
+                if (cacheHitEl) {
+                    cacheHitEl.textContent = formatStat(totalCacheHitTokens);
+                    cacheHitEl.title = new Intl.NumberFormat('zh-CN').format(totalCacheHitTokens);
+                }
+                const cacheRateEl = document.getElementById('cacheHitRate');
+                if (cacheRateEl) {
+                    const cacheRate =
+                        totalInputTokens > 0 ? Math.round((totalCacheHitTokens / totalInputTokens) * 100) : 0;
+                    cacheRateEl.textContent = cacheRate + '%';
+                    cacheRateEl.title = cacheRate + '%';
+                }
+                const creditEl = document.getElementById('creditCount');
+                if (creditEl) {
+                    creditEl.textContent = totalCredit.toFixed(2);
+                    creditEl.title = totalCredit.toFixed(2);
                 }
 
                 // 折线图 - API请求次数
@@ -664,7 +686,7 @@
                     );
                 }
 
-                // 柱状图 - Tokens
+                // 柱状图 - Tokens（堆叠：缓存命中/未命中/输出）
                 const tokensEl = document.getElementById('tokensChart');
                 if (tokensEl) {
                     if (!tokensChartInstance) {
@@ -678,31 +700,82 @@
                                 extraCssText: 'min-width: 300px',
                                 formatter: function (params) {
                                     const day = String(params[0].dataIndex + 1).padStart(2, '0');
-                                    const total = params.reduce((s, p) => s + p.value, 0);
-                                    let tip = `<div style="display:flex;justify-content:space-between"><b>${monthKey}-${day}</b><b>${formatNumber(total)} tokens</b></div>`;
-                                    const barColors = ['#93b5f6', '#3b5998'];
+                                    const barColors = ['#a0dcfd', '#60b3fe', '#0c70f3'];
+                                    const totalAll = params.reduce((s, p) => s + p.value, 0);
+                                    let tip = `<div style="display:flex;justify-content:space-between"><b>${monthKey}-${day}</b><b>${formatNumber(totalAll)} tokens</b></div>`;
                                     params.forEach((p, i) => {
-                                        tip += `<div style="display:flex;justify-content:space-between;align-items:center; color: '#666'"><span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${barColors[i]};margin-right:4px;vertical-align:middle"></span>${p.seriesName}</span><span>${formatNumber(p.value)} tokens</span></div>`;
+                                        tip += `<div style="display:flex;justify-content:space-between;align-items:center"><span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${barColors[i]};margin-right:4px;vertical-align:middle"></span>${p.seriesName}</span><span>${formatNumber(p.value)} tokens</span></div>`;
                                     });
                                     return tip;
                                 }
                             },
-                            legend: {data: ['输入', '输出'], top: '30px', right: '0', textStyle: {fontSize: 12}},
+                            legend: {
+                                data: ['输入(命中缓存)', '输入(未命中缓存)', '输出'],
+                                top: '30px',
+                                right: '0',
+                                textStyle: {fontSize: 12}
+                            },
                             grid: {left: '80px', right: '30px', top: '70px', bottom: '30px'},
                             xAxis: {type: 'category', data: dates, name: '日', axisLabel: {fontSize: 11}},
                             yAxis: {type: 'value', name: 'Tokens', axisLabel: {fontSize: 11}, splitNumber: 1},
                             series: [
                                 {
-                                    name: '输入',
+                                    name: '输入(命中缓存)',
                                     type: 'bar',
-                                    data: inputTokensData,
-                                    itemStyle: {color: '#93b5f6'}
+                                    stack: 'total',
+                                    data: cacheHitTokensData,
+                                    itemStyle: {color: '#a0dcfd'}
+                                },
+                                {
+                                    name: '输入(未命中缓存)',
+                                    type: 'bar',
+                                    stack: 'total',
+                                    data: inputTokensData.map((v, i) => v - (cacheHitTokensData[i] || 0)),
+                                    itemStyle: {color: '#60b3fe'}
                                 },
                                 {
                                     name: '输出',
                                     type: 'bar',
+                                    stack: 'total',
                                     data: outputTokensData,
-                                    itemStyle: {color: '#3b5998'}
+                                    itemStyle: {color: '#0c70f3'}
+                                }
+                            ]
+                        },
+                        true
+                    );
+                }
+
+                // 柱状图 - 日 CodeBuddy 积分
+                const creditEl2 = document.getElementById('creditChart');
+                if (creditEl2) {
+                    if (!creditChartInstance) {
+                        creditChartInstance = echarts.init(creditEl2);
+                    }
+                    creditChartInstance.setOption(
+                        {
+                            title: {text: '日 CodeBuddy 积分', left: 'left', textStyle: {fontSize: 14, color: '#374151'}},
+                            tooltip: {
+                                trigger: 'axis',
+                                formatter: function (params) {
+                                    const p = params[0];
+                                    const day = String(p.dataIndex + 1).padStart(2, '0');
+                                    return `<b>${monthKey}-${day}</b><br/>CodeBuddy 积分 ${p.value.toFixed(2)}`;
+                                }
+                            },
+                            grid: {left: '80px', right: '30px', top: '70px', bottom: '30px'},
+                            xAxis: {type: 'category', data: dates, name: '日', axisLabel: {fontSize: 11}},
+                            yAxis: {type: 'value', name: 'CodeBuddy 积分', axisLabel: {fontSize: 11}, splitNumber: 3},
+                            series: [
+                                {
+                                    type: 'bar',
+                                    data: creditData,
+                                    itemStyle: {
+                                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                            {offset: 0, color: '#f59e0b'},
+                                            {offset: 1, color: '#f97316'}
+                                        ])
+                                    }
                                 }
                             ]
                         },
@@ -757,6 +830,25 @@
                         cOutEl.textContent = formatStat(data.usage?.custom_output_tokens || 0);
                         cOutEl.title = new Intl.NumberFormat('zh-CN').format(data.usage?.custom_output_tokens || 0);
                     }
+                    const cCacheHitEl = document.getElementById('customCacheHitTokensCount');
+                    if (cCacheHitEl) {
+                        cCacheHitEl.textContent = formatStat(data.usage?.custom_cache_hit_tokens || 0);
+                        cCacheHitEl.title = new Intl.NumberFormat('zh-CN').format(data.usage?.custom_cache_hit_tokens || 0);
+                    }
+                    const cCacheRateEl = document.getElementById('customCacheHitRate');
+                    if (cCacheRateEl) {
+                        const cacheRate =
+                            (data.usage?.custom_input_tokens || 0) > 0
+                                ? Math.round(((data.usage?.custom_cache_hit_tokens || 0) / data.usage.custom_input_tokens) * 100)
+                                : 0;
+                        cCacheRateEl.textContent = cacheRate + '%';
+                        cCacheRateEl.title = cacheRate + '%';
+                    }
+                    const cCreditEl = document.getElementById('customCreditCount');
+                    if (cCreditEl) {
+                        cCreditEl.textContent = (data.usage?.custom_credit || 0).toFixed(2);
+                        cCreditEl.title = (data.usage?.custom_credit || 0).toFixed(2);
+                    }
                 } catch {}
             }
 
@@ -778,10 +870,9 @@
                             <p>选择认证的上游 CodeBuddy 服务地址</p>
                         </div>
                         <div class="config-control">
-                            <select id="baseUrlSelect" class="rotation-input" style="width: 240px; text-align: left; padding: 8px 10px;">
-                                <option value="https://copilot.tencent.com">copilot.tencent.com (国内站)</option>
-                                <option value="https://www.codebuddy.ai">www.codebuddy.ai (国际站)</option>
+                            <select id="baseUrlSelect" style="width: 240px; text-align: left; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9rem;">
                                 {{extraBaseUrlOptions}}
+                                <option value="https://copilot.tencent.com">copilot.tencent.com（国内站）</option>
                             </select>
                         </div>
                     </div>
@@ -852,6 +943,40 @@
                                 <div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key</div>
                             </div>
                         </div>
+                        <div class="guide-step">
+                            <div class="guide-step-num">4</div>
+                            <div class="guide-step-body">
+                                <div class="guide-step-title">兼容 OpenAI Responses API 工具</div>
+                                <div class="guide-step-desc">如 Cherry Studio 等，将 Base URL 设置为：</div>
+                                <div class="guide-code-block">
+                                    <button class="btn-icon guide-copy-btn" onclick="copyGuideResponsesUrl()" title="复制">📋</button>
+                                    <pre id="guideResponsesUrl"></pre>
+                                </div>
+                                <div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key，需在工具中选择 <code>Responses API</code> 模式</div>
+                            </div>
+                        </div>
+                        <div class="guide-step">
+                            <div class="guide-step-num">5</div>
+                            <div class="guide-step-body">
+                                <div class="guide-step-title">国内站可用模型</div>
+                                <div class="guide-step-desc">
+                                    <table class="guide-model-table">
+                                        <thead><tr><th>模型</th><th>说明</th><th>工具</th><th>视觉</th></tr></thead>
+                                        <tbody>
+                                            <tr><td><code>glm-5v-turbo</code></td><td>GLM-5v-Turbo</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>glm-5.1</code></td><td>GLM-5.1</td><td>✓</td><td>✗</td></tr>
+                                            <tr><td><code>glm-5.0-turbo</code></td><td>GLM-5.0-Turbo</td><td>✓</td><td>✗</td></tr>
+                                            <tr><td><code>glm-4.6</code></td><td>GLM-4.6</td><td>✓</td><td>✗</td></tr>
+                                            <tr><td><code>kimi-k2.6</code></td><td>Kimi-K2.6</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>kimi-k2.5</code></td><td>Kimi-K2.5</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>deepseek-v4-flash</code></td><td>DeepSeek-V4-Flash</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>deepseek-v4-pro</code></td><td>DeepSeek-V4-Pro</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>deepseek-v3-2-volc</code></td><td>DeepSeek-V3.2</td><td>✓</td><td>✗</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -876,9 +1001,21 @@
                             <div class="stat-value" id="outputTokensCount" title="0">0</div>
                             <div class="stat-label">输出 Tokens</div>
                         </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="cacheHitTokensCount" title="0">0</div>
+                            <div class="stat-label">缓存命中 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="cacheHitRate" title="0">0%</div>
+                            <div class="stat-label">缓存命中率</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="creditCount" title="0">0</div>
+                            <div class="stat-label">CodeBuddy 积分</div>
+                        </div>
                     </div>
-                    <div id="apiCallsChart" class="chart-container"></div>
                     <div id="tokensChart" class="chart-container"></div>
+                    <div id="creditChart" class="chart-container"></div>
                 </div>
 
                 <div class="card">
@@ -896,44 +1033,22 @@
                             <div class="stat-value" id="customOutputTokensCount" title="${new Intl.NumberFormat('zh-CN').format(data.customOutputTokens || 0)}">${formatStat(data.customOutputTokens || 0)}</div>
                             <div class="stat-label">输出 Tokens</div>
                         </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customCacheHitTokensCount" title="${new Intl.NumberFormat('zh-CN').format(data.customCacheHitTokens || 0)}">${formatStat(data.customCacheHitTokens || 0)}</div>
+                            <div class="stat-label">缓存命中 Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customCacheHitRate" title="0%">0%</div>
+                            <div class="stat-label">缓存命中率</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="customCreditCount" title="${(data.customCredit || 0).toFixed(2)}">${(data.customCredit || 0).toFixed(2)}</div>
+                            <div class="stat-label">CodeBuddy 积分</div>
+                        </div>
                     </div>
                     <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 12px;">
                         <button class="btn btn-primary btn-small" onclick="reloadAndRefreshStats()">刷新</button>
                         <button class="btn btn-primary btn-small" onclick="resetCustomStats()">重置</button>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h2>轮换配置</h2>
-                    <div class="config-row">
-                        <div class="config-label">
-                            自动轮换
-                            <p>自动在多个凭证之间轮换使用</p>
-                        </div>
-                        <div class="config-control">
-                            <div id="rotationToggle" class="toggle-switch ${rotationConfig.autoRotationEnabled ? 'active' : ''}" onclick="toggleRotation()"></div>
-                            <span id="rotationStatus">${rotationConfig.autoRotationEnabled ? '已启用' : '已禁用'}</span>
-                        </div>
-                    </div>
-                    <div id="rotationCountRow" class="config-row" style="display: ${rotationConfig.autoRotationEnabled ? 'flex' : 'none'};">
-                        <div class="config-label">
-                            轮换次数
-                            <p>每个凭证使用 N 次后切换到下一个</p>
-                        </div>
-                        <div class="config-control">
-                            <input type="number" id="rotationCountInput" class="rotation-input" value="${rotationConfig.rotationCount}" min="1" max="100" />
-                            <button class="btn btn-primary btn-small" onclick="saveRotationConfig()">保存</button>
-                        </div>
-                    </div>
-                    <div id="activeCredentialRow" class="config-row" style="display: ${rotationConfig.autoRotationEnabled ? 'none' : 'flex'};">
-                        <div class="config-label">
-                            活跃凭证
-                            <p>禁用轮换时固定使用的凭证</p>
-                        </div>
-                        <div class="config-control">
-                            <select id="activeCredentialSelect" class="rotation-input" style="width: 220px; text-align: left; padding: 8px 10px;" onchange="selectActiveCredential(this.value)">
-                            </select>
-                        </div>
                     </div>
                 </div>
             `;
@@ -1044,28 +1159,40 @@
                             .map((cred) => {
                                 const shortUrl = cred.baseUrl ? new URL(cred.baseUrl).host : 'unknown';
                                 const statusParts = [];
-                                if (cred.isDisabled) statusParts.push('已禁用');
-                                else if (cred.isExpired) statusParts.push('已过期');
-                                else statusParts.push('有效');
-                                statusParts.push('剩余: ' + cred.timeRemainingStr);
+                                if (cred.isDomainBlocked) {
+                                    statusParts.push('域名已废弃');
+                                } else {
+                                    if (cred.isDisabled) statusParts.push('已禁用');
+                                    else if (cred.isExpired) statusParts.push('已过期');
+                                    else statusParts.push('有效');
+                                    statusParts.push('剩余: ' + cred.timeRemainingStr);
+                                }
                                 statusParts.push('上游: ' + shortUrl);
                                 const isActive =
-                                    !rotationConfig.autoRotationEnabled &&
+                                    !cred.isDomainBlocked &&
                                     !cred.isDisabled &&
                                     !cred.isExpired &&
-                                    cred.index === rotationConfig.manualSelectedIndex;
-                                let itemClass = cred.isDisabled ? 'disabled' : cred.isExpired ? 'expired' : '';
+                                    cred.index === manualSelectedIndex;
+                                let itemClass = cred.isDomainBlocked
+                                    ? 'domain-blocked'
+                                    : cred.isDisabled
+                                      ? 'disabled'
+                                      : cred.isExpired
+                                        ? 'expired'
+                                        : '';
                                 if (isActive) itemClass = 'active-credential';
-                                const toggleBtn = cred.isDisabled
-                                    ? '<button class="btn btn-secondary btn-small" onclick="toggleCredentialDisable(' +
-                                      cred.index +
-                                      ')">启用</button>'
-                                    : '<button class="btn btn-warning btn-small" onclick="toggleCredentialDisable(' +
-                                      cred.index +
-                                      ')">禁用</button>';
+                                const toggleBtn = cred.isDomainBlocked
+                                    ? ''
+                                    : cred.isDisabled
+                                      ? '<button class="btn btn-secondary btn-small" onclick="toggleCredentialDisable(' +
+                                        cred.index +
+                                        ')">启用</button>'
+                                      : '<button class="btn btn-warning btn-small" onclick="toggleCredentialDisable(' +
+                                        cred.index +
+                                        ')">禁用</button>';
                                 let activeBtn = '';
                                 if (
-                                    !rotationConfig.autoRotationEnabled &&
+                                    !cred.isDomainBlocked &&
                                     !cred.isDisabled &&
                                     !cred.isExpired &&
                                     !isActive
@@ -1075,9 +1202,10 @@
                                         cred.index +
                                         ')">设为活跃</button>';
                                 }
-                                const activeTag = isActive
-                                    ? '<span style="background:#10b981;color:white;font-size:0.7rem;padding:2px 8px;border-radius:10px;margin-left:8px;">活跃</span>'
-                                    : '';
+                                const activeTag =
+                                    isActive && !cred.isDomainBlocked
+                                        ? '<span style="background:#10b981;color:white;font-size:0.7rem;padding:2px 8px;border-radius:10px;margin-left:8px;">活跃</span>'
+                                        : '';
                                 return `
                         <li class="credential-item ${itemClass}">
                             <div class="credential-info">
@@ -1094,7 +1222,6 @@
                             })
                             .join('') +
                         '</ul>';
-                    updateActiveCredentialSelect(data.credentials);
                 } catch (error) {
                     showToast('加载凭证失败: ' + error.message, 'error');
                 }
@@ -1138,62 +1265,6 @@
                 }
             }
 
-            async function toggleRotation() {
-                rotationConfig.autoRotationEnabled = !rotationConfig.autoRotationEnabled;
-                try {
-                    const response = await fetch(`/codebuddyFE/rotation/config`, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({autoRotationEnabled: rotationConfig.autoRotationEnabled})
-                    });
-                    const data = await response.json();
-                    if (data.manualSelectedIndex !== undefined) {
-                        rotationConfig.manualSelectedIndex = data.manualSelectedIndex;
-                    }
-                    updateRotationUI();
-                    loadCredentials();
-                } catch (error) {
-                    rotationConfig.autoRotationEnabled = !rotationConfig.autoRotationEnabled;
-                    showToast('操作失败: ' + error.message, 'error');
-                }
-            }
-
-            function updateRotationUI() {
-                const toggle = document.getElementById('rotationToggle');
-                const status = document.getElementById('rotationStatus');
-                const activeRow = document.getElementById('activeCredentialRow');
-                const rotationCountRow = document.getElementById('rotationCountRow');
-                if (toggle) {
-                    toggle.className = 'toggle-switch' + (rotationConfig.autoRotationEnabled ? ' active' : '');
-                }
-                if (status) {
-                    status.textContent = rotationConfig.autoRotationEnabled ? '已启用' : '已禁用';
-                }
-                if (activeRow) {
-                    activeRow.style.display = rotationConfig.autoRotationEnabled ? 'none' : 'flex';
-                }
-                if (rotationCountRow) {
-                    rotationCountRow.style.display = rotationConfig.autoRotationEnabled ? 'flex' : 'none';
-                }
-            }
-
-            async function saveRotationConfig() {
-                const count = parseInt(document.getElementById('rotationCountInput').value) || 1;
-                try {
-                    const response = await fetch(`/codebuddyFE/rotation/config`, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({rotationCount: count})
-                    });
-                    const data = await response.json();
-                    rotationConfig.rotationCount = data.rotationCount || count;
-                    document.getElementById('rotationCountInput').value = rotationConfig.rotationCount;
-                    showToast('轮换配置已保存');
-                } catch (error) {
-                    showToast('保存失败: ' + error.message, 'error');
-                }
-            }
-
             async function setActiveCredential(index) {
                 try {
                     const response = await fetch(`/codebuddyFE/credentials/select`, {
@@ -1202,7 +1273,7 @@
                         body: JSON.stringify({index})
                     });
                     if (response.ok) {
-                        rotationConfig.manualSelectedIndex = index;
+                        manualSelectedIndex = index;
                         showToast('已设为活跃凭证');
                         loadCredentials();
                     } else {
@@ -1211,37 +1282,6 @@
                 } catch (error) {
                     showToast('设置失败: ' + error.message, 'error');
                 }
-            }
-
-            async function selectActiveCredential(indexStr) {
-                const index = parseInt(indexStr);
-                if (isNaN(index)) return;
-                await setActiveCredential(index);
-            }
-
-            function updateActiveCredentialSelect(credentials) {
-                const select = document.getElementById('activeCredentialSelect');
-                const activeRow = document.getElementById('activeCredentialRow');
-                if (!select) return;
-                const currentActive = rotationConfig.manualSelectedIndex;
-                const validCreds = credentials.filter((c) => !c.isDisabled && !c.isExpired);
-                if (validCreds.length === 0) {
-                    if (activeRow) activeRow.style.display = 'none';
-                    return;
-                }
-                if (activeRow && !rotationConfig.autoRotationEnabled) activeRow.style.display = 'flex';
-                select.innerHTML = validCreds
-                    .map(
-                        (c) =>
-                            '<option value="' +
-                            c.index +
-                            '"' +
-                            (c.index === currentActive ? ' selected' : '') +
-                            '>' +
-                            (c.email || c.userId) +
-                            '</option>'
-                    )
-                    .join('');
             }
 
             function toggleApiKeyVisibility() {
@@ -1307,6 +1347,10 @@
                 if (openaiUrlEl) {
                     openaiUrlEl.textContent = `${baseUrl}/codebuddy/v1`;
                 }
+                const responsesUrlEl = document.getElementById('guideResponsesUrl');
+                if (responsesUrlEl) {
+                    responsesUrlEl.textContent = `${baseUrl}/codebuddy/v1`;
+                }
             }
 
             function copyGuideConfig() {
@@ -1317,6 +1361,12 @@
 
             function copyGuideOpenAIUrl() {
                 const el = document.getElementById('guideOpenAIUrl');
+                if (!el) return;
+                copyGuideText(el.textContent);
+            }
+
+            function copyGuideResponsesUrl() {
+                const el = document.getElementById('guideResponsesUrl');
                 if (!el) return;
                 copyGuideText(el.textContent);
             }
@@ -1366,6 +1416,7 @@
             window.addEventListener('resize', function () {
                 if (apiCallsChartInstance) apiCallsChartInstance.resize();
                 if (tokensChartInstance) tokensChartInstance.resize();
+                if (creditChartInstance) creditChartInstance.resize();
             });
 
             loadMyTenant();

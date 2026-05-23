@@ -5,7 +5,17 @@
  */
 
 import logger from '../../utils/logger.js';
-import {generateId as sharedGenerateId, mapStopReason, translateToolChoice, mapContent, injectBehaviorRules, prependThinkingHint, prependToolThinkingHint, openAIToAnthropic as sharedOpenAIToAnthropic} from '../../transformer/shared-translator.js';
+import {cleanJsonSchema} from '../../utils/helpers.js';
+import {
+    generateId as sharedGenerateId,
+    mapStopReason,
+    translateToolChoice,
+    mapContent,
+    injectBehaviorRules,
+    prependThinkingHint,
+    prependToolThinkingHint,
+    openAIToAnthropic as sharedOpenAIToAnthropic
+} from '../../transformer/shared-translator.js';
 
 /* ================= SSE Writer ================= */
 
@@ -267,6 +277,12 @@ class ClaudeStreamState {
 export {SSEWriter, ClaudeStreamState};
 
 /**
+ * 支持推理的模型白名单
+ * 仅对这些模型注入 reasoning_effort 参数
+ */
+const modelsSupportReasoning = ['glm-5.1', 'glm-5.0', 'glm-4.7', 'glm-4.6', 'kimi-k2.5', 'deepseek-v3-2-volc'];
+
+/**
  * 转换 Anthropic 请求到 OpenAI 格式
  */
 export function anthropicToOpenAI(anthropicPayload) {
@@ -289,7 +305,7 @@ export function anthropicToOpenAI(anthropicPayload) {
             function: {
                 name: tool.name,
                 description: tool.description,
-                parameters: tool.input_schema
+                parameters: cleanJsonSchema(tool.input_schema)
             }
         }));
     }
@@ -300,13 +316,11 @@ export function anthropicToOpenAI(anthropicPayload) {
     }
 
     // 为支持推理的模型添加 reasoning_effort 参数启用推理功能
-    // 优先从请求中读取 effort 配置（Claude Code 通过 output_config.effort 传递）
-    // 其次根据 thinking 配置推断，最后默认 high
-    const modelsSupportReasoning = ['glm-5.1', 'glm-5.0', 'glm-4.7', 'glm-4.6', 'kimi-k2.5', 'deepseek-v3-2-volc'];
     if (modelsSupportReasoning.includes(modelName)) {
         const thinkingConfig = resolveThinkingConfig(anthropicPayload);
         if (thinkingConfig.disabled) {
-            // thinking 明确关闭，不设置 reasoning_effort
+            // 显式设空字符串，normalizePayload 识别后删除字段、不补默认值
+            openAIPayload.reasoning_effort = '';
         } else if (thinkingConfig.effort) {
             openAIPayload.reasoning_effort = thinkingConfig.effort;
         } else {
@@ -322,14 +336,14 @@ export function anthropicToOpenAI(anthropicPayload) {
  * 从 Anthropic 请求中解析 thinking 配置
  * 返回 { disabled: boolean, effort: string|null }
  *
- * 优先级：output_config.effort > thinking 配置推断 > 不设置
+ * 优先级：output_config.effort > thinking 配置推断 > 默认 high
  */
 function resolveThinkingConfig(anthropicPayload) {
     const thinking = anthropicPayload.thinking;
 
     // thinking.type === 'disabled' 明确关闭思考
     if (thinking?.type === 'disabled') {
-        return {disabled: true, effort: null};
+        return {disabled: true, effort: ''};
     }
 
     let effort = null;
@@ -429,7 +443,7 @@ function translateMessages(anthropicMessages, system) {
         if (typeof system === 'string') {
             messages.push({role: 'system', content: system});
         } else if (Array.isArray(system)) {
-            const systemText = system.map((block) => block.text).join('\n\n');
+            const systemText = system.map((block) => block.text.trim()).join('\n\n');
             if (systemText) {
                 messages.push({role: 'system', content: systemText});
             }
@@ -458,7 +472,7 @@ function translateMessages(anthropicMessages, system) {
         }
     }
 
-    return injectBehaviorRules(messages);
+    return messages;
 }
 
 /**
@@ -542,9 +556,7 @@ function handleAssistantMessage(message) {
     // 提取不同类型的块
     const toolUseBlocks = message.content.filter((block) => block.type === 'tool_use');
     const textBlocks = message.content.filter((block) => block.type === 'text');
-    // 注意：thinking 块不应该发送给 Kimi API
-    // Kimi 返回的 reasoning_content 只用于 UI 显示，不应该在下一轮请求中发送回去
-    // const thinkingBlocks = message.content.filter(block => block.type === 'thinking');
+    const thinkingBlocks = message.content.filter((block) => block.type === 'thinking');
 
     // 只合并文本内容，不包含 thinking 内容
     const allText = textBlocks
@@ -556,6 +568,15 @@ function handleAssistantMessage(message) {
         role: 'assistant',
         content: allText || null
     };
+
+    // fix: 将 thinking 转换为 reasoning_content（DeepSeek 和 kimi 要求多轮回传）
+    const reasoningText = thinkingBlocks
+        .map((b) => b.thinking)
+        .filter(Boolean)
+        .join('\n\n');
+    if (reasoningText) {
+        result.reasoning_content = reasoningText;
+    }
 
     // 添加 tool_calls
     if (toolUseBlocks.length > 0) {
@@ -762,3 +783,4 @@ export function convertToolCallId(codebuddyId) {
 }
 
 export {sharedOpenAIToAnthropic as openAIToAnthropic};
+export {rewriteOpenAIStream} from '../../transformer/shared-translator.js';

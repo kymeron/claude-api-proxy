@@ -74,37 +74,10 @@ function authenticateAndGetUpstream(headers) {
 }
 
 /**
- * 对活跃上游进行重试
+ * 对活跃上游发起单次请求（agent 客户端自带重试，服务端不再重试）
  */
-async function retryUpstream(upstream, fn, upstreamManager) {
-    const retryCount = upstreamManager ? upstreamManager.getUpstreamRetryCount(upstream.index) : 5;
-    let lastError = null;
-    for (let attempt = 1; attempt <= retryCount; attempt++) {
-        try {
-            const response = await fn(upstream);
-            if (response.status >= 200 && response.status < 300) {
-                return {response, upstream};
-            }
-            const errorBody = await readBody(response.body);
-            const reason = `HTTP ${response.status}: ${errorBody.slice(0, 200)}`;
-            lastError = new Error(`上游「${upstream.name}」返回 ${reason}`);
-            if (attempt < retryCount) {
-                logger.warn(`Relay: 上游「${upstream.name}」第${attempt}/${retryCount}次失败 - ${reason}，重试中...`);
-            } else {
-                logger.warn(`Relay: 上游「${upstream.name}」重试${retryCount}次耗尽: ${reason}`);
-            }
-        } catch (err) {
-            lastError = err;
-            if (attempt < retryCount) {
-                logger.warn(
-                    `Relay: 上游「${upstream.name}」第${attempt}/${retryCount}次异常 - ${err.message}，重试中...`
-                );
-            } else {
-                logger.warn(`Relay: 上游「${upstream.name}」重试${retryCount}次耗尽: ${err.message}`);
-            }
-        }
-    }
-    throw lastError || new Error(`上游「${upstream.name}」不可用`);
+async function callUpstream(upstream, fn) {
+    return await fn(upstream);
 }
 
 function recordUsage(inputTokens, outputTokens) {
@@ -144,13 +117,12 @@ async function handleOpenAIChatCompletions(req, res) {
         if (openAIPayload.stream) {
             openAIPayload.stream_options = {include_usage: true};
         }
-        const {response} = await retryUpstream(
+        const {response} = await callUpstream(
             upstream,
             (up) => {
                 const payload = {...openAIPayload, model: upstreamManager.resolveModel(openAIPayload.model, up.index)};
                 return createChatCompletions(payload, up);
-            },
-            upstreamManager
+            }
         );
 
         if (openAIPayload.stream) {
@@ -200,7 +172,7 @@ async function handleAnthropicMessages(req, res) {
         if (anthropicPayload.stream) {
             openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
             openAIPayload.stream_options = {include_usage: true};
-            const {response} = await retryUpstream(
+            const {response} = await callUpstream(
                 upstream,
                 (up) => {
                     const payload = {
@@ -212,8 +184,7 @@ async function handleAnthropicMessages(req, res) {
                         stream: anthropicPayload.stream,
                         originalModel: anthropicPayload.model
                     });
-                },
-                upstreamManager
+                }
             );
 
             res.writeHead(200, {
@@ -320,7 +291,7 @@ async function handleAnthropicMessages(req, res) {
             openAIPayload.stream = true;
             openAIPayload.stream_options = {include_usage: true};
             openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
-            const {response} = await retryUpstream(
+            const {response} = await callUpstream(
                 upstream,
                 (up) => {
                     const payload = {
@@ -332,8 +303,7 @@ async function handleAnthropicMessages(req, res) {
                         stream: false,
                         originalModel: anthropicPayload.model
                     });
-                },
-                upstreamManager
+                }
             );
 
             const aggregated = await aggregateStreamResponse(response.body);

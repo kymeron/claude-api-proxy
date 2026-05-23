@@ -4,8 +4,9 @@
  */
 
 import {request, readBody} from '../../utils/http-client.js';
+import {normalizePayload} from '../../transformer/shared-translator.js';
 import logger from '../../utils/logger.js';
-import {getCodebuddyApiUrl, codebuddyHeaders, DEFAULT_BASE_URL, CODEBUDDY_MODELS} from './config.js';
+import {getCodebuddyApiUrl, codebuddyHeaders, getCodebuddyBaseUrl, CODEBUDDY_MODELS, isPersonalHost} from './config.js';
 import {randomBytes} from 'crypto';
 
 // CodeBuddy 服务端会检测竞争对手关键词并触发 content_filter
@@ -126,7 +127,7 @@ export async function createChatCompletions(payload, options = {}) {
 
     const bearerToken = credential.bearer_token;
     const userId = credential.user_id;
-    const baseUrl = credential.base_url || DEFAULT_BASE_URL;
+    const baseUrl = getCodebuddyBaseUrl(credential.base_url);
     const enterpriseId = credential.enterprise_id;
     const departmentInfo = credential.department_info;
     const domain = credential.domain;
@@ -156,22 +157,27 @@ export async function createChatCompletions(payload, options = {}) {
         stream: true
     };
 
-    // CodeBuddy 服务端会检测特定客户端标识字符串并触发内容审核拦截
-    // 将 "X Code, Y's official CLI for X" 模式替换为不会触发审核的等价表述
-    sanitizePayload(requestPayload);
+    // 个人站服务端会检测竞争对手关键词并触发 content_filter，需要替换
+    // 企业站无此限制，跳过替换
+    const host = new URL(getCodebuddyBaseUrl(baseUrl)).host;
+    if (isPersonalHost(host)) {
+        sanitizePayload(requestPayload);
+    }
     const url = getCodebuddyApiUrl(baseUrl);
+    logger.info(
+        `[CodeBuddy]: ${baseUrl}, model: ${payload.model}, effort: ${requestPayload.reasoning_effort || 'high'}, credential: ${userId}`
+    );
 
     const response = await request(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(requestPayload),
-        maxRetries: 3
+        body: JSON.stringify(normalizePayload(requestPayload, {source: 'codebuddy', upstream: baseUrl}))
     });
 
     if (response.status >= 400) {
         const errorBody = await readBody(response.body);
 
-        // 记录完整的消息历史以便调试
+        logger.error(`CodeBuddy API error: ${response.status} - ${errorBody.slice(0, 300)}`);
         throw new Error(`CodeBuddy API error: ${response.status} - ${errorBody}`);
     }
 
@@ -264,6 +270,7 @@ export async function aggregateStreamResponse(stream) {
         id: null,
         model: null,
         content: '',
+        reasoningContent: '',
         toolCalls: [],
         finishReason: null,
         usage: null
@@ -300,6 +307,15 @@ export async function aggregateStreamResponse(stream) {
             // 聚合内容
             if (delta.content) {
                 aggregator.content += delta.content;
+            }
+
+            // 聚合推理内容
+            const reasoningText = delta.reasoning_content
+                || (typeof delta.thinking === 'string' ? delta.thinking : null)
+                || (typeof delta.thinking === 'object' && delta.thinking ? delta.thinking.content : null)
+                || delta.reasoning;
+            if (reasoningText) {
+                aggregator.reasoningContent += reasoningText;
             }
 
             // 处理工具调用

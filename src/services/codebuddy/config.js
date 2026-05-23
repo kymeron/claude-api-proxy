@@ -7,13 +7,21 @@ import {readFileSync} from 'fs';
 import {join} from 'path';
 import logger from '../../utils/logger.js';
 
-// 默认上游 URL（旧凭证无 base_url 字段时 fallback 使用）
-export const DEFAULT_BASE_URL = process.env.CODEBUDDY_DEFAULT_BASE_URL || (process.env.CODEBUDDY_REGION === 'intl' ? 'https://www.codebuddy.ai' : 'https://copilot.tencent.com');
+// 默认上游 URL（支持区域切换：cn/intl 对应不同默认上游）
+export const DEFAULT_BASE_URL = ''; // 占位，实际值通过 getCodebuddyBaseUrl() 获取
 
 // 额外企业站 URL 列表（逗号分隔，会追加到管理面板的上游下拉列表中）
-export const EXTRA_BASE_URLS = process.env.CODEBUDDY_EXTRA_BASE_URLS
-    ? process.env.CODEBUDDY_EXTRA_BASE_URLS.split(',').map(u => u.trim()).filter(Boolean)
-    : [];
+// 延迟读取环境变量，因为 ESM import 在 .env 加载前执行
+export function getExtraBaseUrls() {
+    return process.env.CODEBUDDY_EXTRA_BASE_URLS
+        ? process.env.CODEBUDDY_EXTRA_BASE_URLS.split(',')
+              .map((u) => u.trim())
+              .filter(Boolean)
+        : [];
+}
+
+// 禁止使用的上游域名（这些域名已废弃，不可再添加新凭证）
+export const BLOCKED_DOMAINS = ['dhcode2025.copilot.qq.com'];
 
 /**
  * 获取 CodeBuddy 基础 URL
@@ -21,7 +29,11 @@ export const EXTRA_BASE_URLS = process.env.CODEBUDDY_EXTRA_BASE_URLS
  * @returns {string}
  */
 export function getCodebuddyBaseUrl(baseUrl) {
-    return baseUrl || DEFAULT_BASE_URL;
+    if (baseUrl) return baseUrl;
+    return (
+        process.env.CODEBUDDY_DEFAULT_BASE_URL ||
+        (process.env.CODEBUDDY_REGION === 'intl' ? 'https://www.codebuddy.ai' : 'https://copilot.tencent.com')
+    );
 }
 
 // 凭证目录
@@ -37,6 +49,18 @@ export const CODEBUDDY_MODELS = [
     {id: 'minimax-m2.5', name: 'MiniMax M2.5', vendor: 'minimax'},
     {id: 'deepseek-v3-2-volc', name: 'DeepSeek V3.2', vendor: 'deepseek'}
 ];
+
+// 个人版官方域名 — 这些域名不需要传企业头
+const PERSONAL_HOSTS = ['copilot.tencent.com', 'www.codebuddy.ai'];
+
+/**
+ * 判断上游域名是否为个人版
+ * @param {string} host - 域名（不含端口和协议）
+ * @returns {boolean} true = 个人版
+ */
+export function isPersonalHost(host) {
+    return PERSONAL_HOSTS.includes(host);
+}
 
 /**
  * 规范化架构名称（与 CLI OpenAI SDK 逻辑一致）
@@ -94,21 +118,6 @@ const OPENAI_SDK_VERSION = (() => {
     return '6.25.0';
 })();
 
-// 个人版官方域名 — 这些域名不需要传企业头
-const PERSONAL_HOSTS = new Set([
-    'copilot.tencent.com',
-    'www.codebuddy.ai'
-]);
-
-/**
- * 判断上游域名是否为个人版
- * @param {string} host - 域名（不含端口和协议）
- * @returns {boolean} true = 个人版
- */
-export function isPersonalHost(host) {
-    return PERSONAL_HOSTS.has(host);
-}
-
 /**
  * 生成 CodeBuddy 请求头
  * 根据上游域名自动区分个人版/企业版：
@@ -165,14 +174,10 @@ export function codebuddyHeaders(bearerToken, options = {}) {
     };
 
     // 企业版额外头部
-    // 官方拦截器逻辑：有 enterpriseId 就注入 X-Enterprise-Id / X-Tenant-Id / X-Department-Info
-    // X-Tenant-Id 只要有 enterpriseId 就会注入（无 X-No- 抑制机制）
     if (!personal) {
         if (enterpriseId) {
             headers['X-Enterprise-Id'] = enterpriseId;
             headers['X-Tenant-Id'] = enterpriseId;
-        } else {
-            logger.warn(`企业版域名 ${host} 缺少 enterpriseId，可能导致请求失败或泄露敏感信息`);
         }
         if (departmentInfo) {
             headers['X-Department-Info'] = departmentInfo;

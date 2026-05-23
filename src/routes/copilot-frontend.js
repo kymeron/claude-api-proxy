@@ -46,7 +46,7 @@ function handleStatus(req, res) {
         apiKeyPrefix: apiInfo.prefix,
         apiKeyPlain: apiInfo.apiKeyPlain,
         usage,
-        proxy: proxyConfig
+        proxy: proxyConfig.proxy || ''
     });
 }
 
@@ -55,7 +55,8 @@ function handleStatus(req, res) {
  */
 async function handleAuthStart(req, res) {
     try {
-        const deviceData = await startDeviceAuth();
+        const proxyUrl = copilotStore.getProxyUrl();
+        const deviceData = await startDeviceAuth(proxyUrl);
         sendJson(res, 200, {
             success: true,
             device_code: deviceData.device_code,
@@ -83,7 +84,7 @@ async function handleAuthPoll(req, res) {
             return sendJson(res, 400, {error: 'missing device_code'});
         }
 
-        const result = await pollDeviceAuth(device_code);
+        const result = await pollDeviceAuth(device_code, copilotStore.getProxyUrl());
         sendJson(res, 200, {
             status: 'success',
             message: '认证成功！',
@@ -179,7 +180,9 @@ async function handleProxyUpdate(req, res) {
     try {
         const body = await readRequestBody(req);
         const data = JSON.parse(body);
-        copilotStore.updateProxyConfig(data.http_proxy, data.https_proxy);
+        // 兼容旧格式和新格式
+        const proxy = data.proxy || data.https_proxy || data.http_proxy || '';
+        copilotStore.updateProxyConfig(proxy);
         sendJson(res, 200, {message: '代理配置已更新', ...copilotStore.getProxyConfig()});
     } catch (error) {
         sendJson(res, 500, {error: error.message});
@@ -232,6 +235,9 @@ export async function routeCopilotFrontend(req, res) {
         return handleRegenerateApiKey(req, res);
     }
 
+    if (pathname === '/copilotFE/stats' && method === 'GET') {
+        return sendJson(res, 200, copilotStore.getUsageStats());
+    }
     if (pathname === '/copilotFE/stats/refresh' && method === 'POST') {
         copilotStore.flushApiCallCounts();
         return sendJson(res, 200, {message: '数据已刷新'});

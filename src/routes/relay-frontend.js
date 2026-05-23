@@ -107,8 +107,7 @@ async function handleAddUpstream(req, res) {
             proxy: data.proxy,
             models: data.models,
             model_map: data.model_map,
-            model_auto: data.model_auto,
-            retry_count: data.retry_count
+            protocol: data.protocol
         });
         sendJson(res, 200, {message: '上游配置添加成功', upstream: result});
     } catch (error) {
@@ -281,31 +280,6 @@ async function handleSetActiveUpstream(req, res) {
 }
 
 /**
- * 获取重试次数配置
- */
-function handleGetRetryConfig(req, res) {
-    const manager = relayStore.getUpstreamManager();
-    sendJson(res, 200, {retryCount: manager.getRetryCount()});
-}
-
-/**
- * 设置重试次数配置
- */
-async function handleSetRetryConfig(req, res) {
-    try {
-        const manager = relayStore.getUpstreamManager();
-        const {retryCount} = await readRequestBody(req);
-        if (retryCount && retryCount > 0) {
-            manager.setRetryCount(retryCount);
-        }
-        sendJson(res, 200, {success: true, retryCount: manager.getRetryCount()});
-    } catch (error) {
-        logger.error('Relay 设置重试配置失败:', error);
-        sendJson(res, 500, {error: error.message});
-    }
-}
-
-/**
  * 管理面板 HTML
  */
 function serveAdminPage(res) {
@@ -388,14 +362,6 @@ export async function routeRelayFrontend(req, res) {
     // 设置活跃上游
     if (pathname === '/relayFE/upstreams/set-active' && method === 'POST') {
         return handleSetActiveUpstream(req, res);
-    }
-
-    // 获取/设置重试次数配置
-    if (pathname === '/relayFE/retry-config' && method === 'GET') {
-        return handleGetRetryConfig(req, res);
-    }
-    if (pathname === '/relayFE/retry-config' && method === 'POST') {
-        return handleSetRetryConfig(req, res);
     }
 
     // ===== 使用量统计 =====

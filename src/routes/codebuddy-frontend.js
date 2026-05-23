@@ -11,7 +11,7 @@ import {join, dirname} from 'path';
 import {fileURLToPath} from 'url';
 import logger from '../utils/logger.js';
 import {credentialStore} from '../services/codebuddy/credential-store.js';
-import {getCodebuddyBaseUrl, DEFAULT_BASE_URL, EXTRA_BASE_URLS} from '../services/codebuddy/config.js';
+import {getCodebuddyBaseUrl, getExtraBaseUrls, BLOCKED_DOMAINS, isPersonalHost} from '../services/codebuddy/config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -127,50 +127,8 @@ function handleStatus(req, res) {
         credentialCount: tm.credentials?.length || 0,
         apiKeyPrefix: apiInfo.prefix,
         apiKeyPlain: apiInfo.apiKeyPlain,
-        autoRotationEnabled: tm.autoRotationEnabled,
-        rotationCount: tm.rotationCount,
         manualSelectedIndex: tm.manualSelectedIndex,
         usage
-    });
-}
-
-/**
- * GET/POST 轮换配置
- */
-function handleRotationConfig(req, res, method) {
-    const manager = credentialStore.getTokenManager();
-    if (method === 'GET') {
-        return sendJson(res, 200, {
-            autoRotationEnabled: manager.autoRotationEnabled,
-            rotationCount: manager.rotationCount
-        });
-    }
-    // POST: 更新配置
-    const chunks = [];
-    req.on('data', (chunk) => chunks.push(chunk));
-    req.on('end', () => {
-        try {
-            const body = Buffer.concat(chunks).toString('utf8');
-            const data = JSON.parse(body);
-            if (data.autoRotationEnabled !== undefined) {
-                manager.setAutoRotation(data.autoRotationEnabled);
-                if (!data.autoRotationEnabled && manager.manualSelectedIndex === null) {
-                    manager.setManualCredential(manager.currentIndex);
-                } else if (data.autoRotationEnabled) {
-                    manager.clearManualSelection();
-                }
-            }
-            if (data.rotationCount !== undefined) {
-                manager.setRotationCount(data.rotationCount);
-            }
-            sendJson(res, 200, {
-                autoRotationEnabled: manager.autoRotationEnabled,
-                rotationCount: manager.rotationCount,
-                manualSelectedIndex: manager.manualSelectedIndex
-            });
-        } catch (error) {
-            sendJson(res, 500, {error: error.message});
-        }
     });
 }
 
@@ -195,7 +153,7 @@ function handleRegenerateApiKey(req, res) {
 }
 
 /**
- * 凭证操作（list/delete/select/auto/toggle-rotation/toggle-disable）
+ * 凭证操作（list/delete/select/toggle-disable）
  */
 function handleCredentials(req, res, action) {
     const manager = credentialStore.getTokenManager();
@@ -251,19 +209,6 @@ function handleCredentials(req, res, action) {
                 });
                 break;
             }
-            case 'auto': {
-                manager.clearManualSelection();
-                sendJson(res, 200, {message: '已恢复自动轮换'});
-                break;
-            }
-            case 'toggle-rotation': {
-                const isEnabled = manager.toggleAutoRotation();
-                sendJson(res, 200, {
-                    message: `自动轮换已${isEnabled ? '启用' : '禁用'}`,
-                    auto_rotation_enabled: isEnabled
-                });
-                break;
-            }
             case 'toggle-disable': {
                 const chunks = [];
                 req.on('data', (chunk) => chunks.push(chunk));
@@ -303,7 +248,15 @@ async function handleAuthStart(req, res) {
     try {
         // 从查询参数读取 base_url
         const urlObj = new URL(req.url, `http://${req.headers.host}`);
-        const baseUrl = urlObj.searchParams.get('base_url') || DEFAULT_BASE_URL;
+        const baseUrl = getCodebuddyBaseUrl(urlObj.searchParams.get('base_url'));
+
+        // 阻止使用已废弃域名
+        const requestedHost = new URL(baseUrl).host;
+        if (BLOCKED_DOMAINS.includes(requestedHost)) {
+            res.writeHead(400, {'Content-Type': 'application/json'});
+            res.end(JSON.stringify({error: `域名 ${requestedHost} 已废弃，不允许添加凭证`}));
+            return;
+        }
 
         logger.info(`启动 CodeBuddy OAuth2 认证流程 (base_url: ${baseUrl})...`);
 
@@ -400,7 +353,7 @@ async function handleAuthPoll(req, res) {
         }
 
         const authStateRecord = authStates.get(auth_state);
-        const pollBaseUrl = authStateRecord?.baseUrl || DEFAULT_BASE_URL;
+        const pollBaseUrl = getCodebuddyBaseUrl(authStateRecord?.baseUrl);
         const url = `${getAuthTokenEndpoint(pollBaseUrl)}?state=${auth_state}`;
 
         const response = await fetch(url, {
@@ -460,6 +413,13 @@ async function handleAuthPoll(req, res) {
                                 userInfo.enterprise_id = lastItem.slice(4);
                             }
                         }
+                        // 兜底：从 realm_access.roles 的 ent-member:xxx 提取
+                        if (!userInfo.enterprise_id && payload.realm_access?.roles) {
+                            const entRole = payload.realm_access.roles.find(r => r.startsWith('ent-member:'));
+                            if (entRole) {
+                                userInfo.enterprise_id = entRole.slice('ent-member:'.length);
+                            }
+                        }
                     }
                 }
             } catch (e) {
@@ -467,8 +427,10 @@ async function handleAuthPoll(req, res) {
             }
 
             // 企业版：获取完整 account 信息（含 departmentFullName、enterpriseName）
+            // 即使 JWT 未提取到 enterprise_id，只要不是个人版域名，就应尝试获取企业信息
             let accountInfo = {};
-            if (userInfo.enterprise_id) {
+            const isEnterprise = !isPersonalHost(new URL(getBaseUrl(pollBaseUrl)).host);
+            if (userInfo.enterprise_id || isEnterprise) {
                 try {
                     const accountUrl = `${getBaseUrl(pollBaseUrl)}/v2/plugin/login/account?state=${auth_state}`;
                     const accountHost = new URL(getBaseUrl(pollBaseUrl)).host;
@@ -491,7 +453,11 @@ async function handleAuthPoll(req, res) {
                         if (accountResult.code === 0 && accountResult.data) {
                             accountInfo = accountResult.data;
                             logger.info(`获取企业 account 信息成功: enterpriseId=${accountInfo.enterpriseId || userInfo.enterprise_id}`);
+                        } else {
+                            logger.warn(`获取企业 account 信息返回非0: code=${accountResult.code}, msg=${accountResult.msg}, url=${accountUrl}`);
                         }
+                    } else {
+                        logger.warn(`获取企业 account 信息请求失败: status=${accountResp.status}, url=${accountUrl}`);
                     }
                 } catch (e) {
                     logger.warn('获取企业 account 信息失败:', e.message);
@@ -562,7 +528,7 @@ async function handleAuthPoll(req, res) {
  */
 function serveAdminPage(res) {
     let html = readTemplate('codebuddy-admin.html');
-    const extraOptions = EXTRA_BASE_URLS.map(url => {
+    const extraOptions = getExtraBaseUrls().map(url => {
         const host = (() => { try { return new URL(url).host; } catch { return url; } })();
         return `<option value="${url}">${host} (企业站)</option>`;
     }).join('\n                                ');
@@ -605,19 +571,8 @@ export async function routeCodebuddyFrontend(req, res) {
     if (pathname === '/codebuddyFE/credentials/select' && method === 'POST') {
         return handleCredentials(req, res, 'select');
     }
-    if (pathname === '/codebuddyFE/credentials/auto' && method === 'POST') {
-        return handleCredentials(req, res, 'auto');
-    }
-    if (pathname === '/codebuddyFE/credentials/toggle-rotation' && method === 'POST') {
-        return handleCredentials(req, res, 'toggle-rotation');
-    }
     if (pathname === '/codebuddyFE/credentials/toggle-disable' && method === 'POST') {
         return handleCredentials(req, res, 'toggle-disable');
-    }
-
-    // 轮换配置
-    if (pathname === '/codebuddyFE/rotation/config') {
-        return handleRotationConfig(req, res, method);
     }
 
     // 认证启动

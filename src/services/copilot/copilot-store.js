@@ -31,15 +31,16 @@ class CopilotStore {
         this.apiCallCount = 0;
         this.inputTokens = 0;
         this.outputTokens = 0;
+        this.cacheHitTokens = 0;
         this.customApiCallCount = 0;
         this.customInputTokens = 0;
         this.customOutputTokens = 0;
+        this.customCacheHitTokens = 0;
         this.dirtyCount = 0;
         this.DIRTY_FLUSH_THRESHOLD = 10;
 
         // Proxy config
-        this.httpProxy = null;
-        this.httpsProxy = null;
+        this.proxy = null;
 
         this._init();
     }
@@ -116,9 +117,11 @@ class CopilotStore {
                 this.apiCallCount = data.api_call_count || 0;
                 this.inputTokens = data.input_tokens || 0;
                 this.outputTokens = data.output_tokens || 0;
+                this.cacheHitTokens = data.cache_hit_tokens || 0;
                 this.customApiCallCount = data.custom_api_call_count || 0;
                 this.customInputTokens = data.custom_input_tokens || 0;
                 this.customOutputTokens = data.custom_output_tokens || 0;
+                this.customCacheHitTokens = data.custom_cache_hit_tokens || 0;
             } catch {}
         }
     }
@@ -128,9 +131,11 @@ class CopilotStore {
             api_call_count: this.apiCallCount,
             input_tokens: this.inputTokens,
             output_tokens: this.outputTokens,
+            cache_hit_tokens: this.cacheHitTokens,
             custom_api_call_count: this.customApiCallCount,
             custom_input_tokens: this.customInputTokens,
-            custom_output_tokens: this.customOutputTokens
+            custom_output_tokens: this.customOutputTokens,
+            custom_cache_hit_tokens: this.customCacheHitTokens
         }, null, 2), 'utf8');
         this.dirtyCount = 0;
     }
@@ -142,11 +147,13 @@ class CopilotStore {
         if (this.dirtyCount >= this.DIRTY_FLUSH_THRESHOLD) this._saveUsage();
     }
 
-    incrementTokenUsage(inputTokens, outputTokens) {
+    incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens) {
         this.inputTokens += inputTokens || 0;
         this.outputTokens += outputTokens || 0;
+        this.cacheHitTokens += cacheHitTokens || 0;
         this.customInputTokens += inputTokens || 0;
         this.customOutputTokens += outputTokens || 0;
+        this.customCacheHitTokens += cacheHitTokens || 0;
         this.dirtyCount++;
         if (this.dirtyCount >= this.DIRTY_FLUSH_THRESHOLD) this._saveUsage();
     }
@@ -160,9 +167,11 @@ class CopilotStore {
             api_call_count: this.apiCallCount,
             input_tokens: this.inputTokens,
             output_tokens: this.outputTokens,
+            cache_hit_tokens: this.cacheHitTokens,
             custom_api_call_count: this.customApiCallCount,
             custom_input_tokens: this.customInputTokens,
-            custom_output_tokens: this.customOutputTokens
+            custom_output_tokens: this.customOutputTokens,
+            custom_cache_hit_tokens: this.customCacheHitTokens
         };
     }
 
@@ -170,12 +179,13 @@ class CopilotStore {
         this.customApiCallCount = 0;
         this.customInputTokens = 0;
         this.customOutputTokens = 0;
+        this.customCacheHitTokens = 0;
         this._saveUsage();
     }
 
     // ==================== Daily Usage ====================
 
-    recordDailyUsage(inputTokens, outputTokens) {
+    recordDailyUsage(inputTokens, outputTokens, cacheHitTokens) {
         const dailyFile = join(this.baseDir, 'daily_usage.json');
         let dailyData = {};
         if (existsSync(dailyFile)) {
@@ -186,11 +196,12 @@ class CopilotStore {
         const dayKey = String(now.getDate()).padStart(2, '0');
         if (!dailyData[monthKey]) dailyData[monthKey] = {};
         if (!dailyData[monthKey][dayKey]) {
-            dailyData[monthKey][dayKey] = {api_calls: 0, input_tokens: 0, output_tokens: 0};
+            dailyData[monthKey][dayKey] = {api_calls: 0, input_tokens: 0, output_tokens: 0, cache_hit_tokens: 0};
         }
         dailyData[monthKey][dayKey].api_calls++;
         dailyData[monthKey][dayKey].input_tokens += inputTokens || 0;
         dailyData[monthKey][dayKey].output_tokens += outputTokens || 0;
+        dailyData[monthKey][dayKey].cache_hit_tokens = (dailyData[monthKey][dayKey].cache_hit_tokens || 0) + (cacheHitTokens || 0);
         const cutoff = new Date(now.getFullYear(), now.getMonth() - 3, 1);
         const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
         for (const key of Object.keys(dailyData)) {
@@ -224,33 +235,34 @@ class CopilotStore {
         if (existsSync(this.proxyFile)) {
             try {
                 const data = JSON.parse(readFileSync(this.proxyFile, 'utf8'));
-                this.httpProxy = data.http_proxy || null;
-                this.httpsProxy = data.https_proxy || null;
+                // 兼容旧格式（http_proxy/https_proxy）和新格式（proxy）
+                this.proxy = data.proxy || data.https_proxy || data.http_proxy || null;
                 return;
             } catch {}
         }
-        this.httpProxy = null;
-        this.httpsProxy = null;
+        this.proxy = null;
         this._saveProxy();
     }
 
     _saveProxy() {
         writeFileSync(this.proxyFile, JSON.stringify({
-            http_proxy: this.httpProxy,
-            https_proxy: this.httpsProxy,
+            proxy: this.proxy,
             updated_at: new Date().toISOString()
         }, null, 2), 'utf8');
     }
 
     getProxyConfig() {
-        return {http_proxy: this.httpProxy, https_proxy: this.httpsProxy};
+        return {proxy: this.proxy};
     }
 
-    updateProxyConfig(httpProxy, httpsProxy) {
-        this.httpProxy = httpProxy || null;
-        this.httpsProxy = httpsProxy || null;
+    getProxyUrl() {
+        return this.proxy || null;
+    }
+
+    updateProxyConfig(proxy) {
+        this.proxy = proxy || null;
         this._saveProxy();
-        logger.info(`Proxy config updated: http=${this.httpProxy}, https=${this.httpsProxy}`);
+        logger.info(`Proxy config updated: ${this.proxy}`);
     }
 
     // ==================== Credential Info (封装 copilotState) ====================
