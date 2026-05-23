@@ -13,6 +13,27 @@ import {HttpsProxyAgent} from 'https-proxy-agent';
 import {SocksProxyAgent} from 'socks-proxy-agent';
 import logger from './logger.js';
 
+// ==================== 网络错误分类 ====================
+
+const TRANSIENT_NETWORK_CODES = new Set([
+    'ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE',
+    'ERR_TLS_CERT_ALTNAME_INVALID', 'ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC',
+    'ECONNABORTED', 'ENOTFOUND', 'EAI_AGAIN', 'ERR_SSL_PROTOCOL_ERROR'
+]);
+
+export class UpstreamNetworkError extends Error {
+    constructor(message, code) {
+        super(message);
+        this.name = 'UpstreamNetworkError';
+        this.code = code || 'NETWORK_ERROR';
+    }
+}
+
+export function isNetworkError(err) {
+    if (err instanceof UpstreamNetworkError) return true;
+    return TRANSIENT_NETWORK_CODES.has(err.code) || TRANSIENT_NETWORK_CODES.has(err.errno);
+}
+
 // ==================== 连接池配置 ====================
 const POOL_CONFIG = {
     maxSockets: 100,
@@ -173,18 +194,50 @@ export function request(url, options = {}) {
         const done = (err) => {
             if (!isDone) {
                 isDone = true;
-                reject(err);
+                const wrapped = err instanceof UpstreamNetworkError
+                    ? err
+                    : new UpstreamNetworkError(err.message, err.code || err.errno);
+                reject(wrapped);
             }
         };
 
         req.setTimeout(requestTimeout, () => {
             logger.error(`请求超时 (${requestTimeout}ms): ${url}`);
+            if (req.socket) {
+                req.socket.destroy();
+            }
             req.destroy();
-            done(new Error(`Request timeout after ${requestTimeout}ms`));
+            done(new UpstreamNetworkError(`Request timeout after ${requestTimeout}ms`, 'ETIMEDOUT'));
         });
 
         req.on('error', (err) => {
-            logger.error(`请求错误: ${err.message}`);
+            logger.error(`请求错误: ${err.message} (code: ${err.code || 'unknown'})`);
+            if (req.socket) {
+                req.socket.destroy();
+            }
+            if (req.agent && req.socket) {
+                req.agent.destroy();
+                // 重建同类型 agent 以清理坏连接
+                if (agent === globalAgents.https) {
+                    globalAgents.https = new https.Agent({
+                        keepAlive: true,
+                        keepAliveMsecs: 15000,
+                        maxSockets: POOL_CONFIG.maxSockets,
+                        maxFreeSockets: POOL_CONFIG.maxFreeSockets,
+                        timeout: POOL_CONFIG.timeout,
+                        scheduling: POOL_CONFIG.scheduling
+                    });
+                } else if (agent === globalAgents.http) {
+                    globalAgents.http = new http.Agent({
+                        keepAlive: true,
+                        keepAliveMsecs: 15000,
+                        maxSockets: POOL_CONFIG.maxSockets,
+                        maxFreeSockets: POOL_CONFIG.maxFreeSockets,
+                        timeout: POOL_CONFIG.timeout,
+                        scheduling: POOL_CONFIG.scheduling
+                    });
+                }
+            }
             done(err);
         });
 

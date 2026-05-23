@@ -7,6 +7,7 @@ import { request, readBody } from '../../utils/http-client.js';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { getCopilotBaseUrl, copilotHeaders } from './config.js';
+import { normalizePayload } from '../../transformer/shared-translator.js';
 import logger from '../../utils/logger.js';
 
 // ==================== 代理 Agent 缓存 ====================
@@ -89,7 +90,7 @@ export async function createChatCompletions(copilotToken, vsCodeVersion, payload
     const options = {
         method: 'POST',
         headers,
-        body: JSON.stringify(payload)
+        body: JSON.stringify(normalizePayload(payload, {source: 'copilot', upstream: baseUrl}))
     };
     const agent = createProxyAgent(proxyUrl);
     if (agent) options.agent = agent;

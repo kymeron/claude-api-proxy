@@ -18,6 +18,7 @@ import {authenticateRequest, getCredential} from '../services/codebuddy/auth.js'
 import {credentialStore} from '../services/codebuddy/credential-store.js';
 import {BLOCKED_DOMAINS, getCodebuddyBaseUrl} from '../services/codebuddy/config.js';
 import logger from '../utils/logger.js';
+import {isNetworkError} from '../utils/http-client.js';
 
 /**
  * 从上游 usage 中提取缓存命中 token 数
@@ -76,6 +77,10 @@ function sendAnthropicError(res, status, message) {
         }
     };
     sendJson(res, status, errorResponse);
+}
+
+function upstreamErrorStatus(err) {
+    return isNetworkError(err) ? 502 : 500;
 }
 
 /**
@@ -161,7 +166,8 @@ async function handleOpenAIChatCompletions(req, res) {
             rewriteOpenAIStream(res, response.body, (inputTokens, outputTokens, cacheHitTokens, credit, model) => {
                 credentialStore.incrementApiCallCount();
                 credentialStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-                credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+                credentialStore.incrementCreditUsage(credit);
+                credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, credit);
             });
         } else {
             const {aggregateStreamResponse} = await import('../services/codebuddy/api.js');
@@ -170,9 +176,11 @@ async function handleOpenAIChatCompletions(req, res) {
             const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
             const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
             const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+            const credit = aggregated.usage ? aggregated.usage.credit || 0 : 0;
             credentialStore.incrementApiCallCount();
             credentialStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-            credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+            credentialStore.incrementCreditUsage(credit);
+            credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, credit);
 
             const openAIResponse = {
                 id: aggregated.id || `chatcmpl_${Date.now()}`,
@@ -201,7 +209,7 @@ async function handleOpenAIChatCompletions(req, res) {
         }
     } catch (error) {
         logger.error('Failed to handle OpenAI chat completions:', error);
-        sendOpenAIError(res, 500, error.message || 'Internal server error');
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -235,7 +243,7 @@ async function handleOpenAIModels(req, res) {
         });
     } catch (error) {
         logger.error('Failed to get OpenAI models:', error);
-        sendOpenAIError(res, 500, error.message || 'Internal server error');
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -286,6 +294,7 @@ async function handleAnthropicMessages(req, res) {
             let streamInputTokens = 0;
             let streamOutputTokens = 0;
             let streamCacheHitTokens = 0;
+            let streamCredit = 0;
             let streamModel = '';
 
             const responseBody = response.body;
@@ -320,6 +329,7 @@ async function handleAnthropicMessages(req, res) {
                         streamInputTokens = data.usage.prompt_tokens || 0;
                         streamOutputTokens = data.usage.completion_tokens || 0;
                         streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                        streamCredit = data.usage.credit || 0;
                     }
                     if (data.model) streamModel = data.model;
 
@@ -400,10 +410,15 @@ async function handleAnthropicMessages(req, res) {
                     state.appendText(partialTextBuffer);
                     partialTextBuffer = '';
                 }
-                state.endMessage(state.finalStopReason);
+                state.endMessage(state.finalStopReason, {
+                    inputTokens: streamInputTokens,
+                    outputTokens: streamOutputTokens,
+                    cacheHitTokens: streamCacheHitTokens
+                });
                 credentialStore.incrementApiCallCount();
                 credentialStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
-                credentialStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                credentialStore.incrementCreditUsage(streamCredit);
+                credentialStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, streamCredit);
                 res.end();
             });
 
@@ -422,9 +437,11 @@ async function handleAnthropicMessages(req, res) {
             const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
             const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
             const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+            const credit = aggregated.usage ? aggregated.usage.credit || 0 : 0;
             credentialStore.incrementApiCallCount();
             credentialStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-            credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+            credentialStore.incrementCreditUsage(credit);
+            credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, credit);
 
             const openAIResponse = {
                 id: aggregated.id || `msg_${Date.now()}`,
@@ -456,7 +473,7 @@ async function handleAnthropicMessages(req, res) {
         }
     } catch (error) {
         logger.error('Failed to handle Anthropic messages:', error);
-        sendAnthropicError(res, 500, error.message || 'Internal server error');
+        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -480,7 +497,7 @@ async function handleAnthropicCountTokens(req, res) {
         sendJson(res, 200, {input_tokens: estimatedTokens});
     } catch (error) {
         logger.error('Failed to count tokens:', error);
-        sendAnthropicError(res, 500, error.message || 'Internal server error');
+        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -510,7 +527,7 @@ async function handleAnthropicModels(req, res) {
         });
     } catch (error) {
         logger.error('Failed to get Anthropic models:', error);
-        sendAnthropicError(res, 500, error.message || 'Internal server error');
+        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -554,6 +571,7 @@ async function handleResponsesAPI(req, res) {
             let streamInputTokens = 0;
             let streamOutputTokens = 0;
             let streamCacheHitTokens = 0;
+            let streamCredit = 0;
             let streamModel = '';
 
             response.body.on('data', (chunk) => {
@@ -575,6 +593,7 @@ async function handleResponsesAPI(req, res) {
                         streamInputTokens = data.usage.prompt_tokens || 0;
                         streamOutputTokens = data.usage.completion_tokens || 0;
                         streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                        streamCredit = data.usage.credit || 0;
                     }
                     if (data.model) streamModel = data.model;
 
@@ -602,7 +621,8 @@ async function handleResponsesAPI(req, res) {
                 }
                 credentialStore.incrementApiCallCount();
                 credentialStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
-                credentialStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                credentialStore.incrementCreditUsage(streamCredit);
+                credentialStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, streamCredit);
                 res.end();
             });
 
@@ -618,9 +638,11 @@ async function handleResponsesAPI(req, res) {
             const inputTokens = aggregated.usage?.prompt_tokens || 0;
             const outputTokens = aggregated.usage?.completion_tokens || 0;
             const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+            const credit = aggregated.usage?.credit || 0;
             credentialStore.incrementApiCallCount();
             credentialStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-            credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+            credentialStore.incrementCreditUsage(credit);
+            credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, credit);
 
             const chatResponse = {
                 id: aggregated.id || `chatcmpl_${Date.now()}`,
@@ -644,7 +666,7 @@ async function handleResponsesAPI(req, res) {
         }
     } catch (error) {
         logger.error('Failed to handle Responses API:', error);
-        sendOpenAIError(res, 500, error.message || 'Internal server error');
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -677,9 +699,11 @@ async function handleResponsesCompact(req, res) {
         const inputTokens = aggregated.usage?.prompt_tokens || 0;
         const outputTokens = aggregated.usage?.completion_tokens || 0;
         const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+        const credit = aggregated.usage?.credit || 0;
         credentialStore.incrementApiCallCount();
         credentialStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-        credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+        credentialStore.incrementCreditUsage(credit);
+        credentialStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, credit);
 
         const chatResponse = {
             id: aggregated.id || `chatcmpl_${Date.now()}`,
@@ -697,7 +721,7 @@ async function handleResponsesCompact(req, res) {
         sendJson(res, 200, chatResponseToCompact(chatResponse));
     } catch (error) {
         logger.error('Failed to handle Responses Compact:', error);
-        sendOpenAIError(res, 500, error.message || 'Internal server error');
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -810,7 +834,7 @@ async function handleCredentials(req, res, method, pathname) {
         sendOpenAIError(res, 404, 'Credential endpoint not found');
     } catch (error) {
         logger.error('Credential management error:', error);
-        sendOpenAIError(res, 500, error.message || 'Internal server error');
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 

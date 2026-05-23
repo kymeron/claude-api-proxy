@@ -1,13 +1,22 @@
 /**
- * Relay 路由处理器 - 支持 OpenAI 和 Anthropic 双格式的聊天补全和模型列表 API
- * 对活跃上游发起请求，失败时在同一上游重试
+ * Relay 路由处理器 - 支持 OpenAI、Anthropic、Responses 三种协议
+ * 对活跃上游发起请求，根据上游协议自动选择最优路径（透传 > 转换）
  * @module routes/relay
  */
 
 import {authenticateRequest} from '../services/relay/auth.js';
 import {relayStore} from '../services/relay/relay-store.js';
-import {createChatCompletions, getUpstreamModels} from '../services/relay/api.js';
-import {readBody} from '../utils/http-client.js';
+import {
+    createChatCompletions,
+    createResponses,
+    createAnthropicMessages,
+    createAnthropicCountTokens,
+    getUpstreamModels,
+    isAnthropicUpstream,
+    isResponsesUpstream,
+    normalizeUpstreamProtocol
+} from '../services/relay/api.js';
+import {readBody, isNetworkError} from '../utils/http-client.js';
 import {
     anthropicToOpenAI,
     openAIToAnthropic,
@@ -16,7 +25,21 @@ import {
     injectBehaviorRules,
     mapStopReason
 } from '../services/relay/translator.js';
+import {rewriteOpenAIStream} from '../transformer/shared-translator.js';
+import {
+    responsesRequestToChat,
+    chatRequestToResponses,
+    chatResponseToResponses,
+    responsesResponseToChat,
+    createResponsesStreamState,
+    createChatCompletionsStreamState,
+    chatChunkToResponsesEvents,
+    responsesEventToChatChunks,
+    compactRequestToChat,
+    chatResponseToCompact
+} from '../transformer/responses-translator.js';
 import {aggregateStreamResponse} from '../services/codebuddy/api.js';
+import {estimateMessageTokens} from '../utils/token-estimation.js';
 import logger from '../utils/logger.js';
 
 /* ==================== 工具函数 ==================== */
@@ -35,6 +58,10 @@ function sendAnthropicError(res, status, message) {
     sendJson(res, status, {type: 'error', error: {type: errorType, message}});
 }
 
+function upstreamErrorStatus(err) {
+    return isNetworkError(err) ? 502 : 500;
+}
+
 async function parseBody(req) {
     const chunks = [];
     for await (const chunk of req) {
@@ -49,6 +76,102 @@ async function readResponseBody(stream) {
         chunks.push(chunk);
     }
     return Buffer.concat(chunks).toString('utf8');
+}
+
+function extractCacheHitTokens(usage) {
+    if (!usage) return 0;
+    if (usage.prompt_cache_hit_tokens) return usage.prompt_cache_hit_tokens;
+    if (usage.prompt_tokens_details?.cached_tokens) return usage.prompt_tokens_details.cached_tokens;
+    return 0;
+}
+
+function extractAnthropicCacheHitTokens(usage) {
+    if (!usage) return 0;
+    return usage.cache_read_input_tokens || extractCacheHitTokens(usage);
+}
+
+function parseSSEBlock(block) {
+    const lines = block.split(/\r?\n/);
+    let event = 'message';
+    const dataLines = [];
+
+    for (const line of lines) {
+        if (line.startsWith('event:')) {
+            event = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5).trim());
+        }
+    }
+
+    return {event, data: dataLines.join('\n')};
+}
+
+function handleAnthropicUsageEvent(eventName, payload, usageState) {
+    const usage = payload?.usage || payload?.message?.usage;
+    if (!usage) return;
+
+    if (usage.input_tokens !== undefined) usageState.inputTokens = usage.input_tokens;
+    if (usage.output_tokens !== undefined) usageState.outputTokens = usage.output_tokens;
+    usageState.cacheHitTokens = Math.max(usageState.cacheHitTokens, extractAnthropicCacheHitTokens(usage));
+    if (eventName === 'message_start' && payload?.message?.model) usageState.model = payload.message.model;
+}
+
+function estimateAnthropicInputTokens(payload) {
+    const messages = [];
+    if (typeof payload.system === 'string') {
+        messages.push({role: 'system', content: payload.system});
+    } else if (Array.isArray(payload.system)) {
+        messages.push({role: 'system', content: payload.system});
+    }
+    messages.push(...(payload.messages || []));
+    const messageTokens = estimateMessageTokens(messages);
+    const toolTokens = Array.isArray(payload.tools)
+        ? estimateMessageTokens(payload.tools.map((tool) => ({role: 'tool', content: JSON.stringify(tool)})))
+        : 0;
+    return messageTokens + toolTokens;
+}
+
+function mapAnthropicModelsToOpenAI(modelsData) {
+    const items = Array.isArray(modelsData?.data) ? modelsData.data : [];
+    return {
+        object: 'list',
+        data: items.map((model) => ({
+            id: model.id,
+            object: 'model',
+            created: model.created_at ? Math.floor(new Date(model.created_at).getTime() / 1000) : 0,
+            owned_by: model.display_name || model.type || 'anthropic'
+        }))
+    };
+}
+
+function mapOpenAIModelsToAnthropic(modelsData) {
+    return {
+        data: (modelsData.data || []).map((model) => ({
+            id: model.id,
+            object: 'model',
+            created: model.created || 0,
+            owned_by: model.owned_by || model.owner || 'relay',
+            name: model.id,
+            capabilities: {}
+        })),
+        object: 'list'
+    };
+}
+
+function getAnthropicRequestHeaders(req) {
+    return {
+        'anthropic-version': req.headers['anthropic-version'] || '2023-06-01',
+        ...(req.headers['anthropic-beta'] ? {'anthropic-beta': req.headers['anthropic-beta']} : {})
+    };
+}
+
+function getProtocolErrorMessage(upstream, expectedProtocol, endpoint) {
+    const protocol = normalizeUpstreamProtocol(upstream?.protocol);
+    if (protocol === expectedProtocol) return null;
+    if (expectedProtocol === 'anthropic') {
+        return `当前上游协议为 ${protocol}，请改用 ${endpoint} 或切换上游类型`;
+    }
+    return `当前上游协议为 ${protocol}，该端点需要 ${expectedProtocol} 上游支持`;
 }
 
 /* ==================== 鉴权 ==================== */
@@ -74,22 +197,31 @@ function authenticateAndGetUpstream(headers) {
 }
 
 /**
- * 对活跃上游发起单次请求（agent 客户端自带重试，服务端不再重试）
+ * 调用上游，失败直接抛错
  */
 async function callUpstream(upstream, fn) {
-    return await fn(upstream);
+    const response = await fn(upstream);
+    if (response.status >= 200 && response.status < 300) {
+        return {response, upstream};
+    }
+    const errorBody = await readBody(response.body);
+    throw new Error(`上游「${upstream.name}」返回 HTTP ${response.status}: ${errorBody.slice(0, 200)}`);
 }
 
-function recordUsage(inputTokens, outputTokens) {
+function recordUsage(inputTokens, outputTokens, cacheHitTokens = 0, model = 'unknown') {
     relayStore.incrementApiCallCount();
-    relayStore.incrementTokenUsage(inputTokens, outputTokens);
-    relayStore.recordDailyUsage(inputTokens, outputTokens);
+    relayStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
+    relayStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, model);
 }
 
 /* ==================== 处理函数 ==================== */
 
 /**
  * 处理 OpenAI 格式的 /relay/v1/chat/completions 请求
+ * 根据上游协议自动选择最优路径：
+ * - Anthropic 上游 → 报错引导
+ * - Responses 上游 → Chat→Responses 转换
+ * - OpenAI 上游 → 直接透传
  */
 async function handleOpenAIChatCompletions(req, res) {
     try {
@@ -108,22 +240,127 @@ async function handleOpenAIChatCompletions(req, res) {
         const body = await parseBody(req);
         const openAIPayload = JSON.parse(body);
 
-        logger.info(
-            `Relay OpenAI request - model: ${openAIPayload.model}, stream: ${openAIPayload.stream}, 上游: ${upstream.name}`
-        );
+        if (isAnthropicUpstream(upstream)) {
+            sendOpenAIError(res, 400, getProtocolErrorMessage(upstream, 'openai', '/relay/anthropic/v1/messages'));
+            return;
+        }
 
         openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
-        // 请求上游在流式响应末尾返回 usage
+
+        if (isResponsesUpstream(upstream)) {
+            const responsesPayload = chatRequestToResponses({
+                ...openAIPayload,
+                model: upstreamManager.resolveModel(openAIPayload.model, upstream.index)
+            });
+
+            const {response} = await callUpstream(upstream, (up) =>
+                createResponses(responsesPayload, up, {
+                    requestType: 'ChatCompletionsViaResponses',
+                    stream: openAIPayload.stream,
+                    originalModel: openAIPayload.model
+                })
+            );
+
+            if (openAIPayload.stream) {
+                res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    Connection: 'keep-alive'
+                });
+
+                const streamState = createChatCompletionsStreamState();
+                let buffer = '';
+                let usage = null;
+
+                response.body.on('data', (chunk) => {
+                    buffer += chunk.toString('utf8');
+                    const parts = buffer.split(/\r?\n\r?\n/);
+                    buffer = parts.pop() || '';
+
+                    for (const part of parts) {
+                        const {event, data} = parseSSEBlock(part);
+                        if (!data || data === '[DONE]') continue;
+                        let parsed;
+                        try {
+                            parsed = JSON.parse(data);
+                        } catch {
+                            continue;
+                        }
+
+                        if (event === 'response.created' && parsed.response?.model) {
+                            streamState.model = parsed.response.model;
+                        }
+
+                        if (event === 'response.completed') {
+                            usage = parsed.response?.usage || usage;
+                        }
+
+                        const chunks = responsesEventToChatChunks(event, parsed, streamState);
+                        for (const chatChunk of chunks) {
+                            res.write(`data: ${JSON.stringify(chatChunk)}\n\n`);
+                        }
+
+                        if (event === 'response.completed') {
+                            recordUsage(
+                                usage?.input_tokens || 0,
+                                usage?.output_tokens || 0,
+                                usage?.input_tokens_details?.cached_tokens || 0,
+                                openAIPayload.model
+                            );
+                            res.write('data: [DONE]\n\n');
+                        }
+                    }
+                });
+
+                response.body.on('end', () => {
+                    if (!streamState.completed) {
+                        res.write(`data: ${JSON.stringify({
+                            id: streamState.chatId,
+                            object: 'chat.completion.chunk',
+                            created: streamState.created,
+                            model: streamState.model,
+                            choices: [{index: 0, delta: {}, finish_reason: streamState.sawToolCall ? 'tool_calls' : 'stop'}]
+                        })}\n\n`);
+                        res.write('data: [DONE]\n\n');
+                    }
+                    res.end();
+                });
+
+                response.body.on('error', (err) => {
+                    logger.error('Relay Responses->Chat stream error:', err);
+                    res.end();
+                });
+                return;
+            }
+
+            const responseBody = await readResponseBody(response.body);
+            let parsed;
+            try {
+                parsed = JSON.parse(responseBody);
+            } catch {
+                logger.error('Relay: failed to parse responses upstream non-stream response');
+                sendOpenAIError(res, 502, 'Upstream returned invalid JSON');
+                return;
+            }
+
+            recordUsage(
+                parsed.usage?.input_tokens || 0,
+                parsed.usage?.output_tokens || 0,
+                parsed.usage?.input_tokens_details?.cached_tokens || 0,
+                openAIPayload.model
+            );
+            sendJson(res, 200, responsesResponseToChat(parsed));
+            return;
+        }
+
+        // 标准 OpenAI Chat Completions 透传
         if (openAIPayload.stream) {
             openAIPayload.stream_options = {include_usage: true};
         }
-        const {response} = await callUpstream(
-            upstream,
-            (up) => {
-                const payload = {...openAIPayload, model: upstreamManager.resolveModel(openAIPayload.model, up.index)};
-                return createChatCompletions(payload, up);
-            }
-        );
+        const {response} = await callUpstream(upstream, (up) => {
+            const payload = {...openAIPayload, model: upstreamManager.resolveModel(openAIPayload.model, up.index)};
+            return createChatCompletions(payload, up);
+        });
 
         if (openAIPayload.stream) {
             res.writeHead(200, {
@@ -131,7 +368,7 @@ async function handleOpenAIChatCompletions(req, res) {
                 'Cache-Control': 'no-cache',
                 Connection: 'keep-alive'
             });
-            _streamOpenAIPassthrough(response, res);
+            _streamOpenAIPassthrough(response, res, openAIPayload.model);
         } else {
             const responseBody = await readResponseBody(response.body);
             let parsed;
@@ -142,17 +379,27 @@ async function handleOpenAIChatCompletions(req, res) {
                 sendOpenAIError(res, 502, 'Upstream returned invalid JSON');
                 return;
             }
-            recordUsage(parsed.usage?.prompt_tokens || 0, parsed.usage?.completion_tokens || 0);
+            const cacheHitTokens = extractCacheHitTokens(parsed.usage);
+            recordUsage(
+                parsed.usage?.prompt_tokens || 0,
+                parsed.usage?.completion_tokens || 0,
+                cacheHitTokens,
+                openAIPayload.model
+            );
             sendJson(res, 200, parsed);
         }
     } catch (error) {
         logger.error('Relay: Failed to handle OpenAI chat completions:', error);
-        sendOpenAIError(res, 500, error.message || 'Internal server error');
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
 /**
  * 处理 Anthropic 格式的 /relay/anthropic/v1/messages 请求
+ * 根据上游协议自动选择最优路径：
+ * - Responses 上游 → 报错引导
+ * - Anthropic 上游 → 直接透传（零损耗）
+ * - OpenAI 上游 → Anthropic→OpenAI 转换
  */
 async function handleAnthropicMessages(req, res) {
     try {
@@ -166,26 +413,122 @@ async function handleAnthropicMessages(req, res) {
         const body = await parseBody(req);
         const anthropicPayload = JSON.parse(body);
 
-        // 转换为 OpenAI 格式
+        if (isResponsesUpstream(upstream)) {
+            sendAnthropicError(res, 400, getProtocolErrorMessage(upstream, 'anthropic', '/relay/v1/responses'));
+            return;
+        }
+
+        // Anthropic 上游透传（零损耗）
+        if (isAnthropicUpstream(upstream)) {
+            const {response} = await callUpstream(upstream, (up) =>
+                createAnthropicMessages(
+                    {...anthropicPayload, model: upstreamManager.resolveModel(anthropicPayload.model, up.index)},
+                    up,
+                    {
+                        requestType: 'AnthropicPassthrough',
+                        stream: anthropicPayload.stream,
+                        originalModel: anthropicPayload.model
+                    },
+                    getAnthropicRequestHeaders(req)
+                )
+            );
+
+            if (anthropicPayload.stream) {
+                res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    Connection: 'keep-alive'
+                });
+
+                const usageState = {
+                    inputTokens: 0,
+                    outputTokens: 0,
+                    cacheHitTokens: 0,
+                    model: anthropicPayload.model
+                };
+                let buffer = '';
+
+                response.body.on('data', (chunk) => {
+                    const text = chunk.toString('utf8');
+                    res.write(text);
+                    buffer += text;
+                    const parts = buffer.split(/\r?\n\r?\n/);
+                    buffer = parts.pop() || '';
+
+                    for (const part of parts) {
+                        const {event, data} = parseSSEBlock(part);
+                        if (!data || data === '[DONE]') continue;
+                        try {
+                            handleAnthropicUsageEvent(event, JSON.parse(data), usageState);
+                        } catch {
+                            continue;
+                        }
+                    }
+                });
+
+                response.body.on('end', () => {
+                    if (buffer.trim()) {
+                        const {event, data} = parseSSEBlock(buffer);
+                        if (data && data !== '[DONE]') {
+                            try {
+                                handleAnthropicUsageEvent(event, JSON.parse(data), usageState);
+                            } catch {
+                            }
+                        }
+                    }
+                    const inputTokens = usageState.inputTokens || estimateAnthropicInputTokens(anthropicPayload);
+                    recordUsage(
+                        inputTokens,
+                        usageState.outputTokens,
+                        usageState.cacheHitTokens,
+                        usageState.model || anthropicPayload.model
+                    );
+                    res.end();
+                });
+
+                response.body.on('error', (err) => {
+                    logger.error('Relay Anthropic passthrough stream error:', err);
+                    res.end();
+                });
+                return;
+            }
+
+            const responseBody = await readResponseBody(response.body);
+            let parsed;
+            try {
+                parsed = JSON.parse(responseBody);
+            } catch {
+                sendAnthropicError(res, 502, 'Upstream returned invalid JSON');
+                return;
+            }
+
+            recordUsage(
+                parsed.usage?.input_tokens || estimateAnthropicInputTokens(anthropicPayload),
+                parsed.usage?.output_tokens || 0,
+                extractAnthropicCacheHitTokens(parsed.usage),
+                parsed.model || anthropicPayload.model
+            );
+            sendJson(res, 200, parsed);
+            return;
+        }
+
+        // OpenAI 上游：Anthropic → OpenAI 转换
         const openAIPayload = anthropicToOpenAI(anthropicPayload);
 
         if (anthropicPayload.stream) {
             openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
             openAIPayload.stream_options = {include_usage: true};
-            const {response} = await callUpstream(
-                upstream,
-                (up) => {
-                    const payload = {
-                        ...openAIPayload,
-                        model: upstreamManager.resolveModel(openAIPayload.model, up.index)
-                    };
-                    return createChatCompletions(payload, up, {
-                        requestType: 'Anthropic',
-                        stream: anthropicPayload.stream,
-                        originalModel: anthropicPayload.model
-                    });
-                }
-            );
+            const {response} = await callUpstream(upstream, (up) => {
+                const payload = {
+                    ...openAIPayload,
+                    model: upstreamManager.resolveModel(openAIPayload.model, up.index)
+                };
+                return createChatCompletions(payload, up, {
+                    requestType: 'Anthropic',
+                    stream: anthropicPayload.stream,
+                    originalModel: anthropicPayload.model
+                });
+            });
 
             res.writeHead(200, {
                 'Content-Type': 'text/event-stream',
@@ -199,6 +542,7 @@ async function handleAnthropicMessages(req, res) {
             let partialTextBuffer = '';
             let streamInputTokens = 0;
             let streamOutputTokens = 0;
+            let streamCacheHitTokens = 0;
 
             response.body.on('data', (chunk) => {
                 buffer = Buffer.concat([buffer, chunk]);
@@ -224,6 +568,7 @@ async function handleAnthropicMessages(req, res) {
                     if (data.usage) {
                         streamInputTokens = data.usage.prompt_tokens || 0;
                         streamOutputTokens = data.usage.completion_tokens || 0;
+                        streamCacheHitTokens = extractCacheHitTokens(data.usage);
                     }
 
                     state.startMessage(data.model);
@@ -274,8 +619,8 @@ async function handleAnthropicMessages(req, res) {
                     state.appendText(partialTextBuffer);
                     partialTextBuffer = '';
                 }
-                state.endMessage(state.finalStopReason);
-                recordUsage(streamInputTokens, streamOutputTokens);
+                state.endMessage(state.finalStopReason, streamCacheHitTokens);
+                recordUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, anthropicPayload.model);
                 res.end();
             });
 
@@ -291,25 +636,23 @@ async function handleAnthropicMessages(req, res) {
             openAIPayload.stream = true;
             openAIPayload.stream_options = {include_usage: true};
             openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
-            const {response} = await callUpstream(
-                upstream,
-                (up) => {
-                    const payload = {
-                        ...openAIPayload,
-                        model: upstreamManager.resolveModel(openAIPayload.model, up.index)
-                    };
-                    return createChatCompletions(payload, up, {
-                        requestType: 'Anthropic',
-                        stream: false,
-                        originalModel: anthropicPayload.model
-                    });
-                }
-            );
+            const {response} = await callUpstream(upstream, (up) => {
+                const payload = {
+                    ...openAIPayload,
+                    model: upstreamManager.resolveModel(openAIPayload.model, up.index)
+                };
+                return createChatCompletions(payload, up, {
+                    requestType: 'Anthropic',
+                    stream: false,
+                    originalModel: anthropicPayload.model
+                });
+            });
 
             const aggregated = await aggregateStreamResponse(response.body);
             const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
             const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
-            recordUsage(inputTokens, outputTokens);
+            const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+            recordUsage(inputTokens, outputTokens, cacheHitTokens, anthropicPayload.model);
 
             const openAIResponse = {
                 id: aggregated.id || `chatcmpl_${Date.now()}`,
@@ -333,47 +676,16 @@ async function handleAnthropicMessages(req, res) {
         }
     } catch (error) {
         logger.error('Relay: Failed to handle Anthropic messages:', error);
-        sendAnthropicError(res, 500, error.message || 'Internal server error');
+        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
 /* ==================== 流式响应辅助 ==================== */
 
-/** OpenAI 上游流式透传（OpenAI 端点 → OpenAI 上游） */
-function _streamOpenAIPassthrough(response, res) {
-    let streamInputTokens = 0;
-    let streamOutputTokens = 0;
-    let lineBuffer = '';
-
-    response.body.on('data', (chunk) => {
-        res.write(chunk);
-        lineBuffer += chunk.toString('utf8');
-        const lines = lineBuffer.split('\n');
-        lineBuffer = lines.pop();
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith('data: ')) continue;
-            const raw = trimmed.slice(6).trim();
-            if (raw === '[DONE]') continue;
-            try {
-                const data = JSON.parse(raw);
-                if (data.usage) {
-                    streamInputTokens = data.usage.prompt_tokens || 0;
-                    streamOutputTokens = data.usage.completion_tokens || 0;
-                }
-            } catch {
-            }
-        }
-    });
-
-    response.body.on('end', () => {
-        recordUsage(streamInputTokens, streamOutputTokens);
-        res.end();
-    });
-
-    response.body.on('error', (err) => {
-        logger.error('Relay stream error:', err);
-        res.end();
+/** OpenAI 上游流式透传（OpenAI 端点 → OpenAI 上游），对 reasoning_content 做缓冲合并 */
+function _streamOpenAIPassthrough(response, res, model = 'unknown') {
+    rewriteOpenAIStream(res, response.body, (inputTokens, outputTokens, cacheHitTokens) => {
+        recordUsage(inputTokens, outputTokens, cacheHitTokens, model);
     });
 }
 
@@ -386,11 +698,11 @@ async function handleOpenAIModels(req, res) {
             sendOpenAIError(res, authResult.error.status, authResult.error.message);
             return;
         }
-        const modelsData = await getUpstreamModels(authResult.upstream);
-        sendJson(res, 200, modelsData);
+        const modelsData = await getUpstreamModels(authResult.upstream, getAnthropicRequestHeaders(req));
+        sendJson(res, 200, isAnthropicUpstream(authResult.upstream) ? mapAnthropicModelsToOpenAI(modelsData) : modelsData);
     } catch (error) {
         logger.error('Relay: Failed to get OpenAI models:', error);
-        sendOpenAIError(res, 500, error.message || 'Internal server error');
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -401,22 +713,11 @@ async function handleAnthropicModels(req, res) {
             sendAnthropicError(res, authResult.error.status, authResult.error.message);
             return;
         }
-        const modelsData = await getUpstreamModels(authResult.upstream);
-        const anthropicModels = {
-            data: (modelsData.data || []).map((model) => ({
-                id: model.id,
-                object: 'model',
-                created: model.created || 0,
-                owned_by: model.owned_by || model.owner || 'relay',
-                name: model.id,
-                capabilities: {}
-            })),
-            object: 'list'
-        };
-        sendJson(res, 200, anthropicModels);
+        const modelsData = await getUpstreamModels(authResult.upstream, getAnthropicRequestHeaders(req));
+        sendJson(res, 200, isAnthropicUpstream(authResult.upstream) ? modelsData : mapOpenAIModelsToAnthropic(modelsData));
     } catch (error) {
         logger.error('Relay: Failed to get Anthropic models:', error);
-        sendAnthropicError(res, 500, error.message || 'Internal server error');
+        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -429,12 +730,320 @@ async function handleAnthropicCountTokens(req, res) {
         }
         const body = await parseBody(req);
         const anthropicPayload = JSON.parse(body);
+
+        if (isAnthropicUpstream(authResult.upstream)) {
+            const {response} = await callUpstream(authResult.upstream, (up) =>
+                createAnthropicCountTokens(anthropicPayload, up, getAnthropicRequestHeaders(req))
+            );
+            const responseBody = await readResponseBody(response.body);
+            sendJson(res, 200, JSON.parse(responseBody));
+            return;
+        }
+
+        if (isResponsesUpstream(authResult.upstream)) {
+            sendAnthropicError(res, 400, getProtocolErrorMessage(authResult.upstream, 'anthropic', '/relay/v1/responses'));
+            return;
+        }
+
         const text = JSON.stringify(anthropicPayload.messages);
         const estimatedTokens = Math.ceil(text.length / 4);
         sendJson(res, 200, {input_tokens: estimatedTokens});
     } catch (error) {
         logger.error('Relay: Failed to count tokens:', error);
-        sendAnthropicError(res, 500, error.message || 'Internal server error');
+        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
+    }
+}
+
+/* ==================== Responses API ==================== */
+
+/**
+ * 处理 Responses API 请求 (/relay/v1/responses)
+ * 根据上游协议自动选择最优路径：
+ * - Anthropic 上游 → 报错引导
+ * - Responses 上游 → 直接透传
+ * - OpenAI 上游 → Responses→Chat 转换 → Chat→Responses 转回
+ */
+async function handleResponsesAPI(req, res) {
+    try {
+        const authResult = authenticateAndGetUpstream(req.headers);
+        if (authResult.error) {
+            sendOpenAIError(res, authResult.error.status, authResult.error.message);
+            return;
+        }
+
+        const {upstream, upstreamManager} = authResult;
+        const body = await parseBody(req);
+        const responsesReq = JSON.parse(body);
+
+        if (isAnthropicUpstream(upstream)) {
+            sendOpenAIError(res, 400, getProtocolErrorMessage(upstream, 'responses', '/relay/anthropic/v1/messages'));
+            return;
+        }
+
+        // Responses 上游透传
+        if (isResponsesUpstream(upstream)) {
+            const {response} = await callUpstream(upstream, (up) =>
+                createResponses(
+                    {...responsesReq, model: upstreamManager.resolveModel(responsesReq.model, up.index)},
+                    up,
+                    {
+                        requestType: 'ResponsesPassthrough',
+                        stream: responsesReq.stream,
+                        originalModel: responsesReq.model
+                    }
+                )
+            );
+
+            if (responsesReq.stream) {
+                res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    Connection: 'keep-alive'
+                });
+
+                let usage = null;
+                let buffer = '';
+                response.body.on('data', (chunk) => {
+                    const text = chunk.toString('utf8');
+                    res.write(text);
+                    buffer += text;
+                    const parts = buffer.split(/\r?\n\r?\n/);
+                    buffer = parts.pop() || '';
+
+                    for (const part of parts) {
+                        const {event, data} = parseSSEBlock(part);
+                        if (event !== 'response.completed' || !data || data === '[DONE]') continue;
+                        try {
+                            usage = JSON.parse(data).response?.usage || usage;
+                        } catch {
+                            continue;
+                        }
+                    }
+                });
+
+                response.body.on('end', () => {
+                    recordUsage(
+                        usage?.input_tokens || 0,
+                        usage?.output_tokens || 0,
+                        usage?.input_tokens_details?.cached_tokens || 0,
+                        responsesReq.model
+                    );
+                    res.end();
+                });
+
+                response.body.on('error', (err) => {
+                    logger.error('Relay Responses passthrough stream error:', err);
+                    res.end();
+                });
+                return;
+            }
+
+            const responseBody = await readResponseBody(response.body);
+            const parsed = JSON.parse(responseBody);
+            recordUsage(
+                parsed.usage?.input_tokens || 0,
+                parsed.usage?.output_tokens || 0,
+                parsed.usage?.input_tokens_details?.cached_tokens || 0,
+                responsesReq.model
+            );
+            sendJson(res, 200, parsed);
+            return;
+        }
+
+        // OpenAI Chat 上游：Responses → Chat Completions 转换
+        const chatReq = responsesRequestToChat(responsesReq);
+        chatReq.messages = injectBehaviorRules(chatReq.messages);
+
+        const {response} = await callUpstream(upstream, (up) => {
+            const payload = {...chatReq, model: upstreamManager.resolveModel(chatReq.model, up.index)};
+            return createChatCompletions(payload, up, {
+                requestType: 'Responses',
+                stream: responsesReq.stream,
+                originalModel: responsesReq.model
+            });
+        });
+
+        if (responsesReq.stream) {
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                Connection: 'keep-alive'
+            });
+
+            const streamState = createResponsesStreamState();
+            let buffer = Buffer.alloc(0);
+            let streamInputTokens = 0;
+            let streamOutputTokens = 0;
+            let streamCacheHitTokens = 0;
+
+            response.body.on('data', (chunk) => {
+                buffer = Buffer.concat([buffer, chunk]);
+                let start = 0;
+                let newLineIndex;
+                while ((newLineIndex = buffer.indexOf(10, start)) !== -1) {
+                    const line = buffer.toString('utf8', start, newLineIndex).trim();
+                    start = newLineIndex + 1;
+                    if (!line || line.startsWith(':')) continue;
+                    if (!line.startsWith('data: ')) continue;
+                    const raw = line.slice(6).trim();
+                    if (raw === '[DONE]') continue;
+
+                    let data;
+                    try { data = JSON.parse(raw); } catch { continue; }
+
+                    if (data.usage) {
+                        streamInputTokens = data.usage.prompt_tokens || 0;
+                        streamOutputTokens = data.usage.completion_tokens || 0;
+                        streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                    }
+
+                    const events = chatChunkToResponsesEvents(data, streamState);
+                    for (const ev of events) {
+                        res.write(`event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`);
+                    }
+                }
+                if (start > 0) buffer = buffer.subarray(start);
+            });
+
+            response.body.on('end', () => {
+                recordUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, responsesReq.model);
+                res.end();
+            });
+
+            response.body.on('error', (err) => {
+                logger.error('Relay Responses stream error:', err);
+                res.end();
+            });
+        } else {
+            // 非流式：强制 stream=true 请求上游，聚合后转 Responses 格式
+            const {response: streamResp} = await callUpstream(upstream, (up) => {
+                const payload = {...chatReq, model: upstreamManager.resolveModel(chatReq.model, up.index), stream: true};
+                return createChatCompletions(payload, up, {
+                    requestType: 'Responses',
+                    stream: false,
+                    originalModel: responsesReq.model
+                });
+            });
+
+            const aggregated = await aggregateStreamResponse(streamResp.body);
+            const inputTokens = aggregated.usage?.prompt_tokens || 0;
+            const outputTokens = aggregated.usage?.completion_tokens || 0;
+            const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+            recordUsage(inputTokens, outputTokens, cacheHitTokens, responsesReq.model);
+
+            const chatResponse = {
+                id: aggregated.id || `chatcmpl_${Date.now()}`,
+                object: 'chat.completion',
+                created: Math.floor(Date.now() / 1000),
+                model: aggregated.model || chatReq.model,
+                choices: [{
+                    index: 0,
+                    message: {
+                        role: 'assistant',
+                        content: aggregated.content || null,
+                        tool_calls: aggregated.toolCalls.length > 0 ? aggregated.toolCalls : undefined
+                    },
+                    finish_reason: aggregated.finishReason || 'stop'
+                }],
+                usage: aggregated.usage || {prompt_tokens: 0, completion_tokens: 0, total_tokens: 0}
+            };
+
+            sendJson(res, 200, chatResponseToResponses(chatResponse));
+        }
+    } catch (error) {
+        logger.error('Relay: Failed to handle Responses API:', error);
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
+    }
+}
+
+/**
+ * 处理 Responses Compact 请求 (/relay/v1/responses/compact)
+ * 根据上游协议自动选择最优路径：
+ * - Anthropic 上游 → 报错引导
+ * - Responses 上游 → 直接透传
+ * - OpenAI 上游 → Compact→Chat 转换 → Chat→Compact 转回
+ */
+async function handleResponsesCompact(req, res) {
+    try {
+        const authResult = authenticateAndGetUpstream(req.headers);
+        if (authResult.error) {
+            sendOpenAIError(res, authResult.error.status, authResult.error.message);
+            return;
+        }
+
+        const {upstream, upstreamManager} = authResult;
+        const body = await parseBody(req);
+        const compactReq = JSON.parse(body);
+
+        if (isAnthropicUpstream(upstream)) {
+            sendOpenAIError(res, 400, getProtocolErrorMessage(upstream, 'responses', '/relay/anthropic/v1/messages'));
+            return;
+        }
+
+        // Responses 上游透传
+        if (isResponsesUpstream(upstream)) {
+            const {response} = await callUpstream(upstream, (up) =>
+                createResponses(
+                    {...compactReq, model: upstreamManager.resolveModel(compactReq.model, up.index)},
+                    up,
+                    {
+                        requestType: 'ResponsesCompactPassthrough',
+                        stream: false,
+                        originalModel: compactReq.model
+                    },
+                    'responses/compact'
+                )
+            );
+
+            const responseBody = await readResponseBody(response.body);
+            const parsed = JSON.parse(responseBody);
+            recordUsage(
+                parsed.usage?.input_tokens || 0,
+                parsed.usage?.output_tokens || 0,
+                parsed.usage?.input_tokens_details?.cached_tokens || 0,
+                compactReq.model
+            );
+            sendJson(res, 200, parsed);
+            return;
+        }
+
+        // OpenAI Chat 上游：Compact → Chat 转换
+        const chatReq = compactRequestToChat(compactReq);
+        chatReq.messages = injectBehaviorRules(chatReq.messages);
+
+        chatReq.stream = true;
+        const {response} = await callUpstream(upstream, (up) => {
+            const payload = {...chatReq, model: upstreamManager.resolveModel(chatReq.model, up.index)};
+            return createChatCompletions(payload, up, {
+                requestType: 'ResponsesCompact',
+                stream: false,
+                originalModel: compactReq.model
+            });
+        });
+
+        const aggregated = await aggregateStreamResponse(response.body);
+        const inputTokens = aggregated.usage?.prompt_tokens || 0;
+        const outputTokens = aggregated.usage?.completion_tokens || 0;
+        const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+        recordUsage(inputTokens, outputTokens, cacheHitTokens, compactReq.model);
+
+        const chatResponse = {
+            id: aggregated.id || `chatcmpl_${Date.now()}`,
+            object: 'chat.completion',
+            created: Math.floor(Date.now() / 1000),
+            model: aggregated.model || chatReq.model,
+            choices: [{
+                index: 0,
+                message: {role: 'assistant', content: aggregated.content || null},
+                finish_reason: aggregated.finishReason || 'stop'
+            }],
+            usage: aggregated.usage || {prompt_tokens: 0, completion_tokens: 0, total_tokens: 0}
+        };
+
+        sendJson(res, 200, chatResponseToCompact(chatResponse));
+    } catch (error) {
+        logger.error('Relay: Failed to handle Responses Compact:', error);
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -445,7 +1054,7 @@ export async function routeRelayRequest(req, res) {
     const pathname = url.pathname;
     const method = req.method;
 
-    if (pathname === '/relay' || pathname === '/') {
+    if (pathname === '/relay' || pathname === '/relay/') {
         sendJson(res, 200, {
             name: 'Relay API Proxy',
             version: '1.0.0',
@@ -453,6 +1062,8 @@ export async function routeRelayRequest(req, res) {
             endpoints: {
                 openai: {
                     chatCompletions: 'POST /relay/v1/chat/completions - OpenAI format',
+                    responses: 'POST /relay/v1/responses - Responses API',
+                    responsesCompact: 'POST /relay/v1/responses/compact - Responses Compact API',
                     models: 'GET /relay/v1/models - OpenAI format models'
                 },
                 anthropic: {
@@ -491,6 +1102,8 @@ export async function routeRelayRequest(req, res) {
     }
 
     if (pathname === '/relay/v1/chat/completions' && method === 'POST') return handleOpenAIChatCompletions(req, res);
+    if (pathname === '/relay/v1/responses/compact' && method === 'POST') return handleResponsesCompact(req, res);
+    if (pathname === '/relay/v1/responses' && method === 'POST') return handleResponsesAPI(req, res);
     if (pathname === '/relay/v1/models' && method === 'GET') return handleOpenAIModels(req, res);
 
     sendOpenAIError(res, 404, 'Endpoint not found');

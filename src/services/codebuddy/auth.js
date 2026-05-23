@@ -12,18 +12,21 @@ import {credentialStore} from './credential-store.js';
  * @returns {Object} 鉴权结果：{authenticated: true} | {authenticated: false, error: string}
  */
 export function authenticateRequest(headers) {
-    let apiKey = headers['x-api-key'];
+    let apiKey = null;
 
-    // 兼容 OpenAI 客户端：从 Authorization: Bearer xxx 中提取
+    // 优先从 Authorization: Bearer 提取
+    const auth = headers['authorization'];
+    if (auth) {
+        apiKey = auth.startsWith('Bearer ') ? auth.slice(7) : auth;
+    }
+
+    // 兼容 x-api-key
     if (!apiKey) {
-        const auth = headers['authorization'];
-        if (auth) {
-            apiKey = auth.startsWith('Bearer ') ? auth.slice(7) : auth;
-        }
+        apiKey = headers['x-api-key'];
     }
 
     if (!apiKey) {
-        return {authenticated: false, error: 'Missing API key. Set x-api-key or Authorization: Bearer <key>'};
+        return {authenticated: false, error: 'Missing API key. Set Authorization: Bearer <key>'};
     }
 
     if (!credentialStore.authenticate(apiKey)) {

@@ -81,7 +81,7 @@ class ClaudeStreamState {
         });
     }
 
-    endMessage(stopReason = 'end_turn') {
+    endMessage(stopReason = 'end_turn', usageTokens = {}) {
         if (this.messageEnded || !this.messageStarted) return;
         this.messageEnded = true;
 
@@ -89,10 +89,15 @@ class ClaudeStreamState {
         this.closeAllTools();
         if (this.textOpen) this.closeText();
 
+        const usage = {
+            input_tokens: usageTokens.inputTokens || 0,
+            output_tokens: usageTokens.outputTokens || 0
+        };
+        if ((usageTokens.cacheHitTokens || 0) > 0) usage.cache_read_input_tokens = usageTokens.cacheHitTokens;
         this.writer.write('message_delta', {
             type: 'message_delta',
             delta: {stop_reason: stopReason, stop_sequence: null},
-            usage: {input_tokens: 0, output_tokens: 0}
+            usage
         });
 
         this.writer.write('message_stop', {type: 'message_stop'});
@@ -302,11 +307,17 @@ export function anthropicToOpenAI(anthropicPayload) {
     }
 
     // 处理 thinking / reasoning_effort
-    const thinkingConfig = resolveThinkingConfig(anthropicPayload);
-    if (thinkingConfig.disabled) {
-        // thinking 明确关闭，不设置 reasoning_effort，某些上游据此跳过推理
-    } else if (thinkingConfig.effort) {
-        openAIPayload.reasoning_effort = thinkingConfig.effort;
+    // haiku 系列不支持 reasoning_effort，设为空字符串让 normalizePayload 删除该字段
+    const model = openAIPayload.model || '';
+    if (model.includes('haiku')) {
+        openAIPayload.reasoning_effort = '';
+    } else {
+        const thinkingConfig = resolveThinkingConfig(anthropicPayload);
+        if (thinkingConfig.disabled) {
+            // thinking 明确关闭，不设置 reasoning_effort，某些上游据此跳过推理
+        } else if (thinkingConfig.effort) {
+            openAIPayload.reasoning_effort = thinkingConfig.effort;
+        }
     }
 
     return openAIPayload;

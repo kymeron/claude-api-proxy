@@ -297,26 +297,32 @@ export class ClaudeToOpenAITransformer {
 
         // 处理 reasoning_effort：从原始 Anthropic 请求中提取 effort 配置
         // 优先级：output_config.effort > thinking 配置推断 > 默认 high
-        const thinking = claudeRequest.thinking;
-        if (thinking?.type === 'disabled') {
-            // thinking 明确关闭，不设置 reasoning_effort
+        // haiku 系列不支持 reasoning_effort，跳过注入
+        const model = (req.model || '').toLowerCase();
+        if (model.includes('haiku')) {
+            // haiku 不支持 reasoning_effort，不设置该字段
         } else {
-            let effort = null;
-            const outputEffort = claudeRequest.output_config?.effort;
-            if (outputEffort && typeof outputEffort === 'string') {
-                const effortMap = {low: 'low', medium: 'medium', high: 'high', max: 'high'};
-                effort = effortMap[outputEffort.toLowerCase()] || null;
-            }
-            if (!effort && thinking) {
-                if (thinking.type === 'adaptive') {
-                    effort = 'high';
-                } else if (thinking.type === 'enabled' && thinking.budget_tokens) {
-                    if (thinking.budget_tokens <= 4000) effort = 'low';
-                    else if (thinking.budget_tokens <= 16000) effort = 'medium';
-                    else effort = 'high';
+            const thinking = claudeRequest.thinking;
+            if (thinking?.type === 'disabled') {
+                // thinking 明确关闭，不设置 reasoning_effort
+            } else {
+                let effort = null;
+                const outputEffort = claudeRequest.output_config?.effort;
+                if (outputEffort && typeof outputEffort === 'string') {
+                    const effortMap = {low: 'low', medium: 'medium', high: 'high', max: 'high'};
+                    effort = effortMap[outputEffort.toLowerCase()] || null;
                 }
+                if (!effort && thinking) {
+                    if (thinking.type === 'adaptive') {
+                        effort = 'high';
+                    } else if (thinking.type === 'enabled' && thinking.budget_tokens) {
+                        if (thinking.budget_tokens <= 4000) effort = 'low';
+                        else if (thinking.budget_tokens <= 16000) effort = 'medium';
+                        else effort = 'high';
+                    }
+                }
+                req.reasoning_effort = effort || 'high';
             }
-            req.reasoning_effort = effort || 'high';
         }
 
         return req;

@@ -11,7 +11,7 @@ import {join, dirname} from 'path';
 import {fileURLToPath} from 'url';
 import logger from '../utils/logger.js';
 import {credentialStore} from '../services/codebuddy/credential-store.js';
-import {getCodebuddyBaseUrl, getExtraBaseUrls, BLOCKED_DOMAINS, isPersonalHost} from '../services/codebuddy/config.js';
+import {getCodebuddyBaseUrl, getCodebuddyBaseUrlOptions, BLOCKED_DOMAINS, isPersonalHost} from '../services/codebuddy/config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -528,9 +528,9 @@ async function handleAuthPoll(req, res) {
  */
 function serveAdminPage(res) {
     let html = readTemplate('codebuddy-admin.html');
-    const extraOptions = getExtraBaseUrls().map(url => {
+    const extraOptions = getCodebuddyBaseUrlOptions().filter(url => url !== getCodebuddyBaseUrl()).map(url => {
         const host = (() => { try { return new URL(url).host; } catch { return url; } })();
-        return `<option value="${url}">${host} (企业站)</option>`;
+        return `<option value="${url}">${host}</option>`;
     }).join('\n                                ');
     html = html.replaceAll('{{extraBaseUrlOptions}}', extraOptions);
     res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'});

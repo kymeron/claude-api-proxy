@@ -28,9 +28,11 @@ class RelayStore {
         this.apiCallCount = 0;
         this.inputTokens = 0;
         this.outputTokens = 0;
+        this.cacheHitTokens = 0;
         this.customApiCallCount = 0;
         this.customInputTokens = 0;
         this.customOutputTokens = 0;
+        this.customCacheHitTokens = 0;
         this.dirtyCount = 0;
         this.DIRTY_FLUSH_THRESHOLD = 10;
 
@@ -89,9 +91,11 @@ class RelayStore {
                 this.apiCallCount = data.api_call_count || 0;
                 this.inputTokens = data.input_tokens || 0;
                 this.outputTokens = data.output_tokens || 0;
+                this.cacheHitTokens = data.cache_hit_tokens || 0;
                 this.customApiCallCount = data.custom_api_call_count || 0;
                 this.customInputTokens = data.custom_input_tokens || 0;
                 this.customOutputTokens = data.custom_output_tokens || 0;
+                this.customCacheHitTokens = data.custom_cache_hit_tokens || 0;
             } catch {
             }
         }
@@ -102,9 +106,11 @@ class RelayStore {
             api_call_count: this.apiCallCount,
             input_tokens: this.inputTokens,
             output_tokens: this.outputTokens,
+            cache_hit_tokens: this.cacheHitTokens,
             custom_api_call_count: this.customApiCallCount,
             custom_input_tokens: this.customInputTokens,
-            custom_output_tokens: this.customOutputTokens
+            custom_output_tokens: this.customOutputTokens,
+            custom_cache_hit_tokens: this.customCacheHitTokens
         }, null, 2), 'utf8');
         this.dirtyCount = 0;
     }
@@ -134,11 +140,14 @@ class RelayStore {
         if (this.dirtyCount >= this.DIRTY_FLUSH_THRESHOLD) this._saveUsage();
     }
 
-    incrementTokenUsage(inputTokens, outputTokens) {
+    incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens = 0) {
+        const capped = Math.min(cacheHitTokens || 0, inputTokens || 0);
         this.inputTokens += inputTokens || 0;
         this.outputTokens += outputTokens || 0;
+        this.cacheHitTokens += capped;
         this.customInputTokens += inputTokens || 0;
         this.customOutputTokens += outputTokens || 0;
+        this.customCacheHitTokens += capped;
         this.dirtyCount++;
         if (this.dirtyCount >= this.DIRTY_FLUSH_THRESHOLD) this._saveUsage();
     }
@@ -152,9 +161,11 @@ class RelayStore {
             api_call_count: this.apiCallCount,
             input_tokens: this.inputTokens,
             output_tokens: this.outputTokens,
+            cache_hit_tokens: this.cacheHitTokens,
             custom_api_call_count: this.customApiCallCount,
             custom_input_tokens: this.customInputTokens,
-            custom_output_tokens: this.customOutputTokens
+            custom_output_tokens: this.customOutputTokens,
+            custom_cache_hit_tokens: this.customCacheHitTokens
         };
     }
 
@@ -162,10 +173,11 @@ class RelayStore {
         this.customApiCallCount = 0;
         this.customInputTokens = 0;
         this.customOutputTokens = 0;
+        this.customCacheHitTokens = 0;
         this._saveUsage();
     }
 
-    recordDailyUsage(inputTokens, outputTokens) {
+    recordDailyUsage(inputTokens, outputTokens, cacheHitTokens = 0, model = 'unknown') {
         const dailyFile = join(this.baseDir, 'daily_usage.json');
         let dailyData = {};
         if (existsSync(dailyFile)) {
@@ -179,11 +191,12 @@ class RelayStore {
         const dayKey = String(now.getDate()).padStart(2, '0');
         if (!dailyData[monthKey]) dailyData[monthKey] = {};
         if (!dailyData[monthKey][dayKey]) {
-            dailyData[monthKey][dayKey] = {api_calls: 0, input_tokens: 0, output_tokens: 0};
+            dailyData[monthKey][dayKey] = {api_calls: 0, input_tokens: 0, output_tokens: 0, cache_hit_tokens: 0};
         }
         dailyData[monthKey][dayKey].api_calls += 1;
         dailyData[monthKey][dayKey].input_tokens += inputTokens || 0;
         dailyData[monthKey][dayKey].output_tokens += outputTokens || 0;
+        dailyData[monthKey][dayKey].cache_hit_tokens += Math.min(cacheHitTokens || 0, inputTokens || 0);
         // Cleanup old data (> 3 months)
         const cutoff = new Date(now.getFullYear(), now.getMonth() - 3, 1);
         const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;

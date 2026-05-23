@@ -148,12 +148,13 @@ class CopilotStore {
     }
 
     incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens) {
+        const capped = Math.min(cacheHitTokens || 0, inputTokens || 0);
         this.inputTokens += inputTokens || 0;
         this.outputTokens += outputTokens || 0;
-        this.cacheHitTokens += cacheHitTokens || 0;
+        this.cacheHitTokens += capped;
         this.customInputTokens += inputTokens || 0;
         this.customOutputTokens += outputTokens || 0;
-        this.customCacheHitTokens += cacheHitTokens || 0;
+        this.customCacheHitTokens += capped;
         this.dirtyCount++;
         if (this.dirtyCount >= this.DIRTY_FLUSH_THRESHOLD) this._saveUsage();
     }
@@ -201,7 +202,7 @@ class CopilotStore {
         dailyData[monthKey][dayKey].api_calls++;
         dailyData[monthKey][dayKey].input_tokens += inputTokens || 0;
         dailyData[monthKey][dayKey].output_tokens += outputTokens || 0;
-        dailyData[monthKey][dayKey].cache_hit_tokens = (dailyData[monthKey][dayKey].cache_hit_tokens || 0) + (cacheHitTokens || 0);
+        dailyData[monthKey][dayKey].cache_hit_tokens = (dailyData[monthKey][dayKey].cache_hit_tokens || 0) + Math.min(cacheHitTokens || 0, inputTokens || 0);
         const cutoff = new Date(now.getFullYear(), now.getMonth() - 3, 1);
         const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
         for (const key of Object.keys(dailyData)) {

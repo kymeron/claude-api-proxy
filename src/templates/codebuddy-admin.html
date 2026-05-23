@@ -614,6 +614,7 @@
                 const totalApiCalls = apiCallsData.reduce((s, v) => s + v, 0);
                 const totalInputTokens = inputTokensData.reduce((s, v) => s + v, 0);
                 const totalOutputTokens = outputTokensData.reduce((s, v) => s + v, 0);
+                const totalTokens = totalInputTokens + totalOutputTokens;
                 const totalCacheHitTokens = cacheHitTokensData.reduce((s, v) => s + v, 0);
                 const totalCredit = creditData.reduce((s, v) => s + v, 0);
                 const callEl = document.getElementById('apiCallCount');
@@ -639,7 +640,7 @@
                 const cacheRateEl = document.getElementById('cacheHitRate');
                 if (cacheRateEl) {
                     const cacheRate =
-                        totalInputTokens > 0 ? Math.round((totalCacheHitTokens / totalInputTokens) * 100) : 0;
+                        totalInputTokens > 0 ? Math.min(100, Math.round((totalCacheHitTokens / totalInputTokens) * 100)) : 0;
                     cacheRateEl.textContent = cacheRate + '%';
                     cacheRateEl.title = cacheRate + '%';
                 }
@@ -839,7 +840,7 @@
                     if (cCacheRateEl) {
                         const cacheRate =
                             (data.usage?.custom_input_tokens || 0) > 0
-                                ? Math.round(((data.usage?.custom_cache_hit_tokens || 0) / data.usage.custom_input_tokens) * 100)
+                                ? Math.min(100, Math.round(((data.usage?.custom_cache_hit_tokens || 0) / data.usage.custom_input_tokens) * 100))
                                 : 0;
                         cCacheRateEl.textContent = cacheRate + '%';
                         cCacheRateEl.title = cacheRate + '%';
@@ -854,7 +855,10 @@
 
             function startStatsAutoRefresh() {
                 refreshApiStats();
-                setInterval(refreshApiStats, 30000);
+                setInterval(() => {
+                    refreshApiStats();
+                    if (currentMonth) loadDailyChartData();
+                }, 30000);
             }
 
             function renderTenantPage(data) {
@@ -1335,9 +1339,8 @@
                 if (!el) return;
                 el.textContent = `{
   "env": {
-    "ANTHROPIC_AUTH_TOKEN": "dummy",
+    "ANTHROPIC_AUTH_TOKEN": "${apiKeyPlain || apiKeyMasked}",
     "ANTHROPIC_BASE_URL": "${baseUrl}/codebuddy/anthropic",
-    "ANTHROPIC_CUSTOM_HEADERS": "x-api-key: ${apiKeyPlain || apiKeyMasked}",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-5.1",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.1",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.0"

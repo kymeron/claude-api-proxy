@@ -9,6 +9,18 @@ import logger from '../utils/logger.js';
 import {getBehaviorRules} from '../config/system-prompts.js';
 
 /**
+ * 从 OpenAI 格式 usage 中提取缓存命中 token 数
+ * DeepSeek: prompt_cache_hit_tokens
+ * OpenAI: prompt_tokens_details.cached_tokens
+ */
+export function extractCacheHitTokens(usage) {
+    if (!usage) return 0;
+    if (usage.prompt_cache_hit_tokens) return usage.prompt_cache_hit_tokens;
+    if (usage.prompt_tokens_details?.cached_tokens) return usage.prompt_tokens_details.cached_tokens;
+    return 0;
+}
+
+/**
  * 生成唯一 ID
  */
 export function generateId() {
@@ -362,7 +374,11 @@ export function normalizePayload(payload, meta = {}) {
     if (ordered.reasoning_effort === '') {
         delete ordered.reasoning_effort;
     } else if (ordered.reasoning_effort === undefined) {
-        ordered.reasoning_effort = 'high';
+        // haiku 系列不支持 reasoning_effort，跳过默认注入
+        const m = (ordered.model || '').toLowerCase();
+        if (!m.includes('haiku')) {
+            ordered.reasoning_effort = 'high';
+        }
     }
     if (ordered.stream && !ordered.stream_options) {
         ordered.stream_options = {include_usage: true};
@@ -395,7 +411,8 @@ export function openAIToAnthropic(openAIResponse) {
             stop_sequence: null,
             usage: {
                 input_tokens: openAIResponse.usage?.prompt_tokens || 0,
-                output_tokens: openAIResponse.usage?.completion_tokens || 0
+                output_tokens: openAIResponse.usage?.completion_tokens || 0,
+                cache_read_input_tokens: extractCacheHitTokens(openAIResponse.usage)
             }
         };
     }
@@ -442,7 +459,8 @@ export function openAIToAnthropic(openAIResponse) {
         stop_sequence: null,
         usage: {
             input_tokens: openAIResponse.usage?.prompt_tokens || 0,
-            output_tokens: openAIResponse.usage?.completion_tokens || 0
+            output_tokens: openAIResponse.usage?.completion_tokens || 0,
+            cache_read_input_tokens: extractCacheHitTokens(openAIResponse.usage)
         }
     };
 }

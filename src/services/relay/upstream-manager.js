@@ -370,7 +370,7 @@ export class UpstreamManager {
     async _testAnthropic(upstream, model) {
         const url = buildUrl(upstream.base_url, 'v1/messages');
         const headers = {
-            'x-api-key': upstream.api_key,
+            Authorization: `Bearer ${upstream.api_key}`,
             'anthropic-version': '2023-06-01',
             'Content-Type': 'application/json',
             'User-Agent': 'Relay/1.0'

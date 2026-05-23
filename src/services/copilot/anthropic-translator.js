@@ -5,7 +5,7 @@
  */
 
 import logger from '../../utils/logger.js';
-import {generateId, mapStopReason, translateToolChoice, mapContent, injectBehaviorRules, prependThinkingHint, prependToolThinkingHint, openAIToAnthropic as sharedOpenAIToAnthropic} from '../../transformer/shared-translator.js';
+import {generateId, mapStopReason, translateToolChoice, mapContent, injectBehaviorRules, prependThinkingHint, prependToolThinkingHint, extractCacheHitTokens, openAIToAnthropic as sharedOpenAIToAnthropic} from '../../transformer/shared-translator.js';
 
 /**
  * 转换 Anthropic 请求到 OpenAI 格式
@@ -38,7 +38,55 @@ export function anthropicToOpenAI(anthropicPayload) {
         openAIPayload.tool_choice = translateToolChoice(anthropicPayload.tool_choice);
     }
 
+    // 处理 thinking / reasoning_effort
+    // haiku 系列不支持 reasoning_effort，设为空字符串让 normalizePayload 删除该字段
+    const model = openAIPayload.model || '';
+    if (model.includes('haiku')) {
+        openAIPayload.reasoning_effort = '';
+    } else {
+        const thinkingConfig = resolveThinkingConfig(anthropicPayload);
+        if (thinkingConfig.disabled) {
+            openAIPayload.reasoning_effort = '';
+        } else if (thinkingConfig.effort) {
+            openAIPayload.reasoning_effort = thinkingConfig.effort;
+        }
+        // 否则不设置，让 normalizePayload 默认注入 'high'
+    }
+
     return openAIPayload;
+}
+
+/**
+ * 从 Anthropic 请求中解析 thinking 配置
+ * 返回 { disabled: boolean, effort: string|null }
+ */
+function resolveThinkingConfig(anthropicPayload) {
+    const thinking = anthropicPayload.thinking;
+
+    if (thinking?.type === 'disabled') {
+        return {disabled: true, effort: null};
+    }
+
+    let effort = null;
+
+    const outputEffort = anthropicPayload.output_config?.effort;
+    if (outputEffort && typeof outputEffort === 'string') {
+        const effortMap = {low: 'low', medium: 'medium', high: 'high', max: 'high'};
+        const mapped = effortMap[outputEffort.toLowerCase()];
+        if (mapped) effort = mapped;
+    }
+
+    if (!effort && thinking) {
+        if (thinking.type === 'adaptive') {
+            effort = 'high';
+        } else if (thinking.type === 'enabled' && thinking.budget_tokens) {
+            if (thinking.budget_tokens <= 4000) effort = 'low';
+            else if (thinking.budget_tokens <= 16000) effort = 'medium';
+            else effort = 'high';
+        }
+    }
+
+    return {disabled: false, effort};
 }
 
 /**
@@ -66,12 +114,15 @@ function translateMessages(anthropicMessages, system) {
         if (typeof system === 'string') {
             messages.push({ role: 'system', content: system });
         } else if (Array.isArray(system)) {
-            const systemText = system
-                .map(block => block.text)
-                .filter(Boolean)
-                .join('\n\n');
-            if (systemText) {
-                messages.push({ role: 'system', content: systemText });
+            // 将带 cache_control 的静态块放在前面，不带 cache_control 的动态块放在末尾
+            // 使 OpenAI 兼容 API 能缓存更长的静态前缀（需 ≥1024 tokens）
+            const cacheableBlocks = system.filter(b => b.type === 'text' && b.text && b.cache_control);
+            const dynamicBlocks = system.filter(b => b.type === 'text' && b.text && !b.cache_control);
+            const staticText = cacheableBlocks.map(b => b.text).join('\n\n');
+            const dynamicText = dynamicBlocks.map(b => b.text).join('\n\n');
+            const parts = [staticText, dynamicText].filter(Boolean);
+            if (parts.length > 0) {
+                messages.push({ role: 'system', content: parts.join('\n\n') });
             }
         }
     }
@@ -322,15 +373,17 @@ export function translateStreamChunk(openAIChunk, state) {
             state.contentBlockOpen = false;
         }
 
+        const usage = {output_tokens: openAIChunk.usage?.completion_tokens || 0};
+        const cacheTokens = extractCacheHitTokens(openAIChunk.usage);
+        if (cacheTokens > 0) usage.cache_read_input_tokens = cacheTokens;
+
         events.push({
             type: 'message_delta',
             delta: {
                 stop_reason: mapStopReason(choice.finish_reason),
                 stop_sequence: null
             },
-            usage: {
-                output_tokens: openAIChunk.usage?.completion_tokens || 0
-            }
+            usage
         });
 
         events.push({

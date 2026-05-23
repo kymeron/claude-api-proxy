@@ -6,7 +6,7 @@
 import {request, readBody} from '../../utils/http-client.js';
 import {normalizePayload} from '../../transformer/shared-translator.js';
 import logger from '../../utils/logger.js';
-import {getCodebuddyApiUrl, codebuddyHeaders, getCodebuddyBaseUrl, CODEBUDDY_MODELS, isPersonalHost} from './config.js';
+import {getCodebuddyApiUrl, codebuddyHeaders, getCodebuddyBaseUrl, getCodebuddyModels, isPersonalHost} from './config.js';
 import {randomBytes} from 'crypto';
 
 // CodeBuddy 服务端会检测竞争对手关键词并触发 content_filter
@@ -108,7 +108,7 @@ export async function getModels(credential = null) {
     }
 
     return {
-        data: CODEBUDDY_MODELS,
+        data: getCodebuddyModels(credential.base_url),
         object: 'list'
     };
 }

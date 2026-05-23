@@ -7,7 +7,7 @@ import {ensureCopilotToken, isAuthenticated} from '../services/copilot/auth.js';
 import {createChatCompletions, getModels} from '../services/copilot/copilot-api.js';
 import {copilotState} from '../services/copilot/state.js';
 import {copilotStore} from '../services/copilot/copilot-store.js';
-import {readBody} from '../utils/http-client.js';
+import {readBody, isNetworkError} from '../utils/http-client.js';
 import {
     anthropicToOpenAI,
     openAIToAnthropic,
@@ -18,7 +18,9 @@ import {
     responsesRequestToChat,
     chatResponseToResponses,
     createResponsesStreamState,
-    chatChunkToResponsesEvents
+    chatChunkToResponsesEvents,
+    compactRequestToChat,
+    chatResponseToCompact
 } from '../transformer/responses-translator.js';
 import {
     estimateMessageTokens,
@@ -26,6 +28,18 @@ import {
 } from '../utils/token-estimation.js';
 import {aggregateStreamResponse} from '../services/codebuddy/api.js';
 import logger from '../utils/logger.js';
+import {appendFileSync, mkdirSync, existsSync} from 'fs';
+import {join} from 'path';
+
+const CACHE_DEBUG_FILE = join(process.cwd(), '.copilot', 'cache_debug.jsonl');
+
+function logCacheDebug(entry) {
+    try {
+        const dir = join(process.cwd(), '.copilot');
+        if (!existsSync(dir)) mkdirSync(dir, {recursive: true});
+        appendFileSync(CACHE_DEBUG_FILE, JSON.stringify({ts: new Date().toISOString(), ...entry}) + '\n');
+    } catch {}
+}
 
 /* ==================== 工具函数 ==================== */
 
@@ -68,13 +82,24 @@ function sendAnthropicError(res, status, message) {
     sendJson(res, status, {type: 'error', error: {type: errorType, message}});
 }
 
+function upstreamErrorStatus(err) {
+    return isNetworkError(err) ? 502 : 500;
+}
+
 /**
  * API Key 鉴权
  */
 function authenticateRequest(req) {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader) return false;
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+    // 优先从 Authorization: Bearer 提取
+    const auth = req.headers['authorization'];
+    let token = auth?.startsWith('Bearer ') ? auth.slice(7) : auth;
+
+    // 兼容 x-api-key（CherryStudio 等 Anthropic 客户端）
+    if (!token) {
+        token = req.headers['x-api-key'];
+    }
+
+    if (!token) return false;
     return copilotStore.authenticate(token);
 }
 
@@ -174,6 +199,7 @@ async function handleOpenAIChatCompletions(req, res) {
                             streamInputTokens = data.usage.prompt_tokens || 0;
                             streamOutputTokens = data.usage.completion_tokens || 0;
                             streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                            logCacheDebug({mode: 'openai_stream', model: data.model, usage: data.usage});
                         }
                     } catch {}
                 }
@@ -218,6 +244,9 @@ async function handleOpenAIChatCompletions(req, res) {
             const inputTokens = parsed.usage?.prompt_tokens || 0;
             const outputTokens = parsed.usage?.completion_tokens || 0;
             const cacheHitTokens = extractCacheHitTokens(parsed.usage);
+            if (parsed.usage) {
+                logCacheDebug({mode: 'openai_nonstream', model: parsed.model, usage: parsed.usage});
+            }
             copilotStore.incrementApiCallCount();
             if (inputTokens > 0 || outputTokens > 0) {
                 copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
@@ -231,7 +260,7 @@ async function handleOpenAIChatCompletions(req, res) {
         }
     } catch (error) {
         logger.error('Copilot: Failed to handle OpenAI chat completions:', error);
-        sendOpenAIError(res, 500, error.message || 'Internal server error');
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -265,7 +294,7 @@ async function handleOpenAIModels(req, res) {
         });
     } catch (error) {
         logger.error('Copilot: Failed to get OpenAI models:', error);
-        sendOpenAIError(res, 500, error.message || 'Internal server error');
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -337,6 +366,7 @@ async function handleAnthropicMessages(req, res) {
                                 streamInputTokens = openAIChunk.usage.prompt_tokens || streamInputTokens;
                                 streamOutputTokens = openAIChunk.usage.completion_tokens || streamOutputTokens;
                                 streamCacheHitTokens = extractCacheHitTokens(openAIChunk.usage) || streamCacheHitTokens;
+                                logCacheDebug({mode: 'anthropic_stream', model: openAIChunk.model, usage: openAIChunk.usage});
                             }
 
                             for (const event of anthropicEvents) {
@@ -409,6 +439,9 @@ async function handleAnthropicMessages(req, res) {
             const inputTokens = openAIResponse.usage?.prompt_tokens || 0;
             const outputTokens = openAIResponse.usage?.completion_tokens || 0;
             const cacheHitTokens = extractCacheHitTokens(openAIResponse.usage);
+            if (openAIResponse.usage) {
+                logCacheDebug({mode: 'anthropic_nonstream', model: openAIResponse.model, usage: openAIResponse.usage});
+            }
             copilotStore.incrementApiCallCount();
             if (inputTokens > 0 || outputTokens > 0) {
                 copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
@@ -422,7 +455,7 @@ async function handleAnthropicMessages(req, res) {
         }
     } catch (error) {
         logger.error('Copilot: Failed to handle Anthropic messages:', error);
-        sendAnthropicError(res, 500, error.message || 'Internal server error');
+        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -471,7 +504,7 @@ async function handleAnthropicCountTokens(req, res) {
         sendJson(res, 200, {input_tokens: totalTokens});
     } catch (error) {
         logger.error('Copilot: Failed to count tokens:', error);
-        sendAnthropicError(res, 500, error.message || 'Internal server error');
+        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -507,7 +540,7 @@ async function handleAnthropicModels(req, res) {
         });
     } catch (error) {
         logger.error('Copilot: Failed to get Anthropic models:', error);
-        sendAnthropicError(res, 500, error.message || 'Internal server error');
+        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -578,6 +611,7 @@ async function handleResponsesAPI(req, res) {
                         streamInputTokens = data.usage.prompt_tokens || 0;
                         streamOutputTokens = data.usage.completion_tokens || 0;
                         streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                        logCacheDebug({mode: 'responses_stream', model: data.model, usage: data.usage});
                     }
                     if (data.model) streamModel = data.model;
 
@@ -619,6 +653,9 @@ async function handleResponsesAPI(req, res) {
             const inputTokens = chatResponse.usage?.prompt_tokens || 0;
             const outputTokens = chatResponse.usage?.completion_tokens || 0;
             const cacheHitTokens = extractCacheHitTokens(chatResponse.usage);
+            if (chatResponse.usage) {
+                logCacheDebug({mode: 'responses_nonstream', model: chatResponse.model, usage: chatResponse.usage});
+            }
             copilotStore.incrementApiCallCount();
             copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
             copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
@@ -627,7 +664,58 @@ async function handleResponsesAPI(req, res) {
         }
     } catch (error) {
         logger.error('Copilot: Failed to handle Responses API:', error);
-        sendOpenAIError(res, 500, error.message || 'Internal server error');
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
+    }
+}
+
+/* ==================== Responses Compact API ==================== */
+
+/**
+ * 处理 OpenAI Responses Compact 请求 (/copilot/v1/responses/compact)
+ */
+async function handleResponsesCompact(req, res) {
+    try {
+        const proxyUrl = extractProxyFromHeaders(req);
+        const authResult = await authenticateAndGetToken(req);
+        if (authResult.error) {
+            sendOpenAIError(res, authResult.error.status, authResult.error.message);
+            return;
+        }
+
+        const body = await parseBody(req);
+        const compactReq = JSON.parse(body);
+
+        // Compact -> Chat Completions
+        const chatReq = compactRequestToChat(compactReq);
+
+        const response = await createChatCompletions(
+            authResult.copilotToken,
+            copilotState.vsCodeVersion,
+            chatReq,
+            copilotState.accountType,
+            proxyUrl
+        );
+
+        if (response.status >= 400) {
+            const errorBody = await readBody(response.body);
+            sendOpenAIError(res, response.status, `Upstream error: ${errorBody.slice(0, 500)}`);
+            return;
+        }
+
+        const responseBody = await readBody(response.body);
+        const chatResponse = JSON.parse(responseBody);
+
+        const inputTokens = chatResponse.usage?.prompt_tokens || 0;
+        const outputTokens = chatResponse.usage?.completion_tokens || 0;
+        const cacheHitTokens = extractCacheHitTokens(chatResponse.usage);
+        copilotStore.incrementApiCallCount();
+        copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
+        copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+
+        sendJson(res, 200, chatResponseToCompact(chatResponse));
+    } catch (error) {
+        logger.error('Copilot: Failed to handle Responses Compact:', error);
+        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
@@ -644,6 +732,7 @@ function handleRoot(req, res) {
             openai: {
                 chatCompletions: 'POST /copilot/v1/chat/completions - OpenAI format',
                 responses: 'POST /copilot/v1/responses - OpenAI Responses API',
+                responsesCompact: 'POST /copilot/v1/responses/compact - Responses Compact API',
                 models: 'GET /copilot/v1/models - OpenAI format models'
             },
             anthropic: {
@@ -694,6 +783,7 @@ export async function routeCopilotRequest(req, res) {
 
     // ========== OpenAI 模式 ==========
     if (pathname === '/copilot/v1/chat/completions' && method === 'POST') return handleOpenAIChatCompletions(req, res);
+    if (pathname === '/copilot/v1/responses/compact' && method === 'POST') return handleResponsesCompact(req, res);
     if (pathname === '/copilot/v1/responses' && method === 'POST') return handleResponsesAPI(req, res);
     if (pathname === '/copilot/v1/models' && method === 'GET') return handleOpenAIModels(req, res);
 

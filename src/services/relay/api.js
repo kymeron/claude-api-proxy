@@ -113,9 +113,8 @@ function buildBaseHeaders(upstream, extraHeaders = {}) {
     };
 
     if (isAnthropicUpstream(upstream)) {
-        headers['x-api-key'] = upstream.api_key;
+        headers.Authorization = `Bearer ${upstream.api_key}`;
         headers['anthropic-version'] = extraHeaders['anthropic-version'] || DEFAULT_ANTHROPIC_VERSION;
-        delete headers.Authorization;
         return headers;
     }
 

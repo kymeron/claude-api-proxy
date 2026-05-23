@@ -12,11 +12,11 @@ import {relayStore} from './relay-store.js';
  * @returns {Object} 鉴权结果：{authenticated: true} | {authenticated: false, error}
  */
 export function authenticateRequest(headers) {
-    const apiKey = headers['x-api-key'] ||
-        (headers['authorization']?.startsWith('Bearer ') ? headers['authorization'].slice(7) : null);
+    const apiKey = (headers['authorization']?.startsWith('Bearer ') ? headers['authorization'].slice(7) : null) ||
+        headers['x-api-key'];
 
     if (!apiKey) {
-        return {authenticated: false, error: 'Missing API key. Set x-api-key or Authorization: Bearer <key>'};
+        return {authenticated: false, error: 'Missing API key. Set Authorization: Bearer <key>'};
     }
 
     if (!relayStore.authenticate(apiKey)) {

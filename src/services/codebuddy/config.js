@@ -7,18 +7,7 @@ import {readFileSync} from 'fs';
 import {join} from 'path';
 import logger from '../../utils/logger.js';
 
-// 默认上游 URL（支持区域切换：cn/intl 对应不同默认上游）
-export const DEFAULT_BASE_URL = ''; // 占位，实际值通过 getCodebuddyBaseUrl() 获取
-
-// 额外企业站 URL 列表（逗号分隔，会追加到管理面板的上游下拉列表中）
-// 延迟读取环境变量，因为 ESM import 在 .env 加载前执行
-export function getExtraBaseUrls() {
-    return process.env.CODEBUDDY_EXTRA_BASE_URLS
-        ? process.env.CODEBUDDY_EXTRA_BASE_URLS.split(',')
-              .map((u) => u.trim())
-              .filter(Boolean)
-        : [];
-}
+export const DEFAULT_BASE_URL = 'https://copilot.tencent.com';
 
 // 禁止使用的上游域名（这些域名已废弃，不可再添加新凭证）
 export const BLOCKED_DOMAINS = ['dhcode2025.copilot.qq.com'];
@@ -30,25 +19,50 @@ export const BLOCKED_DOMAINS = ['dhcode2025.copilot.qq.com'];
  */
 export function getCodebuddyBaseUrl(baseUrl) {
     if (baseUrl) return baseUrl;
-    return (
-        process.env.CODEBUDDY_DEFAULT_BASE_URL ||
-        (process.env.CODEBUDDY_REGION === 'intl' ? 'https://www.codebuddy.ai' : 'https://copilot.tencent.com')
-    );
+    return DEFAULT_BASE_URL;
 }
 
 // 凭证目录
 export const CODEBUDDY_CREDS_DIR = process.env.CODEBUDDY_CREDS_DIR || '.codebuddy';
 
-// 可用模型列表
-export const CODEBUDDY_MODELS = [
-    {id: 'glm-5.1', name: 'GLM 5.1', vendor: 'zhipu'},
-    {id: 'glm-5.0', name: 'GLM 5.0', vendor: 'zhipu'},
-    {id: 'glm-4.7', name: 'GLM 4.7', vendor: 'zhipu'},
-    {id: 'glm-4.6v', name: 'GLM 4.6V', vendor: 'zhipu'},
-    {id: 'kimi-k2.5', name: 'Kimi K2.5', vendor: 'moonshot'},
-    {id: 'minimax-m2.5', name: 'MiniMax M2.5', vendor: 'minimax'},
-    {id: 'deepseek-v3-2-volc', name: 'DeepSeek V3.2', vendor: 'deepseek'}
+const CODEBUDDY_CN_MODELS = [
+    {id: 'glm-5v-turbo', name: 'GLM-5v-Turbo', vendor: 'zhipu'},
+    {id: 'glm-5.1', name: 'GLM-5.1', vendor: 'zhipu'},
+    {id: 'glm-5.0-turbo', name: 'GLM-5.0-Turbo', vendor: 'zhipu'},
+    {id: 'glm-4.6', name: 'GLM-4.6', vendor: 'zhipu'},
+    {id: 'kimi-k2.6', name: 'Kimi-K2.6', vendor: 'moonshot'},
+    {id: 'kimi-k2.5', name: 'Kimi-K2.5', vendor: 'moonshot'},
+    {id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', vendor: 'deepseek'},
+    {id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', vendor: 'deepseek'},
+    {id: 'deepseek-v3-2-volc', name: 'DeepSeek-V3.2', vendor: 'deepseek'}
 ];
+
+const CODEBUDDY_INTL_MODELS = [
+    {id: 'glm-5.0', name: 'GLM-5.0', vendor: 'zhipu'},
+    {id: 'kimi-k2.5', name: 'Kimi-K2.5', vendor: 'moonshot'},
+    {id: 'gpt-5.5', name: 'GLM-5.1', vendor: 'zhipu'},
+    {id: 'gpt-5.4', name: 'GLM-5.0-Turbo', vendor: 'zhipu'},
+    {id: 'glm-4.6', name: 'GLM-4.6', vendor: 'zhipu'},
+    {id: 'gpt-5.3-codex', name: 'Kimi-K2.6', vendor: 'moonshot'},
+    {id: 'gemini-3.5-flash', name: 'Kimi-K2.5', vendor: 'moonshot'},
+    {id: 'gemini-3.0-pro', name: 'Kimi-K2.5', vendor: 'moonshot'},
+    {id: 'gemini-3.0-flash', name: 'Kimi-K2.5', vendor: 'moonshot'},
+    {id: 'deepseek-v3-2-volc', name: 'DeepSeek-V3.2', vendor: 'deepseek'}
+];
+
+export const CODEBUDDY_MODELS_BY_BASE_URL = {
+    'https://copilot.tencent.com': CODEBUDDY_CN_MODELS,
+    'https://www.codebuddy.ai': CODEBUDDY_INTL_MODELS
+};
+
+export function getCodebuddyBaseUrlOptions() {
+    return Object.keys(CODEBUDDY_MODELS_BY_BASE_URL);
+}
+
+export function getCodebuddyModels(baseUrl) {
+    const resolvedBaseUrl = getCodebuddyBaseUrl(baseUrl);
+    return CODEBUDDY_MODELS_BY_BASE_URL[resolvedBaseUrl] || CODEBUDDY_MODELS_BY_BASE_URL[getCodebuddyBaseUrl()];
+}
 
 // 个人版官方域名 — 这些域名不需要传企业头
 const PERSONAL_HOSTS = ['copilot.tencent.com', 'www.codebuddy.ai'];

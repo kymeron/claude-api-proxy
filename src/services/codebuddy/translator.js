@@ -80,7 +80,7 @@ class ClaudeStreamState {
         });
     }
 
-    endMessage(stopReason = 'end_turn') {
+    endMessage(stopReason = 'end_turn', usageTokens = {}) {
         if (this.messageEnded || !this.messageStarted) return;
         this.messageEnded = true;
 
@@ -88,10 +88,15 @@ class ClaudeStreamState {
         this.closeAllTools();
         if (this.textOpen) this.closeText();
 
+        const usage = {
+            input_tokens: usageTokens.inputTokens || 0,
+            output_tokens: usageTokens.outputTokens || 0
+        };
+        if ((usageTokens.cacheHitTokens || 0) > 0) usage.cache_read_input_tokens = usageTokens.cacheHitTokens;
         this.writer.write('message_delta', {
             type: 'message_delta',
             delta: {stop_reason: stopReason, stop_sequence: null},
-            usage: {input_tokens: 0, output_tokens: 0}
+            usage
         });
 
         this.writer.write('message_stop', {type: 'message_stop'});
@@ -277,19 +282,11 @@ class ClaudeStreamState {
 export {SSEWriter, ClaudeStreamState};
 
 /**
- * 支持推理的模型白名单
- * 仅对这些模型注入 reasoning_effort 参数
- */
-const modelsSupportReasoning = ['glm-5.1', 'glm-5.0', 'glm-4.7', 'glm-4.6', 'kimi-k2.5', 'deepseek-v3-2-volc'];
-
-/**
  * 转换 Anthropic 请求到 OpenAI 格式
  */
 export function anthropicToOpenAI(anthropicPayload) {
-    const modelName = translateModelName(anthropicPayload.model);
-
     const openAIPayload = {
-        model: modelName,
+        model: anthropicPayload.model,
         messages: translateMessages(anthropicPayload.messages, anthropicPayload.system),
         max_tokens: anthropicPayload.max_tokens,
         temperature: anthropicPayload.temperature,
@@ -315,18 +312,13 @@ export function anthropicToOpenAI(anthropicPayload) {
         openAIPayload.tool_choice = translateToolChoice(anthropicPayload.tool_choice);
     }
 
-    // 为支持推理的模型添加 reasoning_effort 参数启用推理功能
-    if (modelsSupportReasoning.includes(modelName)) {
-        const thinkingConfig = resolveThinkingConfig(anthropicPayload);
-        if (thinkingConfig.disabled) {
-            // 显式设空字符串，normalizePayload 识别后删除字段、不补默认值
-            openAIPayload.reasoning_effort = '';
-        } else if (thinkingConfig.effort) {
-            openAIPayload.reasoning_effort = thinkingConfig.effort;
-        } else {
-            // 默认启用 high 级别推理
-            openAIPayload.reasoning_effort = 'high';
-        }
+    // reasoning_effort 统一由 resolveThinkingConfig + normalizePayload 处理
+    const thinkingConfig = resolveThinkingConfig(anthropicPayload);
+    if (thinkingConfig.disabled) {
+        // 显式设空字符串，normalizePayload 识别后删除字段、不补默认值
+        openAIPayload.reasoning_effort = '';
+    } else if (thinkingConfig.effort) {
+        openAIPayload.reasoning_effort = thinkingConfig.effort;
     }
 
     return openAIPayload;
@@ -370,66 +362,6 @@ function resolveThinkingConfig(anthropicPayload) {
     }
 
     return {disabled: false, effort};
-}
-
-/**
- * 转换模型名称
- * 将 Claude Code 的模型名映射到 CodeBuddy 支持的顶级模型
- */
-function translateModelName(model) {
-    // 处理特殊的子代理模型名称
-    if (model.startsWith('claude-')) {
-        // Claude 全系列映射到 glm-5.0
-        return 'glm-5.0';
-    }
-
-    // Claude 模型映射到 CodeBuddy 顶级模型
-    const modelMapping = {
-        // OpenAI 模型映射
-        'gpt-4': 'glm-5.0',
-        'gpt-4o': 'glm-5.0',
-        'gpt-4-turbo': 'glm-4.7',
-        'gpt-3.5-turbo': 'minimax-m2.5',
-
-        // DeepSeek 模型映射
-        'deepseek-chat': 'deepseek-v3-2-volc',
-        'deepseek-coder': 'deepseek-v3-2-volc',
-        'deepseek-reasoner': 'deepseek-v3-2-volc',
-
-        // 默认使用 glm-5.0
-        default: 'glm-5.0'
-    };
-
-    // 检查是否是 CodeBuddy 直接支持的模型名（小写匹配）
-    const normalizedModel = model.toLowerCase();
-
-    // CodeBuddy 支持的顶级模型列表
-    const supportedModels = [
-        'glm-5.1',
-        'glm-5.0',
-        'glm-4.7',
-        'glm-4.6v',
-        'kimi-k2.5',
-        'minimax-m2.5',
-        'deepseek-v3-2-volc'
-    ];
-
-    // 直接匹配 CodeBuddy 模型
-    const directMatch = supportedModels.find((m) => m.toLowerCase() === normalizedModel);
-    if (directMatch) {
-        return directMatch;
-    }
-
-    // 查找映射
-    for (const [key, value] of Object.entries(modelMapping)) {
-        if (normalizedModel.includes(key)) {
-            return value;
-        }
-    }
-
-    // 默认返回 glm-5.0
-    logger.warn(`Unknown model ${model}, using glm-5.0`);
-    return 'glm-5.0';
 }
 
 /**

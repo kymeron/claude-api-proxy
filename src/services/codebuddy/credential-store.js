@@ -36,6 +36,8 @@ class CredentialStore {
         this.customInputTokens = 0;
         this.customOutputTokens = 0;
         this.customCacheHitTokens = 0;
+        this.credit = 0;
+        this.customCredit = 0;
         this.dirtyCount = 0;
         this.DIRTY_FLUSH_THRESHOLD = 10;
 
@@ -107,6 +109,8 @@ class CredentialStore {
                 this.customInputTokens = data.custom_input_tokens || 0;
                 this.customOutputTokens = data.custom_output_tokens || 0;
                 this.customCacheHitTokens = data.custom_cache_hit_tokens || 0;
+                this.credit = data.credit || 0;
+                this.customCredit = data.custom_credit || 0;
             } catch {}
         }
     }
@@ -117,10 +121,12 @@ class CredentialStore {
             input_tokens: this.inputTokens,
             output_tokens: this.outputTokens,
             cache_hit_tokens: this.cacheHitTokens,
+            credit: this.credit,
             custom_api_call_count: this.customApiCallCount,
             custom_input_tokens: this.customInputTokens,
             custom_output_tokens: this.customOutputTokens,
-            custom_cache_hit_tokens: this.customCacheHitTokens
+            custom_cache_hit_tokens: this.customCacheHitTokens,
+            custom_credit: this.customCredit
         }, null, 2), 'utf8');
         this.dirtyCount = 0;
     }
@@ -167,12 +173,23 @@ class CredentialStore {
     }
 
     incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens = 0) {
+        const capped = Math.min(cacheHitTokens || 0, inputTokens || 0);
         this.inputTokens += inputTokens || 0;
         this.outputTokens += outputTokens || 0;
-        this.cacheHitTokens += cacheHitTokens || 0;
+        this.cacheHitTokens += capped;
         this.customInputTokens += inputTokens || 0;
         this.customOutputTokens += outputTokens || 0;
-        this.customCacheHitTokens += cacheHitTokens || 0;
+        this.customCacheHitTokens += capped;
+        this.dirtyCount++;
+        if (this.dirtyCount >= this.DIRTY_FLUSH_THRESHOLD) {
+            this._saveUsage();
+        }
+    }
+
+    incrementCreditUsage(credit = 0) {
+        if (!credit) return;
+        this.credit += credit;
+        this.customCredit += credit;
         this.dirtyCount++;
         if (this.dirtyCount >= this.DIRTY_FLUSH_THRESHOLD) {
             this._saveUsage();
@@ -191,10 +208,12 @@ class CredentialStore {
             input_tokens: this.inputTokens,
             output_tokens: this.outputTokens,
             cache_hit_tokens: this.cacheHitTokens,
+            credit: this.credit,
             custom_api_call_count: this.customApiCallCount,
             custom_input_tokens: this.customInputTokens,
             custom_output_tokens: this.customOutputTokens,
-            custom_cache_hit_tokens: this.customCacheHitTokens
+            custom_cache_hit_tokens: this.customCacheHitTokens,
+            custom_credit: this.customCredit
         };
     }
 
@@ -203,11 +222,12 @@ class CredentialStore {
         this.customInputTokens = 0;
         this.customOutputTokens = 0;
         this.customCacheHitTokens = 0;
+        this.customCredit = 0;
         this._saveUsage();
     }
 
     // Daily usage
-    recordDailyUsage(inputTokens, outputTokens, cacheHitTokens = 0) {
+    recordDailyUsage(inputTokens, outputTokens, cacheHitTokens = 0, credit = 0) {
         const dailyDir = this.baseDir;
         const dailyFile = join(dailyDir, 'daily_usage.json');
         let dailyData = {};
@@ -223,13 +243,14 @@ class CredentialStore {
             dailyData[monthKey] = {};
         }
         if (!dailyData[monthKey][dayKey]) {
-            dailyData[monthKey][dayKey] = {api_calls: 0, input_tokens: 0, output_tokens: 0, cache_hit_tokens: 0};
+            dailyData[monthKey][dayKey] = {api_calls: 0, input_tokens: 0, output_tokens: 0, cache_hit_tokens: 0, credit: 0};
         }
 
         dailyData[monthKey][dayKey].api_calls++;
         dailyData[monthKey][dayKey].input_tokens += inputTokens || 0;
         dailyData[monthKey][dayKey].output_tokens += outputTokens || 0;
-        dailyData[monthKey][dayKey].cache_hit_tokens = (dailyData[monthKey][dayKey].cache_hit_tokens || 0) + (cacheHitTokens || 0);
+        dailyData[monthKey][dayKey].cache_hit_tokens = (dailyData[monthKey][dayKey].cache_hit_tokens || 0) + Math.min(cacheHitTokens || 0, inputTokens || 0);
+        dailyData[monthKey][dayKey].credit = (dailyData[monthKey][dayKey].credit || 0) + (credit || 0);
 
         // Cleanup old months (> 3 months ago)
         const cutoff = new Date(now.getFullYear(), now.getMonth() - 3, 1);
