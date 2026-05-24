@@ -393,6 +393,7 @@
             }
             .guide-model-table {
                 width: 100%;
+                table-layout: fixed;
                 border-collapse: collapse;
                 margin-top: 6px;
                 font-size: 0.82rem;
@@ -405,17 +406,26 @@
                 font-weight: 600;
                 color: #374151;
             }
-            .guide-model-table th:last-child {
+            .guide-model-table th:nth-child(1) {
+                width: 42%;
+            }
+            .guide-model-table th:nth-child(2) {
+                width: 34%;
+            }
+            .guide-model-table th:nth-last-child(-n+2) {
                 text-align: center;
-                width: 50px;
+                width: 12%;
             }
             .guide-model-table td {
                 padding: 5px 10px;
                 border-bottom: 1px solid #f1f5f9;
                 color: #4b5563;
             }
-            .guide-model-table td:last-child {
+            .guide-model-table td:nth-last-child(-n+2) {
                 text-align: center;
+            }
+            .guide-model-table tbody tr:nth-child(even) {
+                background: #f8fafc;
             }
             .guide-model-table td code {
                 font-size: 0.78rem;
@@ -928,7 +938,7 @@
                             <div class="guide-step-num">2</div>
                             <div class="guide-step-body">
                                 <div class="guide-step-title">兼容 Anthropic 接口协议工具</div>
-                                <div class="guide-step-desc">如 Claude Code、Claude Desktop 等，编辑 <code>~/.claude/settings.json</code>：</div>
+                                <div class="guide-step-desc">如 Claude Code、Claude Desktop、Codex 等，编辑 <code>~/.claude/settings.json</code>。Codex 传入的 <code>gpt-*</code> 模型会自动映射到可用模型。</div>
                                 <div class="guide-code-block">
                                     <button class="btn-icon guide-copy-btn" onclick="copyGuideConfig()" title="复制">📋</button>
                                     <pre id="guideConfigCode"></pre>
@@ -962,7 +972,9 @@
                         <div class="guide-step">
                             <div class="guide-step-num">5</div>
                             <div class="guide-step-body">
-                                <div class="guide-step-title">国内站可用模型</div>
+                                <div class="guide-step-title">可用模型</div>
+                                <div class="guide-step-desc">模型列表按凭证类型区分。企业站不按固定域名判断，凭证包含企业 ID 或部门信息时使用企业站模型列表。</div>
+                                <div class="guide-step-title" style="margin-top: 12px;">国内站</div>
                                 <div class="guide-step-desc">
                                     <table class="guide-model-table">
                                         <thead><tr><th>模型</th><th>说明</th><th>工具</th><th>视觉</th></tr></thead>
@@ -975,6 +987,41 @@
                                             <tr><td><code>kimi-k2.5</code></td><td>Kimi-K2.5</td><td>✓</td><td>✓</td></tr>
                                             <tr><td><code>deepseek-v4-flash</code></td><td>DeepSeek-V4-Flash</td><td>✓</td><td>✓</td></tr>
                                             <tr><td><code>deepseek-v4-pro</code></td><td>DeepSeek-V4-Pro</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>deepseek-v3-2-volc</code></td><td>DeepSeek-V3.2</td><td>✓</td><td>✗</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="guide-step-title" style="margin-top: 12px;">企业站</div>
+                                <div class="guide-step-desc">
+                                    <table class="guide-model-table">
+                                        <thead><tr><th>模型</th><th>说明</th><th>工具</th><th>视觉</th></tr></thead>
+                                        <tbody>
+                                            <tr><td><code>glm-5v-turbo</code></td><td>GLM-5v-Turbo</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>glm-5.1</code></td><td>GLM-5.1</td><td>✓</td><td>✗</td></tr>
+                                            <tr><td><code>glm-5.0-turbo</code></td><td>GLM-5.0-Turbo</td><td>✓</td><td>✗</td></tr>
+                                            <tr><td><code>glm-4.7</code></td><td>GLM-4.7</td><td>✓</td><td>✗</td></tr>
+                                            <tr><td><code>minimax-m2.7</code></td><td>MiniMax-M2.7</td><td>✓</td><td>✗</td></tr>
+                                            <tr><td><code>kimi-k2.6</code></td><td>Kimi-K2.6</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>deepseek-v4-flash</code></td><td>DeepSeek-V4-Flash</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>deepseek-v4-pro</code></td><td>DeepSeek-V4-Pro</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>deepseek-v3-2-volc</code></td><td>DeepSeek-V3.2</td><td>✓</td><td>✗</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="guide-step-title" style="margin-top: 12px;">国际站</div>
+                                <div class="guide-step-desc">
+                                    <table class="guide-model-table">
+                                        <thead><tr><th>模型</th><th>说明</th><th>工具</th><th>视觉</th></tr></thead>
+                                        <tbody>
+                                            <tr><td><code>glm-5.0</code></td><td>GLM-5.0</td><td>✓</td><td>✗</td></tr>
+                                            <tr><td><code>kimi-k2.5</code></td><td>Kimi-K2.5</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>gpt-5.5</code></td><td>GPT-5.5</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>gpt-5.4</code></td><td>GPT-5.4</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>glm-4.6</code></td><td>GLM-4.6</td><td>✓</td><td>✗</td></tr>
+                                            <tr><td><code>gpt-5.3-codex</code></td><td>GPT-5.3-codex</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>gemini-3.5-flash</code></td><td>Gemini-3.5-flash</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>gemini-3.0-pro</code></td><td>Gemini-3.0-pro</td><td>✓</td><td>✓</td></tr>
+                                            <tr><td><code>gemini-3.0-flash</code></td><td>Gemini-3.0-flash</td><td>✓</td><td>✓</td></tr>
                                             <tr><td><code>deepseek-v3-2-volc</code></td><td>DeepSeek-V3.2</td><td>✓</td><td>✗</td></tr>
                                         </tbody>
                                     </table>

@@ -108,7 +108,7 @@ export async function getModels(credential = null) {
     }
 
     return {
-        data: getCodebuddyModels(credential.base_url),
+        data: getCodebuddyModels(credential),
         object: 'list'
     };
 }

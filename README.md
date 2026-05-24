@@ -145,6 +145,32 @@ CodeBuddy 订阅代理，支持添加多个账号凭证手动切换。
 | `deepseek-v4-pro` | DeepSeek-V4-Pro | ✓ | ✓ |
 | `deepseek-v3-2-volc` | DeepSeek-V3.2 | ✓ | ✗ |
 
+#### 国际站
+| 模型 | 说明 | 工具 | 视觉 |
+| ---- | ---- | :--: | :--: |
+| `glm-5.0` | GLM-5.0 | ✓ | ✗ |
+| `kimi-k2.5` | Kimi-K2.5 | ✓ | ✓ |
+| `gpt-5.5` | GPT-5.5 | ✓ | ✓ |
+| `gpt-5.4` | GPT-5.4 | ✓ | ✓ |
+| `gpt-5.3-codex` | GPT-5.3-codex | ✓ | ✓ |
+| `gemini-3.5-flash` | Gemini-3.5-flash | ✓ | ✓ |
+| `gemini-3.0-pro` | Gemini-3.0-pro | ✓ | ✓ |
+| `gemini-3.0-flash` | Gemini-3.0-flash | ✓ | ✓ |
+| `deepseek-v3-2-volc` | DeepSeek-V3.2 | ✓ | ✗ |
+
+#### 企业站
+| 模型 | 说明 | 工具 | 视觉 |
+| ---- | ---- | :--: | :--: |
+| `glm-5v-turbo` | GLM-5v-Turbo | ✓ | ✓ |
+| `glm-5.1` | GLM-5.1 | ✓ | ✗ |
+| `glm-5.0-turbo` | GLM-5.0-Turbo | ✓ | ✗ |
+| `glm-4.7` | GLM-4.7 | ✓ | ✗ |
+| `minimax-m2.7` | MiniMax-M2.7 | ✓ | ✗ |
+| `kimi-k2.6` | Kimi-K2.6 | ✓ | ✓ |
+| `deepseek-v4-flash` | DeepSeek-V4-Flash | ✓ | ✓ |
+| `deepseek-v4-pro` | DeepSeek-V4-Pro | ✓ | ✓ |
+| `deepseek-v3-2-volc` | DeepSeek-V3.2 | ✓ | ✗ |
+
 ### 推理功能
 
 支持 thinking 的模型会根据请求中的 `output_config.effort` 或 `thinking` 配置自动映射 `reasoning_effort`：
@@ -209,9 +235,13 @@ Responses API 端点会将请求转换为 Chat Completions 格式发送到上游
 
 ### 站点与企业站
 
-内置国内站 `https://copilot.tencent.com` 和国际站 `https://www.codebuddy.ai`。如需添加企业站或调整站点模型列表，在 `src/services/codebuddy/config.js` 的 `CODEBUDDY_MODELS_BY_BASE_URL` 中按完整 Base URL 添加映射。
+CodeBuddy 按凭证类型返回三类模型列表：
 
-也可以在管理面板的凭证编辑页面中针对每个凭证单独设置上游地址。
+- **国内站**：`https://copilot.tencent.com`，使用国内站模型列表。
+- **国际站**：`https://www.codebuddy.ai`，使用国际站模型列表。
+- **企业站**：例如 `https://xxxx.copilot.qq.com`，但不依赖固定域名判断；只要凭证包含 `enterprise_id` / `enterpriseId` / `department_info` / `departmentInfo`，就使用企业站模型列表。
+
+管理面板 `/codebuddyFE` 的使用指南会同时展示国内站、国际站和企业站的可用模型。也可以在管理面板的凭证编辑页面中针对每个凭证单独设置上游地址。
 
 ---
 

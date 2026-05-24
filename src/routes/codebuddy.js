@@ -32,6 +32,17 @@ function extractCacheHitTokens(usage) {
     return 0;
 }
 
+// 主要是处理codex兼容
+export function mapCodebuddyModelName(model) {
+    if (!model || typeof model !== 'string') return model;
+    const lower = model.toLowerCase();
+    if (lower.includes('codex')) return 'deepseek-v4-flash';
+    if (lower.startsWith('gpt-')) {
+        return lower.includes('mini') ? 'deepseek-v4-flash' : 'kimi-k2.6';
+    }
+    return model;
+}
+
 /**
  * 选择用于统计记录的模型名
  * 优先使用上游返回的模型名，但如果上游返回的是端点 ID（ep- 前缀）等不可读标识，
@@ -142,6 +153,7 @@ async function handleOpenAIChatCompletions(req, res) {
         // 解析 OpenAI 格式的请求
         const body = await parseBody(req);
         const openAIPayload = JSON.parse(body);
+        openAIPayload.model = mapCodebuddyModelName(openAIPayload.model);
 
         // 注入行为规则（统一在路由层注入一次）
         openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
@@ -264,6 +276,7 @@ async function handleAnthropicMessages(req, res) {
 
         // 转换为 OpenAI 格式
         const openAIPayload = anthropicToOpenAI(anthropicPayload);
+        openAIPayload.model = mapCodebuddyModelName(openAIPayload.model);
 
         // 注入行为规则（translateMessages 不再内部注入，统一在路由层注入一次）
         openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
@@ -548,6 +561,7 @@ async function handleResponsesAPI(req, res) {
 
         // Responses -> Chat Completions
         const chatReq = responsesRequestToChat(responsesReq);
+        chatReq.model = mapCodebuddyModelName(chatReq.model);
         chatReq.messages = injectBehaviorRules(chatReq.messages);
 
         const response = await createChatCompletions(chatReq, {
@@ -686,6 +700,7 @@ async function handleResponsesCompact(req, res) {
 
         // Compact -> Chat Completions
         const chatReq = compactRequestToChat(compactReq);
+        chatReq.model = mapCodebuddyModelName(chatReq.model);
         chatReq.messages = injectBehaviorRules(chatReq.messages);
 
         const response = await createChatCompletions(chatReq, {
