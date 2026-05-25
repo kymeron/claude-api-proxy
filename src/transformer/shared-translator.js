@@ -64,6 +64,10 @@ export function translateToolChoice(anthropicToolChoice) {
     return undefined;
 }
 
+export function normalizeClaudeModelAlias(model) {
+    return model;
+}
+
 /**
  * 将 base64 编码的文档内容解码为文本
  * 支持 PDF、纯文本、代码文件等

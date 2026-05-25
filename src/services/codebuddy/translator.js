@@ -14,7 +14,8 @@ import {
     injectBehaviorRules,
     prependThinkingHint,
     prependToolThinkingHint,
-    openAIToAnthropic as sharedOpenAIToAnthropic
+    openAIToAnthropic as sharedOpenAIToAnthropic,
+    normalizeClaudeModelAlias
 } from '../../transformer/shared-translator.js';
 
 /* ================= SSE Writer ================= */
@@ -286,7 +287,7 @@ export {SSEWriter, ClaudeStreamState};
  */
 export function anthropicToOpenAI(anthropicPayload) {
     const openAIPayload = {
-        model: anthropicPayload.model,
+        model: normalizeClaudeModelAlias(anthropicPayload.model),
         messages: translateMessages(anthropicPayload.messages, anthropicPayload.system),
         max_tokens: anthropicPayload.max_tokens,
         temperature: anthropicPayload.temperature,

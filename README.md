@@ -36,6 +36,14 @@ npm start
 
 ---
 
+## Claude Code 配置说明
+
+推荐使用 `ANTHROPIC_AUTH_TOKEN` 配置 API Key，Claude Code 会通过 `Authorization: Bearer <key>` 发送鉴权信息。代理也兼容 `ANTHROPIC_API_KEY`，对应 `x-api-key` 请求头；两种方式任选其一即可，文档和管理页面默认示例统一使用 `ANTHROPIC_AUTH_TOKEN`。
+
+代理不会枚举或重写 Claude Code 传入的模型名，`default`、`best`、`opusplan`、`sonnet[1m]`、`opus[1m]` 以及第三方模型变体（如 `deepseek-v4-pro[1m]`）都会原样透传给上游。需要把 Claude Code 模型名转换成具体上游模型时，请在 Relay 的上游配置里使用模型映射表。
+
+---
+
 ## GitHub Copilot
 
 GitHub Copilot Pro 订阅代理，将 Claude Code 的请求转发到 Copilot 后端。

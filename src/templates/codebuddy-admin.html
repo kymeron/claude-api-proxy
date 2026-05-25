@@ -938,7 +938,7 @@
                             <div class="guide-step-num">2</div>
                             <div class="guide-step-body">
                                 <div class="guide-step-title">兼容 Anthropic 接口协议工具</div>
-                                <div class="guide-step-desc">如 Claude Code、Claude Desktop、Codex 等，编辑 <code>~/.claude/settings.json</code>。Codex 传入的 <code>gpt-*</code> 模型会自动映射到可用模型。</div>
+                                <div class="guide-step-desc">如 Claude Code、Claude Desktop、Codex 等，编辑 <code>~/.claude/settings.json</code>。推荐使用 <code>ANTHROPIC_AUTH_TOKEN</code>，也兼容 <code>ANTHROPIC_API_KEY</code>；模型名会原样透传给上游，包括 <code>sonnet[1m]</code>、<code>opus[1m]</code>、<code>deepseek-v4-pro[1m]</code> 等变体。</div>
                                 <div class="guide-code-block">
                                     <button class="btn-icon guide-copy-btn" onclick="copyGuideConfig()" title="复制">📋</button>
                                     <pre id="guideConfigCode"></pre>

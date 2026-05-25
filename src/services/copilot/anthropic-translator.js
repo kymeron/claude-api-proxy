@@ -5,7 +5,7 @@
  */
 
 import logger from '../../utils/logger.js';
-import {generateId, mapStopReason, translateToolChoice, mapContent, injectBehaviorRules, prependThinkingHint, prependToolThinkingHint, extractCacheHitTokens, openAIToAnthropic as sharedOpenAIToAnthropic} from '../../transformer/shared-translator.js';
+import {generateId, mapStopReason, translateToolChoice, mapContent, injectBehaviorRules, prependThinkingHint, prependToolThinkingHint, extractCacheHitTokens, openAIToAnthropic as sharedOpenAIToAnthropic, normalizeClaudeModelAlias} from '../../transformer/shared-translator.js';
 import {responsesEventToChatChunks} from '../../transformer/responses-translator.js';
 
 /**
@@ -94,14 +94,15 @@ function resolveThinkingConfig(anthropicPayload) {
  * 转换模型名称
  */
 function translateModelName(model) {
-    // 处理特殊的子代理模型名称
-    if (model.startsWith('claude-sonnet-4-')) {
-        return model.replace(/^claude-sonnet-4-.*/, 'claude-sonnet-4');
+    const alias = normalizeClaudeModelAlias(model);
+    if (typeof alias !== 'string') return alias;
+    if (alias.startsWith('claude-sonnet-4-')) {
+        return alias.replace(/^claude-sonnet-4-.*/, 'claude-sonnet-4');
     }
-    if (model.startsWith('claude-opus-4-')) {
-        return model.replace(/^claude-opus-4-.*/, 'claude-opus-4');
+    if (alias.startsWith('claude-opus-4-')) {
+        return alias.replace(/^claude-opus-4-.*/, 'claude-opus-4');
     }
-    return model;
+    return alias;
 }
 
 /**
