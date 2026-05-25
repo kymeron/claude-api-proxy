@@ -15,3 +15,27 @@ test('prepareWebSocketPayload removes HTTP transport fields', () => {
         input: [{role: 'user', content: [{type: 'input_text', text: 'hi'}]}]
     });
 });
+
+test('prepareWebSocketPayload removes Responses fields unsupported by Copilot WS', () => {
+    const payload = prepareWebSocketPayload({
+        model: 'gpt-4.1',
+        input: 'hi',
+        include: ['reasoning.encrypted_content'],
+        store: false,
+        truncation: 'auto',
+        user: 'codex',
+        metadata: {session_id: 'session_1'},
+        parallel_tool_calls: true,
+        text: {format: {type: 'text'}},
+        reasoning: {effort: 'medium'},
+        max_output_tokens: 1024
+    });
+
+    assert.deepEqual(payload, {
+        model: 'gpt-4.1',
+        input: 'hi',
+        parallel_tool_calls: true,
+        reasoning: {effort: 'medium'},
+        max_output_tokens: 1024
+    });
+});

@@ -18,7 +18,17 @@ export class CopilotResponsesWSError extends Error {
 }
 
 export function prepareWebSocketPayload(payload) {
-    const {stream, background, ...rest} = payload || {};
+    const {
+        stream,
+        background,
+        include,
+        metadata,
+        store,
+        text,
+        truncation,
+        user,
+        ...rest
+    } = payload || {};
     return rest;
 }
 

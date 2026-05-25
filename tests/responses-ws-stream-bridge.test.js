@@ -35,6 +35,51 @@ test('responsesEventToResponsesEvents adds ordinary Responses scaffold before te
     assert.notEqual(deltaEvent.data.item_id, '+MUL0xll7F6Jf7PoXj7bs2zL9fwEbVS+WMkG94nrgldVxJeLjXybDQpQ3sAlAW762v3sKlG1J217nIIy+NRWx5BXlvZkaIMBOX6JC0otE6jp2orviH1ArMUuMZFn5XVR5ymhayydhxT59/0zJa2dY9R7RikrYTY6W39o4R5rDWLH4tMwHYROgY3G74khcJWHfDFrLdYoZP4/OGqzYA4/OmZvoTdxdHDe7lzIOFvLdsX1fe4nj/lGX6jv3160CHHDeV4IB/Yy3EqMfbLA+XvFPquiO3tKsHbPBwR2zJa8IobpX8BHqzmxZslnrB3ztiWR5TUvbRuBV1Pp31C7hGMGa2x685wr11g6DKTDyZ6SDdR8XnU+KVCuJ7iKefvW50gdzG1mYTevR4MVzHhVk0KunOXRprYM0/Il5YS+KlL9qr9CcCKLCdQo1KUrx7ELrvF2fV29V9dH1OsY+C26Mexcvk/khqvX');
 });
 
+test('responsesEventToResponsesEvents includes completed message output for streamed text', () => {
+    const chatState = createChatCompletionsStreamState();
+    const responsesState = createResponsesStreamState();
+    const events = [];
+
+    events.push(...responsesEventToResponsesEvents(
+        'response.output_text.delta',
+        {
+            type: 'response.output_text.delta',
+            item_id: 'upstream_msg_1',
+            output_index: 0,
+            content_index: 0,
+            delta: 'hello'
+        },
+        chatState,
+        responsesState
+    ));
+    events.push(...responsesEventToResponsesEvents(
+        'response.completed',
+        {
+            type: 'response.completed',
+            response: {
+                id: 'resp_1',
+                model: 'gpt-5.4',
+                output: [{
+                    type: 'message',
+                    id: 'upstream_msg_1',
+                    status: 'completed',
+                    role: 'assistant',
+                    content: [{type: 'output_text', text: 'hello', annotations: []}]
+                }],
+                usage: {input_tokens: 10, output_tokens: 2, total_tokens: 12}
+            }
+        },
+        chatState,
+        responsesState
+    ));
+
+    const completed = events.at(-1).data.response;
+    assert.equal(completed.output.length, 1);
+    assert.equal(completed.output[0].type, 'message');
+    assert.equal(completed.output[0].role, 'assistant');
+    assert.deepEqual(completed.output[0].content, [{type: 'output_text', text: 'hello', annotations: []}]);
+});
+
 test('responsesEventToChatChunks emits function calls found only in response.completed output', () => {
     const chatState = createChatCompletionsStreamState();
     const events = responsesEventToResponsesEvents(

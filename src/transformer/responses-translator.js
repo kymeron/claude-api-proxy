@@ -578,7 +578,8 @@ export function createResponsesStreamState() {
         reasoningItemId: null,
         reasoningText: '',
         // text 累积
-        textBuffer: ''
+        textBuffer: '',
+        output: []
     };
 }
 
@@ -794,6 +795,11 @@ export function chatChunkToResponsesEvents(data, state) {
     if (!choice) return events;
     const delta = choice.delta;
 
+    const addCompletedOutput = (item) => {
+        if (!item) return;
+        state.output.push(item);
+    };
+
     // reasoning_content → reasoning 输出项 + summary 事件
     if (delta?.reasoning_content) {
         if (!state.reasoningOpen) {
@@ -856,18 +862,21 @@ export function chatChunkToResponsesEvents(data, state) {
                 }
             });
 
-            // 发送 reasoning 输出项 done
+            const item = {
+                type: 'reasoning',
+                id: state.reasoningItemId,
+                status: 'completed',
+                summary: [{type: 'summary_text', text: state.reasoningText}]
+            };
             events.push({
                 event: 'response.output_item.done',
                 data: {
                     type: 'response.output_item.done',
                     output_index: state.outputIndex,
-                    item: {
-                        type: 'reasoning',
-                        id: state.reasoningItemId
-                    }
+                    item
                 }
             });
+            addCompletedOutput(item);
 
             state.outputIndex++;
             state.reasoningOpen = false;
@@ -945,20 +954,22 @@ export function chatChunkToResponsesEvents(data, state) {
                             part: {type: 'output_text', text: state.textBuffer, annotations: []}
                         }
                     });
+                    const item = {
+                        type: 'message',
+                        id: state.currentMessageId,
+                        status: 'completed',
+                        role: 'assistant',
+                        content: [{type: 'output_text', text: state.textBuffer, annotations: []}]
+                    };
                     events.push({
                         event: 'response.output_item.done',
                         data: {
                             type: 'response.output_item.done',
                             output_index: state.outputIndex,
-                            item: {
-                                type: 'message',
-                                id: state.currentMessageId,
-                                status: 'completed',
-                                role: 'assistant',
-                                content: [{type: 'output_text', text: state.textBuffer, annotations: []}]
-                            }
+                            item
                         }
                     });
+                    addCompletedOutput(item);
                     state.outputIndex++;
                     state.messageOpen = false;
                     state.textBuffer = '';
@@ -976,19 +987,21 @@ export function chatChunkToResponsesEvents(data, state) {
                             part: {type: 'summary_text', text: state.reasoningText}
                         }
                     });
+                    const item = {
+                        type: 'reasoning',
+                        id: state.reasoningItemId,
+                        status: 'completed',
+                        summary: [{type: 'summary_text', text: state.reasoningText}]
+                    };
                     events.push({
                         event: 'response.output_item.done',
                         data: {
                             type: 'response.output_item.done',
                             output_index: state.outputIndex,
-                            item: {
-                                type: 'reasoning',
-                                id: state.reasoningItemId,
-                                status: 'completed',
-                                summary: [{type: 'summary_text', text: state.reasoningText}]
-                            }
+                            item
                         }
                     });
+                    addCompletedOutput(item);
                     state.outputIndex++;
                     state.reasoningOpen = false;
                     state.reasoningItemId = null;
@@ -1050,19 +1063,21 @@ export function chatChunkToResponsesEvents(data, state) {
                     part: {type: 'summary_text', text: state.reasoningText}
                 }
             });
+            const item = {
+                type: 'reasoning',
+                id: state.reasoningItemId,
+                status: 'completed',
+                summary: [{type: 'summary_text', text: state.reasoningText}]
+            };
             events.push({
                 event: 'response.output_item.done',
                 data: {
                     type: 'response.output_item.done',
                     output_index: state.outputIndex,
-                    item: {
-                        type: 'reasoning',
-                        id: state.reasoningItemId,
-                        status: 'completed',
-                        summary: [{type: 'summary_text', text: state.reasoningText}]
-                    }
+                    item
                 }
             });
+            addCompletedOutput(item);
             state.outputIndex++;
             state.reasoningOpen = false;
             state.reasoningItemId = null;
@@ -1080,20 +1095,22 @@ export function chatChunkToResponsesEvents(data, state) {
                     part: {type: 'output_text', text: state.textBuffer, annotations: []}
                 }
             });
+            const item = {
+                type: 'message',
+                id: state.currentMessageId,
+                status: 'completed',
+                role: 'assistant',
+                content: [{type: 'output_text', text: state.textBuffer, annotations: []}]
+            };
             events.push({
                 event: 'response.output_item.done',
                 data: {
                     type: 'response.output_item.done',
                     output_index: state.outputIndex,
-                    item: {
-                        type: 'message',
-                        id: state.currentMessageId,
-                        status: 'completed',
-                        role: 'assistant',
-                        content: [{type: 'output_text', text: state.textBuffer, annotations: []}]
-                    }
+                    item
                 }
             });
+            addCompletedOutput(item);
             state.messageOpen = false;
             state.textBuffer = '';
         }
@@ -1114,21 +1131,23 @@ export function chatChunkToResponsesEvents(data, state) {
                     output_index: state.outputIndex
                 }
             });
+            const item = {
+                type: 'function_call',
+                id: itemId,
+                call_id: callId,
+                name,
+                status: 'completed',
+                arguments: args
+            };
             events.push({
                 event: 'response.output_item.done',
                 data: {
                     type: 'response.output_item.done',
                     output_index: state.outputIndex,
-                    item: {
-                        type: 'function_call',
-                        id: itemId,
-                        call_id: callId,
-                        name,
-                        status: 'completed',
-                        arguments: args
-                    }
+                    item
                 }
             });
+            addCompletedOutput(item);
         }
 
         // response.completed
@@ -1144,7 +1163,7 @@ export function chatChunkToResponsesEvents(data, state) {
                     created_at: Math.floor(Date.now() / 1000),
                     status: 'completed',
                     model: data.model || 'unknown',
-                    output: [],
+                    output: state.output,
                     usage: convertUsage(data.usage)
                 }
             }
