@@ -25,17 +25,15 @@ export function buildUrl(baseUrl, endpoint) {
     let finalUrl = baseUrl;
     let finalEndpoint = endpoint;
 
-    // 确保 endpoint 不以 / 开头
     if (finalEndpoint.startsWith('/')) {
         finalEndpoint = finalEndpoint.slice(1);
     }
 
-    // 确保 baseUrl 以 / 结尾
     if (!finalUrl.endsWith('/')) {
         finalUrl += '/';
     }
 
-    return finalUrl + finalEndpoint;
+    return (finalUrl + finalEndpoint).replace(/(\/v1)+(?=\/)/g, '/v1');
 }
 
 /**

@@ -10,6 +10,7 @@ import {join, dirname} from 'path';
 import {fileURLToPath} from 'url';
 import logger from '../utils/logger.js';
 import {relayStore} from '../services/relay/relay-store.js';
+import {buildUrl} from '../utils/helpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -237,7 +238,7 @@ async function handleFetchUpstreamModels(req, res) {
                 : new HttpsProxyAgent(proxy);
         }
 
-        const url = `${base_url.replace(/\/$/, '')}/models`;
+        const url = buildUrl(base_url, 'v1/models');
 
         try {
             const response = await request(url, options);

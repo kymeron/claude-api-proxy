@@ -1407,11 +1407,12 @@
                         }
                         showToast('连接测试成功');
                     } else {
+                        const errorMessage = data.error || data.message || '未知错误';
                         if (resultEl) {
-                            resultEl.textContent = '连接失败: ' + (data.error || '未知错误');
+                            resultEl.textContent = '连接失败: ' + errorMessage;
                             resultEl.className = 'test-result error';
                         }
-                        showToast('连接测试失败: ' + (data.error || '未知错误'), 'error');
+                        showToast('连接测试失败: ' + errorMessage, 'error');
                     }
                 } catch (error) {
                     if (resultEl) {

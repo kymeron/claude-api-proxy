@@ -8,7 +8,7 @@
 import {readFileSync, writeFileSync, existsSync, mkdirSync} from 'fs';
 import {join} from 'path';
 import {request, readBody} from '../../utils/http-client.js';
-import {getProxyAgent} from './api.js';
+import {buildProtocolAwareUrl, getProxyAgent} from './api.js';
 import {buildUrl} from '../../utils/helpers.js';
 import logger from '../../utils/logger.js';
 
@@ -262,7 +262,7 @@ export class UpstreamManager {
      * 从上游获取模型列表
      */
     async _fetchFromModelsEndpoint(upstream) {
-        const url = buildUrl(upstream.base_url, 'models');
+        const url = buildUrl(upstream.base_url, 'v1/models');
         const headers = {
             Authorization: `Bearer ${upstream.api_key}`,
             Accept: 'application/json',
@@ -341,7 +341,7 @@ export class UpstreamManager {
      * OpenAI 协议测试：POST chat/completions
      */
     async _testOpenAI(upstream, model) {
-        const url = buildUrl(upstream.base_url, 'chat/completions');
+        const url = buildUrl(upstream.base_url, 'v1/chat/completions');
         const headers = {
             Authorization: `Bearer ${upstream.api_key}`,
             'Content-Type': 'application/json',
@@ -396,7 +396,7 @@ export class UpstreamManager {
      * Responses 协议测试：POST /v1/responses
      */
     async _testResponses(upstream, model) {
-        const url = buildUrl(upstream.base_url, 'v1/responses');
+        const url = buildProtocolAwareUrl(upstream, 'v1/responses');
         const headers = {
             Authorization: `Bearer ${upstream.api_key}`,
             'Content-Type': 'application/json',

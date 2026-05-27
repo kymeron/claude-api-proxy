@@ -991,7 +991,7 @@ async function handleResponsesCompact(req, res) {
                         stream: false,
                         originalModel: compactReq.model
                     },
-                    'responses/compact'
+                    'v1/responses/compact'
                 )
             );
 

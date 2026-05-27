@@ -73,22 +73,8 @@ function isLocalCopilotUpstream(base_url) {
     }
 }
 
-function buildProtocolAwareUrl(upstream, endpoint) {
-    if (!isAnthropicUpstream(upstream)) {
-        return buildUrl(upstream.base_url, endpoint);
-    }
-
-    try {
-        const url = new URL(upstream.base_url);
-        const pathname = url.pathname.replace(/\/+$/, '');
-        const needsV1 = pathname.endsWith('/anthropic') || pathname.endsWith('/messages');
-        const normalizedBaseUrl = needsV1 ? `${upstream.base_url.replace(/\/+$/, '')}/v1` : upstream.base_url;
-        return buildUrl(normalizedBaseUrl, endpoint);
-    } catch {
-        const trimmed = upstream.base_url.replace(/\/+$/, '');
-        const normalizedBaseUrl = /\/anthropic$/.test(trimmed) ? `${trimmed}/v1` : trimmed;
-        return buildUrl(normalizedBaseUrl, endpoint);
-    }
+export function buildProtocolAwareUrl(upstream, endpoint) {
+    return buildUrl(upstream.base_url, endpoint);
 }
 
 export function normalizeUpstreamProtocol(protocol) {
@@ -165,7 +151,7 @@ async function requestJson(url, upstream, {method = 'POST', headers = {}, body, 
  * @throws {Error} 上游返回非 2xx 时抛出包含响应体的错误
  */
 export async function createChatCompletions(payload, upstream, meta = {}) {
-    const url = buildProtocolAwareUrl(upstream, 'chat/completions');
+    const url = buildProtocolAwareUrl(upstream, 'v1/chat/completions');
 
     const proxyMode = upstream.proxy ? upstream.proxy : '直连';
     const reasoningEffort = payload.reasoning_effort || 'high';
@@ -195,7 +181,7 @@ export async function createChatCompletions(payload, upstream, meta = {}) {
 
 // ==================== Responses API ====================
 
-export async function createResponses(payload, upstream, meta = {}, endpoint = 'responses') {
+export async function createResponses(payload, upstream, meta = {}, endpoint = 'v1/responses') {
     const url = buildProtocolAwareUrl(upstream, endpoint);
     const proxyMode = upstream.proxy ? upstream.proxy : '直连';
 
@@ -225,7 +211,7 @@ export async function createResponses(payload, upstream, meta = {}, endpoint = '
 // ==================== Anthropic Protocol ====================
 
 export async function createAnthropicMessages(payload, upstream, meta = {}, requestHeaders = {}) {
-    const url = buildProtocolAwareUrl(upstream, 'messages');
+    const url = buildProtocolAwareUrl(upstream, 'v1/messages');
     const proxyMode = upstream.proxy ? upstream.proxy : '直连';
 
     logger.info(
@@ -254,7 +240,7 @@ export async function createAnthropicMessages(payload, upstream, meta = {}, requ
 }
 
 export async function createAnthropicCountTokens(payload, upstream, requestHeaders = {}) {
-    const url = buildProtocolAwareUrl(upstream, 'messages/count_tokens');
+    const url = buildProtocolAwareUrl(upstream, 'v1/messages/count_tokens');
     const response = await requestJson(url, upstream, {
         method: 'POST',
         headers: {
@@ -288,7 +274,7 @@ export async function createAnthropicCountTokens(payload, upstream, requestHeade
  * @throws {Error} 请求失败或响应无法解析时抛出
  */
 export async function getUpstreamModels(upstream, requestHeaders = {}) {
-    const url = buildProtocolAwareUrl(upstream, 'models');
+    const url = buildProtocolAwareUrl(upstream, 'v1/models');
 
     const proxyMode = upstream.proxy ? upstream.proxy : '直连';
     logger.info(`[${upstream.name}]:GET ${url} proxy=${proxyMode}`);
