@@ -16,6 +16,22 @@ import logger from '../../utils/logger.js';
 
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
+/**
+ * Relay 上游错误
+ * 保留上游 HTTP 状态码，便于路由层区分 429 等特殊状态
+ */
+export class RelayUpstreamError extends Error {
+    /**
+     * @param {number} status - 上游 HTTP 状态码
+     * @param {string} message - 错误信息
+     */
+    constructor(status, message) {
+        super(message);
+        this.name = 'RelayUpstreamError';
+        this.status = status;
+    }
+}
+
 // ==================== 代理 Agent 缓存 ====================
 
 /**
@@ -176,7 +192,7 @@ export async function createChatCompletions(payload, upstream, meta = {}) {
         const errorBody = await readBody(response.body);
         const errorMsg = errorBody.length > 500 ? errorBody.substring(0, 500) + '...' : errorBody;
         logger.error(`[${upstream.name}] 上游返回 HTTP ${response.status}: ${errorMsg.slice(0, 300)}`);
-        throw new Error(`[${upstream.name}]: 上游返回 HTTP ${response.status}: ${errorMsg}`);
+        throw new RelayUpstreamError(response.status, `[${upstream.name}]: 上游返回 HTTP ${response.status}: ${errorMsg}`);
     }
 
     return response;
@@ -205,7 +221,7 @@ export async function createResponses(payload, upstream, meta = {}, endpoint = '
         const errorBody = await readBody(response.body);
         const errorMsg = errorBody.length > 500 ? errorBody.substring(0, 500) + '...' : errorBody;
         logger.error(`[${upstream.name}] Responses 上游返回 HTTP ${response.status}: ${errorMsg.slice(0, 300)}`);
-        throw new Error(`[${upstream.name}]: Responses 上游返回 HTTP ${response.status}: ${errorMsg}`);
+        throw new RelayUpstreamError(response.status, `[${upstream.name}]: Responses 上游返回 HTTP ${response.status}: ${errorMsg}`);
     }
 
     return response;
@@ -236,7 +252,7 @@ export async function createAnthropicMessages(payload, upstream, meta = {}, requ
         const errorBody = await readBody(response.body);
         const errorMsg = errorBody.length > 500 ? errorBody.substring(0, 500) + '...' : errorBody;
         logger.error(`[${upstream.name}] Anthropic 上游返回 HTTP ${response.status}: ${errorMsg.slice(0, 300)}`);
-        throw new Error(`[${upstream.name}]: Anthropic 上游返回 HTTP ${response.status}: ${errorMsg}`);
+        throw new RelayUpstreamError(response.status, `[${upstream.name}]: Anthropic 上游返回 HTTP ${response.status}: ${errorMsg}`);
     }
 
     return response;
@@ -258,7 +274,7 @@ export async function createAnthropicCountTokens(payload, upstream, requestHeade
     if (response.status < 200 || response.status >= 300) {
         const errorBody = await readBody(response.body);
         const errorMsg = errorBody.length > 500 ? errorBody.substring(0, 500) + '...' : errorBody;
-        throw new Error(`[${upstream.name}]: count_tokens 失败 HTTP ${response.status}: ${errorMsg}`);
+        throw new RelayUpstreamError(response.status, `[${upstream.name}]: count_tokens 失败 HTTP ${response.status}: ${errorMsg}`);
     }
 
     return response;
@@ -300,7 +316,7 @@ export async function getUpstreamModels(upstream, requestHeaders = {}) {
     if (response.status < 200 || response.status >= 300) {
         const errorBody = await readBody(response.body);
         const errorMsg = errorBody.length > 500 ? errorBody.substring(0, 500) + '...' : errorBody;
-        throw new Error(`[${upstream.name}]:获取模型列表失败 HTTP ${response.status}: ${errorMsg}`);
+        throw new RelayUpstreamError(response.status, `[${upstream.name}]:获取模型列表失败 HTTP ${response.status}: ${errorMsg}`);
     }
 
     const body = await readBody(response.body);

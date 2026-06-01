@@ -9,6 +9,22 @@ import logger from '../../utils/logger.js';
 import {getCodebuddyApiUrl, codebuddyHeaders, getCodebuddyBaseUrl, getCodebuddyModels, isPersonalHost} from './config.js';
 import {randomBytes} from 'crypto';
 
+/**
+ * CodeBuddy API 错误
+ * 保留上游 HTTP 状态码，便于路由层区分 429 等特殊状态
+ */
+export class CodeBuddyApiError extends Error {
+    /**
+     * @param {number} status - 上游 HTTP 状态码
+     * @param {string} message - 错误信息
+     */
+    constructor(status, message) {
+        super(message);
+        this.name = 'CodeBuddyApiError';
+        this.status = status;
+    }
+}
+
 // CodeBuddy 服务端会检测竞争对手关键词并触发 content_filter
 // 必须在所有消息和工具定义中替换，不能只替换 system 消息
 const KEYWORD_REPLACEMENTS = [
@@ -178,7 +194,7 @@ export async function createChatCompletions(payload, options = {}) {
         const errorBody = await readBody(response.body);
 
         logger.error(`CodeBuddy API error: ${response.status} - ${errorBody.slice(0, 300)}`);
-        throw new Error(`CodeBuddy API error: ${response.status} - ${errorBody}`);
+        throw new CodeBuddyApiError(response.status, `CodeBuddy API error: ${response.status} - ${errorBody}`);
     }
 
     return response;

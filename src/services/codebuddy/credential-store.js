@@ -144,6 +144,14 @@ class CredentialStore {
         return this.tokenManager.getNextCredential();
     }
 
+    markLastReturnedRateLimited(durationMs) {
+        this.tokenManager.markLastReturnedRateLimited(durationMs);
+    }
+
+    getLastReturnedIndex() {
+        return this.tokenManager.getLastReturnedIndex();
+    }
+
     hasCredentials() {
         return this.tokenManager.hasCredentials();
     }

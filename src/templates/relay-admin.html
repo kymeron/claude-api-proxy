@@ -530,7 +530,7 @@
                         <option value="anthropic">Anthropic Messages API</option>
                     </select>
                 </div>
-                <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+                <div class="form-group" id="upstreamWSGroup" style="display: none; align-items: center; gap: 10px;">
                     <input type="checkbox" id="upstreamWS" style="width: 18px; height: 18px; accent-color: #58a6ff;" />
                     <label for="upstreamWS" style="margin: 0; cursor: pointer;">WebSocket 模式（仅 Responses 协议）</label>
                 </div>
@@ -1219,6 +1219,17 @@
                 }
             }
 
+            // 切换 WebSocket 选项的显示
+            function toggleWSGroup() {
+                const protocol = document.getElementById('upstreamProtocol').value;
+                const wsGroup = document.getElementById('upstreamWSGroup');
+                wsGroup.style.display = protocol === 'responses' ? 'flex' : 'none';
+                if (protocol !== 'responses') {
+                    document.getElementById('upstreamWS').checked = false;
+                }
+            }
+            document.getElementById('upstreamProtocol').addEventListener('change', toggleWSGroup);
+
             // 添加上游对话框
             function openAddUpstreamModal() {
                 editingUpstreamIndex = null;
@@ -1228,6 +1239,7 @@
                 document.getElementById('upstreamBaseUrl').value = '';
                 document.getElementById('upstreamProtocol').value = 'openai';
                 document.getElementById('upstreamWS').checked = false;
+                toggleWSGroup();
                 document.getElementById('upstreamApiKey').value = '';
                 document.getElementById('upstreamProxy').value = '';
                 document.getElementById('upstreamModelMap').value = 'sonnet=\nopus=\nhaiku=';
@@ -1245,6 +1257,7 @@
                 document.getElementById('upstreamBaseUrl').value = up.base_url || '';
                 document.getElementById('upstreamProtocol').value = up.protocol || 'openai';
                 document.getElementById('upstreamWS').checked = up.ws || false;
+                toggleWSGroup();
                 document.getElementById('upstreamApiKey').value = up.api_key_full || '';
                 document.getElementById('upstreamProxy').value = up.proxy || '';
 

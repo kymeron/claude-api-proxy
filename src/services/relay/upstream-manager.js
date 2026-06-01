@@ -23,9 +23,19 @@ export class UpstreamManager {
         this.upstreams = [];
         // 活跃上游索引，-1 表示使用第一个启用的上游
         this._activeIndex = -1;
+
+        // 429 限速追踪：index → 限速过期时间戳
+        this.rateLimitedIndexes = new Map();
+
+        // 上次返回的上游索引，用于在 429 时标记限速
+        this.lastReturnedIndex = null;
+
         this._loadUpstreams();
         this._loadSettings();
     }
+
+    /** 429 限速默认冷却时间（5分钟） */
+    static RATE_LIMIT_COOLDOWN = 5 * 60 * 1000;
 
     _loadUpstreams() {
         try {
@@ -73,6 +83,15 @@ export class UpstreamManager {
     }
 
     /**
+     * 从磁盘重新加载上游配置和设置
+     * 解决多进程（cluster）模式下状态不同步的问题
+     */
+    reload() {
+        this._loadUpstreams();
+        this._loadSettings();
+    }
+
+    /**
      * 列出所有上游配置，标记活跃上游
      */
     listUpstreams() {
@@ -95,18 +114,34 @@ export class UpstreamManager {
     }
 
     /**
-     * 获取实际活跃上游索引（_activeIndex 指向的上游必须启用）
-     * 如果指定的不启用或越界，回退到第一个启用的上游
+     * 获取实际活跃上游索引（_activeIndex 指向的上游必须启用且未被限速）
+     * 如果指定的不启用/被限速或越界，回退到第一个可用的上游
      */
     _getActiveIndex() {
+        // 清理过期的限速标记
+        this._cleanupRateLimited();
+
         if (
             this._activeIndex >= 0 &&
             this._activeIndex < this.upstreams.length &&
-            this.upstreams[this._activeIndex].enabled !== false
+            this.upstreams[this._activeIndex].enabled !== false &&
+            !this.isRateLimited(this._activeIndex)
         ) {
             return this._activeIndex;
         }
-        return this.upstreams.findIndex((u) => u.enabled !== false);
+
+        // 活跃上游不可用，找第一个启用且未被限速的上游
+        const idx = this.upstreams.findIndex((u) => u.enabled !== false && !this.isRateLimited(this.upstreams.indexOf(u)));
+        if (idx >= 0) return idx;
+
+        // 所有上游都被限速，清除限速标记后重试
+        if (this.rateLimitedIndexes.size > 0) {
+            logger.warn('Relay: All upstreams rate-limited, clearing rate limits');
+            this.rateLimitedIndexes.clear();
+            return this.upstreams.findIndex((u) => u.enabled !== false);
+        }
+
+        return -1;
     }
 
     /**
@@ -117,6 +152,8 @@ export class UpstreamManager {
         if (index < 0 || index >= this.upstreams.length) return false;
         if (this.upstreams[index].enabled === false) return false;
         this._activeIndex = index;
+        // 切换活跃上游时清除所有限速标记，立即生效
+        this.rateLimitedIndexes.clear();
         logger.info(`Relay: 活跃上游已切换为「${this.upstreams[index].name}」(index: ${index})`);
         this._saveSettings();
         return true;
@@ -124,11 +161,17 @@ export class UpstreamManager {
 
     /**
      * 获取当前活跃上游
+     * 每次调用时从磁盘重新加载状态，确保多进程间状态一致
      * @returns {Object|null} {name, base_url, api_key, proxy, enabled, index}
      */
     getActiveUpstream() {
+        this.reload();
         const idx = this._getActiveIndex();
-        if (idx < 0) return null;
+        if (idx < 0) {
+            this.lastReturnedIndex = null;
+            return null;
+        }
+        this.lastReturnedIndex = idx;
         return {...this.upstreams[idx], index: idx};
     }
 
@@ -143,6 +186,58 @@ export class UpstreamManager {
         const activeItem = enabled.find((u) => u.index === activeIdx);
         if (!activeItem) return enabled;
         return [activeItem, ...enabled.filter((u) => u.index !== activeIdx)];
+    }
+
+    /**
+     * 惰性清理过期的限速标记
+     */
+    _cleanupRateLimited() {
+        if (this.rateLimitedIndexes.size === 0) return;
+        const now = Date.now();
+        for (const [index, expiry] of this.rateLimitedIndexes) {
+            if (now >= expiry) {
+                this.rateLimitedIndexes.delete(index);
+                logger.debug(`Relay: Rate limit expired for upstream #${index}`);
+            }
+        }
+    }
+
+    /**
+     * 标记上游为 429 限速
+     * @param {number} index - 上游索引
+     * @param {number} [durationMs] - 限速持续时间（毫秒），默认 5 分钟
+     */
+    markRateLimited(index, durationMs) {
+        if (index < 0 || index >= this.upstreams.length) return;
+        const duration = durationMs || UpstreamManager.RATE_LIMIT_COOLDOWN;
+        const expiry = Date.now() + duration;
+        this.rateLimitedIndexes.set(index, expiry);
+        logger.warn(`Relay: Upstream #${index} (${this.upstreams[index].name}) marked as rate-limited for ${Math.round(duration / 1000)}s`);
+    }
+
+    /**
+     * 检查上游是否处于限速期
+     * @param {number} index - 上游索引
+     * @returns {boolean}
+     */
+    isRateLimited(index) {
+        const expiry = this.rateLimitedIndexes.get(index);
+        if (!expiry) return false;
+        if (Date.now() >= expiry) {
+            this.rateLimitedIndexes.delete(index);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * 标记上次使用的上游为 429 限速
+     * @param {number} [durationMs] - 限速持续时间（毫秒），默认 5 分钟
+     */
+    markLastReturnedRateLimited(durationMs) {
+        if (this.lastReturnedIndex !== null) {
+            this.markRateLimited(this.lastReturnedIndex, durationMs);
+        }
     }
 
     /**

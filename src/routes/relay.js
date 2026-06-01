@@ -20,7 +20,8 @@ import {
     releaseWSConnection,
     discardWSConnection,
     isWSUpstream,
-    ResponsesWSError
+    ResponsesWSError,
+    RelayUpstreamError
 } from '../services/relay/api.js';
 import {readBody, isNetworkError} from '../utils/http-client.js';
 import {
@@ -66,7 +67,27 @@ function sendAnthropicError(res, status, message) {
 }
 
 function upstreamErrorStatus(err) {
+    if (err instanceof RelayUpstreamError) {
+        // 429 保持原样返回，其余 >= 400 的上游错误映射为 502
+        if (err.status === 429) return 429;
+        return 502;
+    }
     return isNetworkError(err) ? 502 : 500;
+}
+
+/**
+ * 检测并处理上游 429 限速错误
+ * 当检测到 429 时，标记当前上游为限速状态
+ * @param {Error} error - 捕获的错误
+ */
+function handleUpstreamRateLimit(error) {
+    if (error instanceof RelayUpstreamError && error.status === 429) {
+        const um = relayStore.getUpstreamManager();
+        if (um) {
+            logger.warn('Relay: Upstream 429 rate limit detected, marking current upstream as rate-limited');
+            um.markLastReturnedRateLimited();
+        }
+    }
 }
 
 async function parseBody(req) {
@@ -219,7 +240,7 @@ async function callUpstream(upstream, fn) {
         return {response, upstream};
     }
     const errorBody = await readBody(response.body);
-    throw new Error(`上游「${upstream.name}」返回 HTTP ${response.status}: ${errorBody.slice(0, 200)}`);
+    throw new RelayUpstreamError(response.status, `上游「${upstream.name}」返回 HTTP ${response.status}: ${errorBody.slice(0, 200)}`);
 }
 
 function recordUsage(inputTokens, outputTokens, cacheHitTokens = 0, model = 'unknown') {
@@ -404,6 +425,7 @@ async function handleOpenAIChatCompletions(req, res) {
         }
     } catch (error) {
         logger.error('Relay: Failed to handle OpenAI chat completions:', error);
+        handleUpstreamRateLimit(error);
         sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -690,6 +712,7 @@ async function handleAnthropicMessages(req, res) {
         }
     } catch (error) {
         logger.error('Relay: Failed to handle Anthropic messages:', error);
+        handleUpstreamRateLimit(error);
         sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -716,6 +739,7 @@ async function handleOpenAIModels(req, res) {
         sendJson(res, 200, isAnthropicUpstream(authResult.upstream) ? mapAnthropicModelsToOpenAI(modelsData) : modelsData);
     } catch (error) {
         logger.error('Relay: Failed to get OpenAI models:', error);
+        handleUpstreamRateLimit(error);
         sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -731,6 +755,7 @@ async function handleAnthropicModels(req, res) {
         sendJson(res, 200, isAnthropicUpstream(authResult.upstream) ? modelsData : mapOpenAIModelsToAnthropic(modelsData));
     } catch (error) {
         logger.error('Relay: Failed to get Anthropic models:', error);
+        handleUpstreamRateLimit(error);
         sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -764,6 +789,7 @@ async function handleAnthropicCountTokens(req, res) {
         sendJson(res, 200, {input_tokens: estimatedTokens});
     } catch (error) {
         logger.error('Relay: Failed to count tokens:', error);
+        handleUpstreamRateLimit(error);
         sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -1048,6 +1074,7 @@ async function handleResponsesAPI(req, res) {
         }
     } catch (error) {
         logger.error('Relay: Failed to handle Responses API:', error);
+        handleUpstreamRateLimit(error);
         sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -1139,11 +1166,126 @@ async function handleResponsesCompact(req, res) {
         sendJson(res, 200, chatResponseToCompact(chatResponse));
     } catch (error) {
         logger.error('Relay: Failed to handle Responses Compact:', error);
+        handleUpstreamRateLimit(error);
         sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
 
 /* ==================== WebSocket 端点 ==================== */
+
+/**
+ * Relay WS 处理器的核心请求逻辑（提取为独立 async generator）
+ */
+async function* _relayWSHandleRequest(payload, upstream, upstreamManager, signal) {
+    const resolvedModel = upstreamManager.resolveModel(payload.model, upstream.index);
+
+    if (isAnthropicUpstream(upstream)) {
+        throw Object.assign(new Error('当前上游为 Anthropic 协议，不支持 Responses API'), {
+            name: 'ResponsesWSError',
+            event: {type: 'error', error: {message: '当前上游为 Anthropic 协议，不支持 Responses API', code: 'protocol_mismatch'}}
+        });
+    }
+
+    // Responses 上游 + WS：直接 WS 连接上游，转发事件
+    if (isWSUpstream(upstream)) {
+        const wsPayload = {...payload, model: resolvedModel};
+        try {
+            const wsResult = await createResponsesWS(wsPayload, upstream, {
+                contextKey: payload.conversation_id || payload.metadata?.conversation_id
+            });
+            const eventStream = wsResult.eventStream;
+            const conn = wsResult.conn;
+
+            try {
+                for await (const event of eventStream) {
+                    if (signal?.aborted) {
+                        discardWSConnection(conn);
+                        return;
+                    }
+                    yield event;
+                }
+                releaseWSConnection(conn);
+            } catch (err) {
+                discardWSConnection(conn);
+                throw err;
+            }
+            return;
+        } catch (wsError) {
+            if (wsError instanceof ResponsesWSError) throw wsError;
+            logger.warn(`Relay WS: upstream WS failed, falling back to HTTP: ${wsError.message}`);
+            // Fall through to HTTP
+        }
+    }
+
+    // Responses 上游（HTTP）：透传 SSE → WS 事件
+    if (isResponsesUpstream(upstream)) {
+        const responsesPayload = {...payload, model: resolvedModel};
+        const {response} = await callUpstream(upstream, (up) =>
+            createResponses(responsesPayload, up, {
+                requestType: 'ResponsesWS',
+                stream: true,
+                originalModel: payload.model
+            })
+        );
+
+        // 读取 SSE 流并转换为 WS 事件
+        let buffer = '';
+        for await (const chunk of response.body) {
+            if (signal?.aborted) break;
+            buffer += chunk.toString('utf8');
+            const parts = buffer.split(/\r?\n\r?\n/);
+            buffer = parts.pop() || '';
+
+            for (const part of parts) {
+                const {event, data} = parseSSEBlock(part);
+                if (!data || data === '[DONE]') continue;
+                let parsed;
+                try { parsed = JSON.parse(data); } catch { continue; }
+                yield {type: event || parsed.type, data: parsed};
+            }
+        }
+        return;
+    }
+
+    // OpenAI Chat 上游：Chat → Responses 事件转换
+    const chatReq = responsesRequestToChat({...payload, model: resolvedModel});
+    chatReq.messages = injectBehaviorRules(chatReq.messages);
+    chatReq.stream = true;
+
+    const {response} = await callUpstream(upstream, (up) =>
+        createChatCompletions(chatReq, up, {
+            requestType: 'ResponsesWS',
+            stream: true,
+            originalModel: payload.model
+        })
+    );
+
+    const streamState = createResponsesStreamState();
+    let buffer = Buffer.alloc(0);
+
+    for await (const chunk of response.body) {
+        if (signal?.aborted) break;
+        buffer = Buffer.concat([buffer, chunk]);
+        let start = 0;
+        let newLineIndex;
+        while ((newLineIndex = buffer.indexOf(10, start)) !== -1) {
+            const line = buffer.toString('utf8', start, newLineIndex).trim();
+            start = newLineIndex + 1;
+            if (!line || line.startsWith(':') || !line.startsWith('data: ')) continue;
+            const raw = line.slice(6).trim();
+            if (raw === '[DONE]') continue;
+
+            let data;
+            try { data = JSON.parse(raw); } catch { continue; }
+
+            const events = chatChunkToResponsesEvents(data, streamState);
+            for (const ev of events) {
+                yield {type: ev.event, data: ev.data};
+            }
+        }
+        if (start > 0) buffer = buffer.subarray(start);
+    }
+}
 
 /**
  * 处理 Relay Responses API WebSocket 连接
@@ -1176,113 +1318,14 @@ export function handleRelayResponsesWS(clientWs, req) {
                 });
             }
 
-            const resolvedModel = upstreamManager.resolveModel(payload.model, upstream.index);
-
-            if (isAnthropicUpstream(upstream)) {
-                throw Object.assign(new Error('当前上游为 Anthropic 协议，不支持 Responses API'), {
-                    name: 'ResponsesWSError',
-                    event: {type: 'error', error: {message: '当前上游为 Anthropic 协议，不支持 Responses API', code: 'protocol_mismatch'}}
-                });
-            }
-
-            // Responses 上游 + WS：直接 WS 连接上游，转发事件
-            if (isWSUpstream(upstream)) {
-                const wsPayload = {...payload, model: resolvedModel};
-                try {
-                    const wsResult = await createResponsesWS(wsPayload, upstream, {
-                        contextKey: payload.conversation_id || payload.metadata?.conversation_id
-                    });
-                    const eventStream = wsResult.eventStream;
-                    const conn = wsResult.conn;
-
-                    try {
-                        for await (const event of eventStream) {
-                            if (signal?.aborted) {
-                                discardWSConnection(conn);
-                                return;
-                            }
-                            yield event;
-                        }
-                        releaseWSConnection(conn);
-                    } catch (err) {
-                        discardWSConnection(conn);
-                        throw err;
-                    }
-                    return;
-                } catch (wsError) {
-                    if (wsError instanceof ResponsesWSError) throw wsError;
-                    logger.warn(`Relay WS: upstream WS failed, falling back to HTTP: ${wsError.message}`);
-                    // Fall through to HTTP
+            // 包装 yield 以捕获 429 限速错误
+            try {
+                yield* _relayWSHandleRequest(payload, upstream, upstreamManager, signal);
+            } catch (err) {
+                if (err instanceof RelayUpstreamError && err.status === 429) {
+                    upstreamManager.markLastReturnedRateLimited();
                 }
-            }
-
-            // Responses 上游（HTTP）：透传 SSE → WS 事件
-            if (isResponsesUpstream(upstream)) {
-                const responsesPayload = {...payload, model: resolvedModel};
-                const {response} = await callUpstream(upstream, (up) =>
-                    createResponses(responsesPayload, up, {
-                        requestType: 'ResponsesWS',
-                        stream: true,
-                        originalModel: payload.model
-                    })
-                );
-
-                // 读取 SSE 流并转换为 WS 事件
-                let buffer = '';
-                for await (const chunk of response.body) {
-                    if (signal?.aborted) break;
-                    buffer += chunk.toString('utf8');
-                    const parts = buffer.split(/\r?\n\r?\n/);
-                    buffer = parts.pop() || '';
-
-                    for (const part of parts) {
-                        const {event, data} = parseSSEBlock(part);
-                        if (!data || data === '[DONE]') continue;
-                        let parsed;
-                        try { parsed = JSON.parse(data); } catch { continue; }
-                        yield {type: event || parsed.type, data: parsed};
-                    }
-                }
-                return;
-            }
-
-            // OpenAI Chat 上游：Chat → Responses 事件转换
-            const chatReq = responsesRequestToChat({...payload, model: resolvedModel});
-            chatReq.messages = injectBehaviorRules(chatReq.messages);
-            chatReq.stream = true;
-
-            const {response} = await callUpstream(upstream, (up) =>
-                createChatCompletions(chatReq, up, {
-                    requestType: 'ResponsesWS',
-                    stream: true,
-                    originalModel: payload.model
-                })
-            );
-
-            const streamState = createResponsesStreamState();
-            let buffer = Buffer.alloc(0);
-
-            for await (const chunk of response.body) {
-                if (signal?.aborted) break;
-                buffer = Buffer.concat([buffer, chunk]);
-                let start = 0;
-                let newLineIndex;
-                while ((newLineIndex = buffer.indexOf(10, start)) !== -1) {
-                    const line = buffer.toString('utf8', start, newLineIndex).trim();
-                    start = newLineIndex + 1;
-                    if (!line || line.startsWith(':') || !line.startsWith('data: ')) continue;
-                    const raw = line.slice(6).trim();
-                    if (raw === '[DONE]') continue;
-
-                    let data;
-                    try { data = JSON.parse(raw); } catch { continue; }
-
-                    const events = chatChunkToResponsesEvents(data, streamState);
-                    for (const ev of events) {
-                        yield {type: ev.event, data: ev.data};
-                    }
-                }
-                if (start > 0) buffer = buffer.subarray(start);
+                throw err;
             }
         },
         onUsage: (inputTokens, outputTokens, cacheHitTokens, model) => {

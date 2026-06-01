@@ -28,9 +28,11 @@ class TenantTokenManager {
         this.rotationCount = options.rotationCount ?? 1;
         this.disabledIndexes = [];
 
-        // 会话亲和性：conversationId → { index, lastAccess }
-        // 同一会话始终使用同一凭证，避免凭证切换导致上游缓存 miss
-        this.sessionAffinity = new Map();
+        // 429 限速追踪：index → 限速过期时间戳
+        this.rateLimitedIndexes = new Map();
+
+        // 上次返回的凭证索引，用于在 429 时标记限速
+        this.lastReturnedIndex = null;
 
         this.ensureDirExists();
         this.loadAllTokens();
@@ -38,8 +40,8 @@ class TenantTokenManager {
         this.disableBlockedDomainCredentials();
     }
 
-    /** 会话亲和映射过期时间（30分钟无活动自动清理） */
-    static SESSION_AFFINITY_TTL = 30 * 60 * 1000;
+    /** 429 限速默认冷却时间（5分钟） */
+    static RATE_LIMIT_COOLDOWN = 5 * 60 * 1000;
 
     /**
      * 确保凭证目录存在
@@ -226,38 +228,26 @@ class TenantTokenManager {
 
     /**
      * 获取下一个可用的凭证
-     * 支持会话亲和性：传入 conversationId 时，同一会话始终返回同一凭证
-     * @param {string} [conversationId] - 会话 ID，用于凭证亲和性
+     * 用户切换活跃凭证后立即生效，不考虑亲和性
+     * 被标记为 429 限速的凭证会被临时跳过
      * @returns {Object|null}
      */
-    getNextCredential(conversationId) {
+    getNextCredential() {
         if (this.credentials.length === 0) {
             return null;
         }
 
-        // 惰性清理过期的会话亲和映射
-        this._cleanupSessionAffinity();
-
-        // 会话亲和性：同一会话优先使用上次分配的凭证
-        if (conversationId) {
-            const affinity = this.sessionAffinity.get(conversationId);
-            if (affinity) {
-                const cred = this.credentials[affinity.index];
-                if (cred && !this.disabledIndexes.includes(affinity.index) && !this.isTokenExpired(cred.data)) {
-                    affinity.lastAccess = Date.now();
-                    logger.debug(`Session affinity hit: conversationId=${conversationId}, credential index=${affinity.index}`);
-                    return cred.data;
-                }
-                // 凭证已失效，清除亲和映射，下面重新分配
-                this.sessionAffinity.delete(conversationId);
-                logger.debug(`Session affinity expired: conversationId=${conversationId}, credential index=${affinity.index}`);
-            }
-        }
+        // 惰性清理过期的限速标记
+        this._cleanupRateLimited();
 
         const validCredentials = [];
         for (let i = 0; i < this.credentials.length; i++) {
             if (this.disabledIndexes.includes(i)) {
                 logger.warn(`Skipping disabled credential: ${basename(this.credentials[i].filePath)}`);
+                continue;
+            }
+            if (this.isRateLimited(i)) {
+                logger.warn(`Skipping rate-limited credential: ${basename(this.credentials[i].filePath)}`);
                 continue;
             }
             if (!this.isTokenExpired(this.credentials[i].data)) {
@@ -268,7 +258,14 @@ class TenantTokenManager {
         }
 
         if (validCredentials.length === 0) {
+            // 所有凭证都被限速或不可用，清除限速标记后重试
+            if (this.rateLimitedIndexes.size > 0) {
+                logger.warn('All credentials rate-limited, clearing rate limits and retrying');
+                this.rateLimitedIndexes.clear();
+                return this.getNextCredential();
+            }
             logger.error('No valid (non-expired) credentials available');
+            this.lastReturnedIndex = null;
             return null;
         }
 
@@ -287,10 +284,14 @@ class TenantTokenManager {
             if (this.disabledIndexes.includes(this.manualSelectedIndex)) {
                 logger.warn('Manually selected credential is disabled, falling back to automatic rotation');
                 this.manualSelectedIndex = null;
+            } else if (this.isRateLimited(this.manualSelectedIndex)) {
+                logger.warn('Manually selected credential is rate-limited, temporarily falling back to automatic rotation');
+                // 不清除 manualSelectedIndex，限速过期后会自动恢复
             } else {
                 const manualCred = this.credentials[this.manualSelectedIndex];
                 if (!this.isTokenExpired(manualCred.data)) {
                     logger.debug(`Using manually selected credential: ${basename(manualCred.filePath)}`);
+                    this.lastReturnedIndex = this.manualSelectedIndex;
                     return manualCred.data;
                 } else {
                     logger.warn('Manually selected credential is expired, falling back to automatic rotation');
@@ -304,9 +305,7 @@ class TenantTokenManager {
         if (!shouldRotate) {
             const credential = this.credentials[this.currentIndex];
             logger.debug(`Using fixed credential: ${basename(credential.filePath)}`);
-            if (conversationId) {
-                this.sessionAffinity.set(conversationId, {index: this.currentIndex, lastAccess: Date.now()});
-            }
+            this.lastReturnedIndex = this.currentIndex;
             return credential.data;
         }
 
@@ -320,23 +319,69 @@ class TenantTokenManager {
         const credential = this.credentials[this.currentIndex];
         this.usageCount++;
 
-        if (conversationId) {
-            this.sessionAffinity.set(conversationId, {index: this.currentIndex, lastAccess: Date.now()});
-        }
+        this.lastReturnedIndex = this.currentIndex;
         return credential.data;
     }
 
     /**
-     * 惰性清理过期的会话亲和映射
+     * 惰性清理过期的限速标记
      * 在每次 getNextCredential 时顺便执行，不依赖定时器
      */
-    _cleanupSessionAffinity() {
-        if (this.sessionAffinity.size === 0) return;
+    _cleanupRateLimited() {
+        if (this.rateLimitedIndexes.size === 0) return;
         const now = Date.now();
-        for (const [convId, affinity] of this.sessionAffinity) {
-            if (now - affinity.lastAccess > TenantTokenManager.SESSION_AFFINITY_TTL) {
-                this.sessionAffinity.delete(convId);
+        for (const [index, expiry] of this.rateLimitedIndexes) {
+            if (now >= expiry) {
+                this.rateLimitedIndexes.delete(index);
+                logger.debug(`Rate limit expired for credential #${index}`);
             }
+        }
+    }
+
+    /**
+     * 标记凭证为 429 限速
+     * @param {number} index - 凭证索引
+     * @param {number} [durationMs] - 限速持续时间（毫秒），默认 5 分钟
+     */
+    markRateLimited(index, durationMs) {
+        if (index < 0 || index >= this.credentials.length) return;
+        const duration = durationMs || TenantTokenManager.RATE_LIMIT_COOLDOWN;
+        const expiry = Date.now() + duration;
+        this.rateLimitedIndexes.set(index, expiry);
+        const filename = basename(this.credentials[index].filePath);
+        logger.warn(`Credential #${index} (${filename}) marked as rate-limited for ${Math.round(duration / 1000)}s`);
+    }
+
+    /**
+     * 检查凭证是否处于限速期
+     * @param {number} index - 凭证索引
+     * @returns {boolean}
+     */
+    isRateLimited(index) {
+        const expiry = this.rateLimitedIndexes.get(index);
+        if (!expiry) return false;
+        if (Date.now() >= expiry) {
+            this.rateLimitedIndexes.delete(index);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * 获取上次返回的凭证索引
+     * @returns {number|null}
+     */
+    getLastReturnedIndex() {
+        return this.lastReturnedIndex;
+    }
+
+    /**
+     * 标记上次使用的凭证为 429 限速
+     * @param {number} [durationMs] - 限速持续时间（毫秒），默认 5 分钟
+     */
+    markLastReturnedRateLimited(durationMs) {
+        if (this.lastReturnedIndex !== null) {
+            this.markRateLimited(this.lastReturnedIndex, durationMs);
         }
     }
 
@@ -460,6 +505,8 @@ class TenantTokenManager {
         if (index >= 0 && index < this.credentials.length) {
             this.manualSelectedIndex = index;
             this.currentIndex = index;
+            // 切换活跃凭证时清除所有限速标记，立即生效
+            this.rateLimitedIndexes.clear();
             const filename = basename(this.credentials[index].filePath);
             logger.debug(`Manually selected credential: ${filename} (index: ${index})`);
             this.saveState();

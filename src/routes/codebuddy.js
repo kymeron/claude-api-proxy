@@ -4,7 +4,7 @@
  * @module routes/codebuddy
  */
 
-import {createChatCompletions, getModels} from '../services/codebuddy/api.js';
+import {createChatCompletions, getModels, CodeBuddyApiError} from '../services/codebuddy/api.js';
 import {anthropicToOpenAI, openAIToAnthropic, ClaudeStreamState, SSEWriter} from '../services/codebuddy/translator.js';
 import {rewriteOpenAIStream, injectBehaviorRules} from '../transformer/shared-translator.js';
 import {
@@ -15,7 +15,7 @@ import {
     compactRequestToChat,
     chatResponseToCompact
 } from '../transformer/responses-translator.js';
-import {authenticateRequest, getCredential} from '../services/codebuddy/auth.js';
+import {authenticateRequest, getCredential, markLastReturnedRateLimited} from '../services/codebuddy/auth.js';
 import {credentialStore} from '../services/codebuddy/credential-store.js';
 import {BLOCKED_DOMAINS, getCodebuddyBaseUrl} from '../services/codebuddy/config.js';
 import {handleWSConnection} from '../services/ws/ws-server.js';
@@ -93,7 +93,24 @@ function sendAnthropicError(res, status, message) {
 }
 
 function upstreamErrorStatus(err) {
+    if (err instanceof CodeBuddyApiError) {
+        // 429 保持原样返回，其余 >= 400 的上游错误映射为 502
+        if (err.status === 429) return 429;
+        return 502;
+    }
     return isNetworkError(err) ? 502 : 500;
+}
+
+/**
+ * 检测并处理上游 429 限速错误
+ * 当检测到 429 时，标记当前凭证为限速状态
+ * @param {Error} error - 捕获的错误
+ */
+function handleUpstreamRateLimit(error) {
+    if (error instanceof CodeBuddyApiError && error.status === 429) {
+        logger.warn('Upstream 429 rate limit detected, marking current credential as rate-limited');
+        markLastReturnedRateLimited();
+    }
 }
 
 /**
@@ -233,6 +250,7 @@ async function handleOpenAIChatCompletions(req, res) {
         }
     } catch (error) {
         logger.error('Failed to handle OpenAI chat completions:', error);
+        handleUpstreamRateLimit(error);
         sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -267,6 +285,7 @@ async function handleOpenAIModels(req, res) {
         });
     } catch (error) {
         logger.error('Failed to get OpenAI models:', error);
+        handleUpstreamRateLimit(error);
         sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -498,6 +517,7 @@ async function handleAnthropicMessages(req, res) {
         }
     } catch (error) {
         logger.error('Failed to handle Anthropic messages:', error);
+        handleUpstreamRateLimit(error);
         sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -522,6 +542,7 @@ async function handleAnthropicCountTokens(req, res) {
         sendJson(res, 200, {input_tokens: estimatedTokens});
     } catch (error) {
         logger.error('Failed to count tokens:', error);
+        handleUpstreamRateLimit(error);
         sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -552,6 +573,7 @@ async function handleAnthropicModels(req, res) {
         });
     } catch (error) {
         logger.error('Failed to get Anthropic models:', error);
+        handleUpstreamRateLimit(error);
         sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -692,6 +714,7 @@ async function handleResponsesAPI(req, res) {
         }
     } catch (error) {
         logger.error('Failed to handle Responses API:', error);
+        handleUpstreamRateLimit(error);
         sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -748,6 +771,7 @@ async function handleResponsesCompact(req, res) {
         sendJson(res, 200, chatResponseToCompact(chatResponse));
     } catch (error) {
         logger.error('Failed to handle Responses Compact:', error);
+        handleUpstreamRateLimit(error);
         sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -861,6 +885,7 @@ async function handleCredentials(req, res, method, pathname) {
         sendOpenAIError(res, 404, 'Credential endpoint not found');
     } catch (error) {
         logger.error('Credential management error:', error);
+        handleUpstreamRateLimit(error);
         sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
     }
 }
@@ -948,7 +973,11 @@ export function handleCodebuddyResponsesWS(clientWs, req) {
             });
 
             if (response.status >= 400) {
-                throw Object.assign(new Error(`CodeBuddy API error: ${response.status}`), {
+                const err = new CodeBuddyApiError(response.status, `CodeBuddy API error: ${response.status}`);
+                if (response.status === 429) {
+                    markLastReturnedRateLimited();
+                }
+                throw Object.assign(err, {
                     name: 'ResponsesWSError',
                     event: {type: 'error', error: {message: `Upstream error: ${response.status}`, code: 'upstream_error'}}
                 });
