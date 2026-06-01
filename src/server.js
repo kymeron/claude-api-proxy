@@ -35,6 +35,56 @@ function sendError(res, status, message) {
 }
 
 /**
+ * 渲染 404 页面（HTML 给浏览器，JSON 给 API 客户端）
+ */
+function send404(req, res) {
+    const accept = String(req.headers['accept'] || '');
+    const wantsHtml = accept.includes('text/html');
+    if (!wantsHtml) {
+        res.writeHead(404, {'Content-Type': 'application/json'});
+        res.end(JSON.stringify({error: 'Not found', path: req.url}));
+        return;
+    }
+    const safePath = String(req.url || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>404 - Claude API Proxy</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .container { max-width: 520px; width: 100%; padding: 48px 24px; text-align: center; }
+    .code { font-size: 6rem; font-weight: 800; color: #58a6ff; line-height: 1; letter-spacing: -2px; }
+    h1 { font-size: 1.5rem; font-weight: 700; margin: 16px 0 8px; color: #f0f6fc; }
+    .desc { color: #8b949e; margin-bottom: 8px; font-size: 0.95rem; }
+    .path { display: inline-block; margin: 16px 0 32px; padding: 6px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #79c0ff; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 0.85rem; word-break: break-all; max-width: 100%; }
+    .home-btn { display: inline-block; padding: 10px 20px; background: #238636; border: 1px solid #2ea043; border-radius: 8px; color: #ffffff; text-decoration: none; font-size: 0.9rem; font-weight: 500; transition: background 0.2s; }
+    .home-btn:hover { background: #2ea043; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="code">404</div>
+    <h1>页面不存在</h1>
+    <p class="desc">您访问的路径不在已注册的路由中</p>
+    <div class="path">${safePath}</div>
+    <div>
+      <a class="home-btn" href="/">返回首页</a>
+    </div>
+  </div>
+</body>
+</html>`;
+    res.writeHead(404, {'Content-Type': 'text/html; charset=utf-8'});
+    res.end(html);
+}
+
+/**
  * WS 鉴权：检查网关令牌
  * WS 握手时支持以下方式传递令牌：
  * 1. Authorization: Bearer <token> header（随 upgrade 请求发送）
@@ -268,7 +318,7 @@ export function createServer() {
         <span class="card-arrow">→</span>
       </a>
     </div>
-    <a class="logout-btn" href="/logout">Sign Out</a>
+    <a class="logout-btn" href="/logout">登出</a>
   </div>
 </body>
 </html>`;
@@ -277,7 +327,7 @@ export function createServer() {
             return;
         }
 
-        sendError(res, 404, 'Not found');
+        send404(req, res);
     });
 
     // ============ WebSocket 升级处理 ============

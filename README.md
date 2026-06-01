@@ -267,6 +267,17 @@ CodeBuddy 按凭证类型返回三类模型列表：
 
 管理面板 `/codebuddyFE` 的使用指南会同时展示国内站、国际站和企业站的可用模型。也可以在管理面板的凭证编辑页面中针对每个凭证单独设置上游地址。
 
+#### 添加企业站上游
+
+企业站的域名因企业而异，需通过环境变量 `CODEBUDDY_ENTERPRISE_HOSTS`（逗号分隔）配置后，才会出现在管理面板的「上游服务」下拉框里。支持完整 URL，也支持只填域名（自动补 `https://`）；无效项会被忽略并打 warn 日志。
+
+```env
+# .env
+CODEBUDDY_ENTERPRISE_HOSTS=https://abc.copilot.qq.com,xyz.copilot.qq.com
+```
+
+重启服务后，打开 `/codebuddyFE` → 添加凭证，下拉里会看到带「（企业站）」标识的企业域名。完成 OAuth 登录后，凭证里会自动写入 `enterprise_id` / `enterprise_name` / `department_info`，请求时也会自动附 `X-Enterprise-Id` / `X-Tenant-Id` / `X-Department-Info` 头。
+
 ---
 
 ## Relay 中继
@@ -367,6 +378,7 @@ Relay 可以将本机运行的 Copilot 或 CodeBuddy 端点作为上游，实现
 | `HOST` | 绑定地址 | `0.0.0.0` |
 | `LOG_LEVEL` | 日志级别（`DEBUG`/`INFO`/`WARN`/`ERROR`） | `INFO` |
 | `CODEBUDDY_CREDS_DIR` | CodeBuddy 凭证存储目录 | `.codebuddy` |
+| `CODEBUDDY_ENTERPRISE_HOSTS` | CodeBuddy 企业站上游域名（逗号分隔，例 `https://abc.copilot.qq.com,xyz.copilot.qq.com`），出现在管理面板下拉框 | 空 |
 | `RELAY_CREDS_DIR` | Relay 凭证存储目录 | `.relay` |
 
 ---

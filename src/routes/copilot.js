@@ -178,25 +178,8 @@ function ensureResponsesWebSocketSupported(model) {
 }
 
 /**
- * API Key 鉴权
- * 如果网关层已完成鉴权（req._gatewayAuthenticated），直接通过
+ * API Key 鉴权（已移除，统一由网关层处理）
  */
-function authenticateRequest(req) {
-    // 网关令牌已验证，跳过后端 API Key 检查
-    if (req._gatewayAuthenticated) return true;
-
-    // 优先从 Authorization: Bearer 提取
-    const auth = req.headers['authorization'];
-    let token = auth?.startsWith('Bearer ') ? auth.slice(7) : auth;
-
-    // 兼容 x-api-key（CherryStudio 等 Anthropic 客户端）
-    if (!token) {
-        token = req.headers['x-api-key'];
-    }
-
-    if (!token) return false;
-    return copilotStore.authenticate(token);
-}
 
 async function parseBody(req) {
     const chunks = [];
@@ -208,12 +191,11 @@ async function parseBody(req) {
 
 /* ==================== 鉴权 ==================== */
 
-async function authenticateAndGetToken(req, networkOptions = {}) {
-    // API Key 鉴权
-    if (!authenticateRequest(req)) {
-        return {error: {status: 401, message: 'Invalid API Key. Check your API key or visit /copilotFE.'}};
-    }
-
+/**
+ * 确保 Copilot 上游认证有效（GitHub 登录 + Copilot Token）
+ * 网关层已统一完成客户端 API Key 鉴权
+ */
+async function ensureCopilotAuth(networkOptions = {}) {
     // Copilot 认证检查
     if (!isAuthenticated()) {
         return {error: {status: 401, message: 'Not authenticated. Please visit /copilotFE to authenticate with GitHub.'}};
@@ -237,7 +219,7 @@ async function handleOpenAIChatCompletions(req, res) {
     try {
         const networkOptions = getCopilotNetworkOptions(req);
         const proxyUrl = networkOptions.proxyUrl;
-        const authResult = await authenticateAndGetToken(req, networkOptions);
+        const authResult = await ensureCopilotAuth(networkOptions);
         if (authResult.error) {
             sendOpenAIError(
                 res,
@@ -462,7 +444,7 @@ async function handleOpenAIModels(req, res) {
     try {
         const networkOptions = getCopilotNetworkOptions(req);
         const proxyUrl = networkOptions.proxyUrl;
-        const authResult = await authenticateAndGetToken(req, networkOptions);
+        const authResult = await ensureCopilotAuth(networkOptions);
         if (authResult.error) {
             sendOpenAIError(res, authResult.error.status, authResult.error.message);
             return;
@@ -500,7 +482,7 @@ async function handleAnthropicMessages(req, res) {
     try {
         const networkOptions = getCopilotNetworkOptions(req);
         const proxyUrl = networkOptions.proxyUrl;
-        const authResult = await authenticateAndGetToken(req, networkOptions);
+        const authResult = await ensureCopilotAuth(networkOptions);
         if (authResult.error) {
             sendAnthropicError(res, authResult.error.status, authResult.error.message);
             return;
@@ -762,7 +744,7 @@ async function handleAnthropicMessages(req, res) {
 async function handleAnthropicCountTokens(req, res) {
     try {
         const networkOptions = getCopilotNetworkOptions(req);
-        const authResult = await authenticateAndGetToken(req, networkOptions);
+        const authResult = await ensureCopilotAuth(networkOptions);
         if (authResult.error) {
             sendAnthropicError(res, authResult.error.status, authResult.error.message);
             return;
@@ -812,7 +794,7 @@ async function handleAnthropicModels(req, res) {
     try {
         const networkOptions = getCopilotNetworkOptions(req);
         const proxyUrl = networkOptions.proxyUrl;
-        const authResult = await authenticateAndGetToken(req, networkOptions);
+        const authResult = await ensureCopilotAuth(networkOptions);
         if (authResult.error) {
             sendAnthropicError(res, authResult.error.status, authResult.error.message);
             return;
@@ -852,7 +834,7 @@ async function handleResponsesAPI(req, res) {
     try {
         const networkOptions = getCopilotNetworkOptions(req);
         const proxyUrl = networkOptions.proxyUrl;
-        const authResult = await authenticateAndGetToken(req, networkOptions);
+        const authResult = await ensureCopilotAuth(networkOptions);
         if (authResult.error) {
             sendOpenAIError(res, authResult.error.status, authResult.error.message);
             return;
@@ -1079,7 +1061,7 @@ async function handleResponsesCompact(req, res) {
     try {
         const networkOptions = getCopilotNetworkOptions(req);
         const proxyUrl = networkOptions.proxyUrl;
-        const authResult = await authenticateAndGetToken(req, networkOptions);
+        const authResult = await ensureCopilotAuth(networkOptions);
         if (authResult.error) {
             sendOpenAIError(res, authResult.error.status, authResult.error.message);
             return;
@@ -1133,17 +1115,7 @@ async function handleResponsesCompact(req, res) {
  */
 export function handleCopilotResponsesWS(clientWs, req) {
     handleWSConnection(clientWs, {
-        authenticate: (req) => {
-            // 网关令牌已验证
-            if (req._gatewayAuthenticated) return true;
-
-            // API Key 鉴权
-            const auth = req.headers['authorization'];
-            let token = auth?.startsWith('Bearer ') ? auth.slice(7) : auth;
-            if (!token) token = req.headers['x-api-key'];
-            if (!token) return false;
-            return copilotStore.authenticate(token);
-        },
+        authenticate: () => true,
         req,
         handleRequest: async function* (payload, authResult, {signal}) {
             // Copilot 认证

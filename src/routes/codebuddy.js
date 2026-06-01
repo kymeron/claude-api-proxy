@@ -15,7 +15,7 @@ import {
     compactRequestToChat,
     chatResponseToCompact
 } from '../transformer/responses-translator.js';
-import {authenticateRequest, getCredential, markLastReturnedRateLimited} from '../services/codebuddy/auth.js';
+import {getCredential, markLastReturnedRateLimited} from '../services/codebuddy/auth.js';
 import {credentialStore} from '../services/codebuddy/credential-store.js';
 import {BLOCKED_DOMAINS, getCodebuddyBaseUrl} from '../services/codebuddy/config.js';
 import {handleWSConnection} from '../services/ws/ws-server.js';
@@ -114,41 +114,14 @@ function handleUpstreamRateLimit(error) {
 }
 
 /**
- * 鉴权并获取凭证
- * 如果网关层已完成鉴权（req._gatewayAuthenticated），跳过后端 API Key 检查
+ * 获取凭证，若无可用凭证则返回错误
+ * 网关层已统一完成客户端 API Key 鉴权
  */
-function authenticateAndGetCredential(req) {
-    // 网关令牌已验证，直接通过
-    if (req._gatewayAuthenticated) {
-        const credential = getCredential();
-        if (!credential) {
-            return {error: {status: 503, message: 'No available credentials'}};
-        }
-        return {credential};
-    }
-
-    const authResult = authenticateRequest(req.headers);
-
-    if (!authResult.authenticated) {
-        return {
-            error: {
-                status: 401,
-                message: authResult.error
-            }
-        };
-    }
-
+function getCredentialOrFail() {
     const credential = getCredential();
-
     if (!credential) {
-        return {
-            error: {
-                status: 503,
-                message: 'No available credentials'
-            }
-        };
+        return {error: {status: 503, message: 'No available credentials'}};
     }
-
     return {credential};
 }
 
@@ -168,7 +141,7 @@ async function parseBody(req) {
  */
 async function handleOpenAIChatCompletions(req, res) {
     try {
-        const authResult = authenticateAndGetCredential(req);
+        const authResult = getCredentialOrFail();
         if (authResult.error) {
             sendOpenAIError(
                 res,
@@ -260,7 +233,7 @@ async function handleOpenAIChatCompletions(req, res) {
  */
 async function handleOpenAIModels(req, res) {
     try {
-        const authResult = authenticateAndGetCredential(req);
+        const authResult = getCredentialOrFail();
         if (authResult.error) {
             sendOpenAIError(
                 res,
@@ -295,7 +268,7 @@ async function handleOpenAIModels(req, res) {
  */
 async function handleAnthropicMessages(req, res) {
     try {
-        const authResult = authenticateAndGetCredential(req);
+        const authResult = getCredentialOrFail();
         if (authResult.error) {
             sendAnthropicError(res, authResult.error.status, authResult.error.message);
             return;
@@ -527,7 +500,7 @@ async function handleAnthropicMessages(req, res) {
  */
 async function handleAnthropicCountTokens(req, res) {
     try {
-        const authResult = authenticateAndGetCredential(req);
+        const authResult = getCredentialOrFail();
         if (authResult.error) {
             sendAnthropicError(res, authResult.error.status, authResult.error.message);
             return;
@@ -552,7 +525,7 @@ async function handleAnthropicCountTokens(req, res) {
  */
 async function handleAnthropicModels(req, res) {
     try {
-        const authResult = authenticateAndGetCredential(req);
+        const authResult = getCredentialOrFail();
         if (authResult.error) {
             sendAnthropicError(res, authResult.error.status, authResult.error.message);
             return;
@@ -584,7 +557,7 @@ async function handleAnthropicModels(req, res) {
  */
 async function handleResponsesAPI(req, res) {
     try {
-        const authResult = authenticateAndGetCredential(req);
+        const authResult = getCredentialOrFail();
         if (authResult.error) {
             sendOpenAIError(res, authResult.error.status, authResult.error.message);
             return;
@@ -724,7 +697,7 @@ async function handleResponsesAPI(req, res) {
  */
 async function handleResponsesCompact(req, res) {
     try {
-        const authResult = authenticateAndGetCredential(req);
+        const authResult = getCredentialOrFail();
         if (authResult.error) {
             sendOpenAIError(res, authResult.error.status, authResult.error.message);
             return;
@@ -935,22 +908,10 @@ function handleRoot(req, res) {
  */
 export function handleCodebuddyResponsesWS(clientWs, req) {
     handleWSConnection(clientWs, {
-        authenticate: (req) => {
-            if (req._gatewayAuthenticated) return true;
-            const authResult = authenticateRequest(req.headers);
-            return authResult.authenticated;
-        },
+        authenticate: () => true,
         req,
         handleRequest: async function* (payload, authResult, {signal}) {
-            const authData = authenticateRequest(req.headers);
-            if (!authData.authenticated) {
-                throw Object.assign(new Error('Authentication failed'), {
-                    name: 'ResponsesWSError',
-                    event: {type: 'error', error: {message: 'Authentication failed', code: 'unauthorized'}}
-                });
-            }
-
-            const credential = getCredential(authData.apiKey);
+            const credential = getCredential();
             if (!credential) {
                 throw Object.assign(new Error('No valid CodeBuddy credentials'), {
                     name: 'ResponsesWSError',

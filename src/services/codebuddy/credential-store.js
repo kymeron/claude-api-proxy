@@ -6,26 +6,19 @@
  */
 
 import {readFileSync, writeFileSync, existsSync, mkdirSync} from 'fs';
-import {randomBytes, createHash} from 'crypto';
 import {join} from 'path';
 import logger from '../../utils/logger.js';
 import {CODEBUDDY_CREDS_DIR} from './config.js';
 import {TenantTokenManager} from './tenant-token-manager.js';
 
-const API_KEY_FILE = 'api_key.json';
 const USAGE_FILE = 'usage.json';
 const CREDENTIALS_DIR = 'credentials';
 
 class CredentialStore {
     constructor() {
         this.baseDir = join(process.cwd(), CODEBUDDY_CREDS_DIR);
-        this.apiKeyFile = join(this.baseDir, API_KEY_FILE);
         this.usageFile = join(this.baseDir, USAGE_FILE);
         this.credentialsDir = join(this.baseDir, CREDENTIALS_DIR);
-
-        this.apiKey = null;
-        this.apiKeyHash = null;
-        this.apiKeyPrefix = null;
 
         // Usage tracking
         this.apiCallCount = 0;
@@ -52,49 +45,11 @@ class CredentialStore {
         if (!existsSync(this.baseDir)) mkdirSync(this.baseDir, {recursive: true});
         if (!existsSync(this.credentialsDir)) mkdirSync(this.credentialsDir, {recursive: true});
 
-        // Load or generate API key
-        this._loadApiKey();
-
         // Load usage stats
         this._loadUsage();
 
         // Create token manager (uses baseDir, credentials subdirectory is created by TenantTokenManager)
         this.tokenManager = new TenantTokenManager(this.baseDir);
-    }
-
-    _loadApiKey() {
-        if (existsSync(this.apiKeyFile)) {
-            try {
-                const data = JSON.parse(readFileSync(this.apiKeyFile, 'utf8'));
-                this.apiKeyHash = data.api_key_hash;
-                this.apiKeyPrefix = data.api_key_prefix;
-                this.apiKey = data.api_key_plain || null;
-            } catch (err) {
-                logger.error('Failed to load API key file:', err.message);
-            }
-        }
-        if (!this.apiKeyHash) {
-            this._generateApiKey();
-        }
-    }
-
-    _generateApiKey() {
-        const key = 'sk-' + randomBytes(16).toString('hex');
-        this.apiKey = key; // Only available at generation time
-        this.apiKeyHash = createHash('sha256').update(key).digest('hex');
-        this.apiKeyPrefix = key.substring(0, 3) + '****' + key.substring(key.length - 4);
-        this._saveApiKey();
-        logger.info(`Generated CodeBuddy API Key: ${key}`);
-        logger.info('Please save this key, it will not be shown again.');
-    }
-
-    _saveApiKey() {
-        writeFileSync(this.apiKeyFile, JSON.stringify({
-            api_key_hash: this.apiKeyHash,
-            api_key_prefix: this.apiKeyPrefix,
-            api_key_plain: this.apiKey,
-            created_at: new Date().toISOString()
-        }, null, 2), 'utf8');
     }
 
     _loadUsage() {
@@ -131,11 +86,6 @@ class CredentialStore {
         this.dirtyCount = 0;
     }
 
-    authenticate(apiKey) {
-        const hash = createHash('sha256').update(apiKey).digest('hex');
-        return hash === this.apiKeyHash;
-    }
-
     getTokenManager() {
         return this.tokenManager;
     }
@@ -154,20 +104,6 @@ class CredentialStore {
 
     hasCredentials() {
         return this.tokenManager.hasCredentials();
-    }
-
-    getApiKeyInfo() {
-        return {
-            prefix: this.apiKeyPrefix,
-            hash: this.apiKeyHash,
-            key: this.apiKey,
-            apiKeyPlain: this.apiKey
-        };
-    }
-
-    regenerateApiKey() {
-        this._generateApiKey();
-        return this.apiKey;
     }
 
     // Usage tracking

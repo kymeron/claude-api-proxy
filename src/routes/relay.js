@@ -5,7 +5,6 @@
  * @module routes/relay
  */
 
-import {authenticateRequest} from '../services/relay/auth.js';
 import {relayStore} from '../services/relay/relay-store.js';
 import {
     createChatCompletions,
@@ -205,19 +204,10 @@ function getProtocolErrorMessage(upstream, expectedProtocol, endpoint) {
 /* ==================== 鉴权 ==================== */
 
 /**
- * 鉴权并获取上游配置
- * 如果网关层已完成鉴权（req._gatewayAuthenticated），跳过后端 API Key 检查
+ * 获取上游配置，若无可用上游则返回错误
+ * 网关层已统一完成客户端 API Key 鉴权
  */
-function authenticateAndGetUpstream(req) {
-    // 网关令牌已验证，跳过后端 API Key 检查
-    if (!req._gatewayAuthenticated) {
-        const authResult = authenticateRequest(req.headers);
-
-        if (!authResult.authenticated) {
-            return {error: {status: 401, message: authResult.error}};
-        }
-    }
-
+function getUpstreamOrFail() {
     const upstreamManager = relayStore.getUpstreamManager();
     if (!upstreamManager) {
         return {error: {status: 503, message: 'Relay upstream manager not found'}};
@@ -260,7 +250,7 @@ function recordUsage(inputTokens, outputTokens, cacheHitTokens = 0, model = 'unk
  */
 async function handleOpenAIChatCompletions(req, res) {
     try {
-        const authResult = authenticateAndGetUpstream(req);
+        const authResult = getUpstreamOrFail();
         if (authResult.error) {
             sendOpenAIError(
                 res,
@@ -439,7 +429,7 @@ async function handleOpenAIChatCompletions(req, res) {
  */
 async function handleAnthropicMessages(req, res) {
     try {
-        const authResult = authenticateAndGetUpstream(req);
+        const authResult = getUpstreamOrFail();
         if (authResult.error) {
             sendAnthropicError(res, authResult.error.status, authResult.error.message);
             return;
@@ -730,7 +720,7 @@ function _streamOpenAIPassthrough(response, res, model = 'unknown') {
 
 async function handleOpenAIModels(req, res) {
     try {
-        const authResult = authenticateAndGetUpstream(req);
+        const authResult = getUpstreamOrFail();
         if (authResult.error) {
             sendOpenAIError(res, authResult.error.status, authResult.error.message);
             return;
@@ -746,7 +736,7 @@ async function handleOpenAIModels(req, res) {
 
 async function handleAnthropicModels(req, res) {
     try {
-        const authResult = authenticateAndGetUpstream(req);
+        const authResult = getUpstreamOrFail();
         if (authResult.error) {
             sendAnthropicError(res, authResult.error.status, authResult.error.message);
             return;
@@ -762,7 +752,7 @@ async function handleAnthropicModels(req, res) {
 
 async function handleAnthropicCountTokens(req, res) {
     try {
-        const authResult = authenticateAndGetUpstream(req);
+        const authResult = getUpstreamOrFail();
         if (authResult.error) {
             sendAnthropicError(res, authResult.error.status, authResult.error.message);
             return;
@@ -806,7 +796,7 @@ async function handleAnthropicCountTokens(req, res) {
  */
 async function handleResponsesAPI(req, res) {
     try {
-        const authResult = authenticateAndGetUpstream(req);
+        const authResult = getUpstreamOrFail();
         if (authResult.error) {
             sendOpenAIError(res, authResult.error.status, authResult.error.message);
             return;
@@ -1088,7 +1078,7 @@ async function handleResponsesAPI(req, res) {
  */
 async function handleResponsesCompact(req, res) {
     try {
-        const authResult = authenticateAndGetUpstream(req);
+        const authResult = getUpstreamOrFail();
         if (authResult.error) {
             sendOpenAIError(res, authResult.error.status, authResult.error.message);
             return;
@@ -1295,11 +1285,7 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, signal
  */
 export function handleRelayResponsesWS(clientWs, req) {
     handleWSConnection(clientWs, {
-        authenticate: (req) => {
-            if (req._gatewayAuthenticated) return true;
-            const authResult = authenticateRequest(req.headers);
-            return authResult.authenticated;
-        },
+        authenticate: () => true,
         req,
         handleRequest: async function* (payload, authResult, {signal}) {
             const upstreamManager = relayStore.getUpstreamManager();

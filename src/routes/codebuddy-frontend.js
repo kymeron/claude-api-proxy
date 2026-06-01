@@ -11,7 +11,8 @@ import {join, dirname} from 'path';
 import {fileURLToPath} from 'url';
 import logger from '../utils/logger.js';
 import {credentialStore} from '../services/codebuddy/credential-store.js';
-import {getCodebuddyBaseUrl, getCodebuddyBaseUrlOptions, BLOCKED_DOMAINS, isPersonalHost} from '../services/codebuddy/config.js';
+import {getGatewayApiKeyInfo, regenerateGatewayToken} from '../services/gateway/auth.js';
+import {getCodebuddyBaseUrl, getCodebuddyBaseUrlOptions, getEnterpriseBaseUrls, BLOCKED_DOMAINS, isPersonalHost} from '../services/codebuddy/config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -120,7 +121,7 @@ function sendJson(res, status, data) {
  */
 function handleStatus(req, res) {
     const tm = credentialStore.getTokenManager();
-    const apiInfo = credentialStore.getApiKeyInfo();
+    const apiInfo = getGatewayApiKeyInfo();
     const usage = credentialStore.getUsageStats();
     sendJson(res, 200, {
         hasCredentials: tm.hasCredentials(),
@@ -133,14 +134,14 @@ function handleStatus(req, res) {
 }
 
 /**
- * 重新生成 API Key
+ * 重新生成 API Key（网关令牌，影响所有端点）
  */
 function handleRegenerateApiKey(req, res) {
     try {
-        const apiKey = credentialStore.regenerateApiKey();
+        const apiKey = regenerateGatewayToken();
         if (apiKey) {
             sendJson(res, 200, {
-                message: 'API Key 已重新生成，新 Key 仅显示一次！',
+                message: 'API Key 已重新生成，新 Key 仅显示一次！重置将同时影响所有端点（Copilot/CodeBuddy/Relay）',
                 api_key: apiKey
             });
         } else {
@@ -528,11 +529,34 @@ async function handleAuthPoll(req, res) {
  */
 function serveAdminPage(res) {
     let html = readTemplate('codebuddy-admin.html');
-    const extraOptions = getCodebuddyBaseUrlOptions().filter(url => url !== getCodebuddyBaseUrl()).map(url => {
+    const enterpriseUrls = getEnterpriseBaseUrls();
+    const enterpriseSet = new Set(enterpriseUrls);
+    const DOMESTIC_URL = 'https://copilot.tencent.com';
+    const INTERNATIONAL_URL = 'https://www.codebuddy.ai';
+
+    // 按顺序：国内站 → 国际站 → 企业站
+    const ordered = [
+        {url: DOMESTIC_URL, label: 'copilot.tencent.com（国内站）'},
+        {url: INTERNATIONAL_URL, label: 'www.codebuddy.ai（国际站）'},
+        ...enterpriseUrls
+            .filter(url => url !== DOMESTIC_URL && url !== INTERNATIONAL_URL)
+            .map(url => {
+                const host = (() => { try { return new URL(url).host; } catch { return url; } })();
+                return {url, label: `${host}（企业站）`};
+            })
+    ];
+    // 兜底：把模型表里其它未列出的上游追加到最后（标识不明的归到企业站标签）
+    for (const url of getCodebuddyBaseUrlOptions()) {
+        if (ordered.some(o => o.url === url)) continue;
         const host = (() => { try { return new URL(url).host; } catch { return url; } })();
-        return `<option value="${url}">${host}</option>`;
-    }).join('\n                                ');
-    html = html.replaceAll('{{extraBaseUrlOptions}}', extraOptions);
+        const label = enterpriseSet.has(url) ? `${host}（企业站）` : host;
+        ordered.push({url, label});
+    }
+
+    const optionsHtml = ordered
+        .map(({url, label}) => `<option value="${url}">${label}</option>`)
+        .join('\n                                ');
+    html = html.replaceAll('{{baseUrlOptions}}', optionsHtml);
     res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'});
     res.end(html);
 }

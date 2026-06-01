@@ -13,10 +13,7 @@
 export function getLoginHtml(returnUrl, publicKeyPem) {
     const safeReturnUrl = encodeURIComponent(returnUrl || '/');
     // 将 PEM 中的换行转为 \n 供 JS 字符串使用
-    const escapedPublicKey = publicKeyPem
-        .replace(/\\/g, '\\\\')
-        .replace(/'/g, "\\'")
-        .replace(/\n/g, '\\n');
+    const escapedPublicKey = publicKeyPem.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
 
     return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -179,28 +176,28 @@ export function getLoginHtml(returnUrl, publicKeyPem) {
   <div class="login-container">
     <div class="login-header">
       <h1>Claude API Proxy</h1>
-      <p>Please sign in to continue</p>
+      <p>请登录进行下一步</p>
     </div>
     <div class="login-card">
       <div class="error-message" id="errorMsg"></div>
       <div class="rate-limit-message" id="rateLimitMsg"></div>
       <form id="loginForm" onsubmit="return handleLogin(event)">
         <div class="form-group">
-          <label for="username">Username</label>
-          <input type="text" id="username" class="form-input" placeholder="Enter username" autocomplete="username" required>
+          <label for="username">用户名</label>
+          <input type="text" id="username" class="form-input" placeholder="输入用户名" autocomplete="username" required>
         </div>
         <div class="form-group">
-          <label for="password">Password</label>
+          <label for="password">密码</label>
           <div class="input-wrapper">
-            <input type="password" id="password" class="form-input" placeholder="Enter password" autocomplete="current-password" required style="padding-right: 44px;">
-            <button type="button" class="toggle-password" onclick="togglePasswordVisibility()">Show</button>
+            <input type="password" id="password" class="form-input" placeholder="输入密码" autocomplete="current-password" required style="padding-right: 44px;">
+            <button type="button" class="toggle-password" onclick="togglePasswordVisibility()">显示</button>
           </div>
         </div>
-        <button type="submit" class="login-btn" id="loginBtn">Sign In</button>
+        <button type="submit" class="login-btn" id="loginBtn">登录</button>
       </form>
     </div>
     <div class="footer">
-      Secured with RSA-4096 encryption
+        <span>Powered by <a href="https://github.com/shifeng1993/claude-api-proxy" style="color: #8b949e;" target="_blank" rel="noopener">Claude API Proxy</a></span>
     </div>
   </div>
 

@@ -9,6 +9,7 @@ import {join, dirname} from 'path';
 import {fileURLToPath} from 'url';
 import logger from '../utils/logger.js';
 import {copilotStore} from '../services/copilot/copilot-store.js';
+import {getGatewayApiKeyInfo, regenerateGatewayToken} from '../services/gateway/auth.js';
 import {startDeviceAuth, pollDeviceAuth, clearAuthentication, isAuthenticated} from '../services/copilot/auth.js';
 import {shutdown as shutdownCopilotWsPool} from '../services/copilot/copilot-ws-pool.js';
 
@@ -68,7 +69,7 @@ function withTimeout(promise, timeout, message) {
  * 整体状态
  */
 function handleStatus(req, res) {
-    const apiInfo = copilotStore.getApiKeyInfo();
+    const apiInfo = getGatewayApiKeyInfo();
     const usage = copilotStore.getUsageStats();
     const tokenStatus = copilotStore.getTokenStatus();
     const userInfo = copilotStore.getUserInfo();
@@ -177,22 +178,22 @@ function handleCredentials(req, res) {
  * 获取 API Key 信息
  */
 function handleApiKey(req, res) {
-    const info = copilotStore.getApiKeyInfo();
+    const info = getGatewayApiKeyInfo();
     sendJson(res, 200, {prefix: info.prefix, apiKeyPlain: info.apiKeyPlain});
 }
 
 /**
- * 重新生成 API Key
+ * 重新生成 API Key（网关令牌，影响所有端点）
  */
 function handleRegenerateApiKey(req, res) {
     try {
-        const newKey = copilotStore.regenerateApiKey();
+        const newKey = regenerateGatewayToken();
         sendJson(res, 200, {
-            message: 'API Key 已重新生成，新 Key 仅显示一次！',
+            message: 'API Key 已重新生成，新 Key 仅显示一次！重置将同时影响所有端点（Copilot/CodeBuddy/Relay）',
             api_key: newKey
         });
     } catch (error) {
-        logger.error('Failed to regenerate Copilot API Key:', error);
+        logger.error('Failed to regenerate API Key:', error);
         sendJson(res, 500, {error: error.message});
     }
 }

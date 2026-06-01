@@ -69,6 +69,54 @@ export const CODEBUDDY_MODELS_BY_BASE_URL = {
     'https://www.codebuddy.ai': INTERNATIONAL_MODELS
 };
 
+/**
+ * 从环境变量 CODEBUDDY_ENTERPRISE_HOSTS 解析企业站上游列表
+ * 支持逗号分隔，可填写带协议的完整 URL（如 https://xxx.copilot.qq.com）
+ * 或仅域名（自动补 https://），解析失败的项会被忽略并打 warn
+ * @returns {string[]} 规范化后的 base_url 列表（已去重）
+ */
+function parseEnterpriseHostsEnv() {
+    const raw = process.env.CODEBUDDY_ENTERPRISE_HOSTS;
+    if (!raw) return [];
+    const seen = new Set();
+    const result = [];
+    for (const item of raw.split(',')) {
+        const trimmed = item.trim();
+        if (!trimmed) continue;
+        const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+        try {
+            const u = new URL(candidate);
+            // 去掉 path/query，只保留 origin
+            const normalized = `${u.protocol}//${u.host}`;
+            if (!seen.has(normalized)) {
+                seen.add(normalized);
+                result.push(normalized);
+            }
+        } catch {
+            logger.warn(`CODEBUDDY_ENTERPRISE_HOSTS 中无效的上游地址，已忽略: ${trimmed}`);
+        }
+    }
+    return result;
+}
+
+const ENTERPRISE_HOSTS_FROM_ENV = parseEnterpriseHostsEnv();
+
+// 把环境变量里的企业站合并到模型表（默认走 ENTERPRISE_MODELS 兜底，
+// OAuth 成功后 hasEnterpriseIdentity 命中也仍会走 ENTERPRISE_MODELS）
+for (const url of ENTERPRISE_HOSTS_FROM_ENV) {
+    if (!CODEBUDDY_MODELS_BY_BASE_URL[url]) {
+        CODEBUDDY_MODELS_BY_BASE_URL[url] = ENTERPRISE_MODELS;
+    }
+}
+
+/**
+ * 获取通过环境变量配置的企业站上游列表
+ * @returns {string[]}
+ */
+export function getEnterpriseBaseUrls() {
+    return [...ENTERPRISE_HOSTS_FROM_ENV];
+}
+
 export function getCodebuddyBaseUrlOptions() {
     return Object.keys(CODEBUDDY_MODELS_BY_BASE_URL);
 }

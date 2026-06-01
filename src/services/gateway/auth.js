@@ -6,7 +6,7 @@
  */
 
 import {createHash, randomBytes} from 'crypto';
-import {existsSync, mkdirSync, writeFileSync} from 'fs';
+import {existsSync, mkdirSync, writeFileSync, readFileSync} from 'fs';
 import {join} from 'path';
 import {rsaKeyManager} from './rsa-keys.js';
 import logger from '../../utils/logger.js';
@@ -35,13 +35,6 @@ function generateGatewayToken() {
  * 优先从环境变量加载，不再自动生成随机密码
  */
 function _loadAdminCredentials() {
-    // 环境变量优先
-    if (process.env.ADMIN_PASSWORD_HASH) {
-        adminUsername = process.env.ADMIN_USERNAME || 'admin';
-        adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
-        logger.info('Admin credentials loaded from ADMIN_PASSWORD_HASH env');
-        return;
-    }
     if (process.env.ADMIN_PASSWORD) {
         adminUsername = process.env.ADMIN_USERNAME || 'admin';
         adminPasswordHash = createHash('sha256').update(process.env.ADMIN_PASSWORD).digest('hex');
@@ -49,41 +42,73 @@ function _loadAdminCredentials() {
         return;
     }
 
-    logger.error('========================================');
-    logger.error('  ADMIN_PASSWORD or ADMIN_PASSWORD_HASH is required');
-    logger.error('  Please set it in your .env file');
-    logger.error('========================================');
-    throw new Error('Admin password not configured. Set ADMIN_PASSWORD or ADMIN_PASSWORD_HASH in .env');
+    throw new Error('Admin password not configured. Set ADMIN_PASSWORD in .env');
 }
 
 /**
  * 加载或生成网关令牌
+ * 支持持久化：若文件已存在且包含有效 token_hash，从文件加载
  * 不再支持环境变量配置，统一自动生成
  */
 function _loadGatewayToken() {
     const baseDir = join(process.cwd(), GATEWAY_DIR);
     const tokenFile = join(baseDir, GATEWAY_TOKEN_FILE);
 
-    // 自动生成
     if (!existsSync(baseDir)) {
         mkdirSync(baseDir, {recursive: true});
     }
 
+    // 尝试从文件加载已有令牌
+    if (existsSync(tokenFile)) {
+        try {
+            const data = JSON.parse(readFileSync(tokenFile, 'utf8'));
+            if (data.token_hash) {
+                gatewayTokenHash = data.token_hash;
+                gatewayTokenPrefix = data.token_prefix || 'sk-****';
+                gatewayToken = data.token_plain || null;
+                logger.info('Gateway token loaded from file');
+                return;
+            }
+        } catch (err) {
+            logger.error('Failed to load gateway token file:', err.message);
+        }
+    }
+
+    // 首次运行或文件损坏，生成新令牌
     gatewayToken = generateGatewayToken();
     gatewayTokenHash = createHash('sha256').update(gatewayToken).digest('hex');
     gatewayTokenPrefix = gatewayToken.substring(0, 12) + '****';
 
-    writeFileSync(tokenFile, JSON.stringify({
-        token_hash: gatewayTokenHash,
-        token_prefix: gatewayTokenPrefix,
-        created_at: new Date().toISOString()
-    }, null, 2), 'utf8');
+    _saveGatewayToken();
 
     logger.info('========================================');
     logger.info('  Gateway token auto-generated');
     logger.info(`  Token: ${gatewayToken}`);
     logger.info('  Please save this token, it will not be shown again.');
     logger.info('========================================');
+}
+
+/**
+ * 保存网关令牌到文件
+ */
+function _saveGatewayToken() {
+    const baseDir = join(process.cwd(), GATEWAY_DIR);
+    const tokenFile = join(baseDir, GATEWAY_TOKEN_FILE);
+
+    writeFileSync(
+        tokenFile,
+        JSON.stringify(
+            {
+                token_hash: gatewayTokenHash,
+                token_prefix: gatewayTokenPrefix,
+                token_plain: gatewayToken,
+                created_at: new Date().toISOString()
+            },
+            null,
+            2
+        ),
+        'utf8'
+    );
 }
 
 /**
@@ -152,7 +177,7 @@ export function verifyAdminCredentials(username, encryptedPassword) {
         return {valid: false, error: 'Invalid credentials'};
     }
 
-     let password;
+    let password;
 
     // 判断是否为 RSA 加密数据（Base64 且长度 > 512 字节，RSA-4096 加密结果约 512+ 字节）
     const isBase64 = /^[A-Za-z0-9+/]*={0,2}$/.test(encryptedPassword);
@@ -170,7 +195,7 @@ export function verifyAdminCredentials(username, encryptedPassword) {
         // 明文密码（非安全上下降级）
         password = encryptedPassword;
     }
-    
+
     // SHA256 哈希比对
     const hash = createHash('sha256').update(password).digest('hex');
     if (hash === adminPasswordHash) {
@@ -224,3 +249,31 @@ export function authenticateGatewayRequest(headers) {
     return {authenticated: true};
 }
 
+/**
+ * 获取网关令牌信息（供前端管理页面使用）
+ * @returns {{prefix: string, hash: string, key: string|null, apiKeyPlain: string|null}}
+ */
+export function getGatewayApiKeyInfo() {
+    return {
+        prefix: gatewayTokenPrefix,
+        hash: gatewayTokenHash,
+        key: gatewayToken,
+        apiKeyPlain: gatewayToken
+    };
+}
+
+/**
+ * 重新生成网关令牌
+ * 影响所有端点鉴权，调用后旧令牌立即失效
+ * @returns {string} 新生成的令牌明文
+ */
+export function regenerateGatewayToken() {
+    gatewayToken = generateGatewayToken();
+    gatewayTokenHash = createHash('sha256').update(gatewayToken).digest('hex');
+    gatewayTokenPrefix = gatewayToken.substring(0, 12) + '****';
+
+    _saveGatewayToken();
+
+    logger.info('Gateway token regenerated');
+    return gatewayToken;
+}

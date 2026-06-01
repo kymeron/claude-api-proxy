@@ -10,6 +10,7 @@ import {join, dirname} from 'path';
 import {fileURLToPath} from 'url';
 import logger from '../utils/logger.js';
 import {relayStore} from '../services/relay/relay-store.js';
+import {getGatewayApiKeyInfo, regenerateGatewayToken} from '../services/gateway/auth.js';
 import {buildUrl} from '../utils/helpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -52,7 +53,7 @@ function readRequestBody(req) {
  */
 function handleStatus(req, res) {
     const um = relayStore.getUpstreamManager();
-    const apiInfo = relayStore.getApiKeyInfo();
+    const apiInfo = getGatewayApiKeyInfo();
     const usage = relayStore.getUsageStats();
     const upstreams = um.listUpstreams();
     sendJson(res, 200, {
@@ -65,13 +66,13 @@ function handleStatus(req, res) {
 }
 
 /**
- * 重新生成 API Key
+ * 重新生成 API Key（网关令牌，影响所有端点）
  */
 function handleRegenerateApiKey(req, res) {
     try {
-        const newKey = relayStore.regenerateApiKey();
+        const newKey = regenerateGatewayToken();
         sendJson(res, 200, {
-            message: 'API Key 已重新生成，新 Key 仅显示一次！',
+            message: 'API Key 已重新生成，新 Key 仅显示一次！重置将同时影响所有端点（Copilot/CodeBuddy/Relay）',
             api_key: newKey
         });
     } catch (error) {

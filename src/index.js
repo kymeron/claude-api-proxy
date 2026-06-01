@@ -38,8 +38,6 @@ function getLocalIp() {
  * 初始化 Copilot 服务
  */
 function initializeCopilot() {
-    const apiInfo = copilotStore.getApiKeyInfo();
-
     if (isAuthenticated()) {
         (async () => {
             try {
@@ -61,8 +59,6 @@ function initializeCopilot() {
  * 初始化 CodeBuddy 服务
  */
 function initializeCodebuddy() {
-    const apiInfo = credentialStore.getApiKeyInfo();
-
     const hasCredentials = credentialStore.hasCredentials();
     if (hasCredentials) {
         const tm = credentialStore.getTokenManager();
@@ -77,7 +73,6 @@ function initializeCodebuddy() {
  * 初始化 Relay 服务
  */
 function initializeRelay() {
-    const apiInfo = relayStore.getApiKeyInfo();
 }
 
 // 初始化并启动服务

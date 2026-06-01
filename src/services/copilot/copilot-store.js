@@ -6,26 +6,19 @@
  */
 
 import {readFileSync, writeFileSync, existsSync, mkdirSync} from 'fs';
-import {randomBytes, createHash} from 'crypto';
 import {join} from 'path';
 import logger from '../../utils/logger.js';
 import {copilotState} from './state.js';
 
 const COPILOT_DIR = '.copilot';
-const API_KEY_FILE = 'api_key.json';
 const USAGE_FILE = 'usage.json';
 const PROXY_FILE = 'proxy.json';
 
 class CopilotStore {
     constructor() {
         this.baseDir = join(process.cwd(), COPILOT_DIR);
-        this.apiKeyFile = join(this.baseDir, API_KEY_FILE);
         this.usageFile = join(this.baseDir, USAGE_FILE);
         this.proxyFile = join(this.baseDir, PROXY_FILE);
-
-        this.apiKey = null;
-        this.apiKeyHash = null;
-        this.apiKeyPrefix = null;
 
         // Usage tracking
         this.apiCallCount = 0;
@@ -48,65 +41,8 @@ class CopilotStore {
 
     _init() {
         if (!existsSync(this.baseDir)) mkdirSync(this.baseDir, {recursive: true});
-        this._loadApiKey();
         this._loadUsage();
         this._loadProxy();
-    }
-
-    // ==================== API Key ====================
-
-    _loadApiKey() {
-        if (existsSync(this.apiKeyFile)) {
-            try {
-                const data = JSON.parse(readFileSync(this.apiKeyFile, 'utf8'));
-                this.apiKeyHash = data.api_key_hash;
-                this.apiKeyPrefix = data.api_key_prefix;
-                this.apiKey = data.api_key_plain || null;
-            } catch (err) {
-                logger.error('Failed to load Copilot API key file:', err.message);
-            }
-        }
-        if (!this.apiKeyHash) {
-            this._generateApiKey();
-        }
-    }
-
-    _generateApiKey() {
-        const key = 'sk-' + randomBytes(16).toString('hex');
-        this.apiKey = key;
-        this.apiKeyHash = createHash('sha256').update(key).digest('hex');
-        this.apiKeyPrefix = key.substring(0, 3) + '****' + key.substring(key.length - 4);
-        this._saveApiKey();
-        logger.info(`Generated Copilot API Key: ${key}`);
-        logger.info('Please save this key, it will not be shown again.');
-    }
-
-    _saveApiKey() {
-        writeFileSync(this.apiKeyFile, JSON.stringify({
-            api_key_hash: this.apiKeyHash,
-            api_key_prefix: this.apiKeyPrefix,
-            api_key_plain: this.apiKey,
-            created_at: new Date().toISOString()
-        }, null, 2), 'utf8');
-    }
-
-    authenticate(apiKey) {
-        const hash = createHash('sha256').update(apiKey).digest('hex');
-        return hash === this.apiKeyHash;
-    }
-
-    getApiKeyInfo() {
-        return {
-            prefix: this.apiKeyPrefix,
-            hash: this.apiKeyHash,
-            key: this.apiKey,
-            apiKeyPlain: this.apiKey
-        };
-    }
-
-    regenerateApiKey() {
-        this._generateApiKey();
-        return this.apiKey;
     }
 
     // ==================== Usage Stats ====================

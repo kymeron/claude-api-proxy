@@ -885,8 +885,7 @@
                         </div>
                         <div class="config-control">
                             <select id="baseUrlSelect" style="width: 240px; text-align: left; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9rem;">
-                                {{extraBaseUrlOptions}}
-                                <option value="https://copilot.tencent.com">copilot.tencent.com（国内站）</option>
+                                {{baseUrlOptions}}
                             </select>
                         </div>
                     </div>
@@ -913,7 +912,7 @@
                 </div>
 
                 <div class="card">
-                    <h2>API Key</h2>
+                    <h2>API Key <span style="font-size:0.7em;color:#58a6ff;font-weight:400;">所有端点共用</span></h2>
                     <div class="api-key-display">
                         <span id="apiKeyText" class="api-key-text">${apiKeyMasked}</span>
                         <div class="api-key-actions">
@@ -1441,7 +1440,7 @@
             }
 
             async function resetApiKey() {
-                if (!confirm('重置后旧 Key 将立即失效，确定？')) return;
+                if (!confirm('重置将同时影响所有端点（Copilot/CodeBuddy/Relay），旧 Key 将立即失效，确定？')) return;
                 try {
                     const response = await fetch(`/codebuddyFE/regenerate-key`, {
                         method: 'POST'
