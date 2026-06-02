@@ -469,6 +469,7 @@ const FIELD_ORDER = [
     'temperature',
     'top_p',
     'reasoning_effort',
+    'thinking',
     'stream',
     'stream_options',
     'stop'
