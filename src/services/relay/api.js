@@ -342,8 +342,8 @@ export function isWSUpstream(upstream) {
  * 从上游 base_url 推导 WS URL
  */
 export function buildWSUrl(upstream) {
-    const baseUrl = upstream.base_url.replace(/\/$/, '');
-    return baseUrl.replace('https://', 'wss://').replace('http://', 'ws://') + '/v1/responses';
+    const httpUrl = buildUrl(upstream.base_url, 'v1/responses');
+    return httpUrl.replace('https://', 'wss://').replace('http://', 'ws://');
 }
 
 /**

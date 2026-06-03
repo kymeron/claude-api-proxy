@@ -1136,7 +1136,7 @@
                     <h2>代理配置</h2>
                     <div class="proxy-input-row">
                         <input type="text" id="proxyUrl" placeholder="http://127.0.0.1:7890" value="${escapeHtml(proxyUrl)}" />
-                        <button class="btn btn-primary" onclick="saveProxy()">保存</button>
+                        <span id="proxySaveHint" style="color:#10b981;font-size:0.85rem;margin-left:8px;opacity:0;transition:opacity 0.3s">✓</span>
                     </div>
                     <label class="proxy-options-row" for="skipTlsVerify">
                         <input type="checkbox" id="skipTlsVerify" ${skipTlsVerify ? 'checked' : ''} />
@@ -1439,6 +1439,14 @@
                 return {proxy: proxyUrl, skip_tls_verify: skipTlsVerify};
             }
 
+            function showProxySaveHint() {
+                const hint = document.getElementById('proxySaveHint');
+                if (hint) {
+                    hint.style.opacity = '1';
+                    setTimeout(() => { hint.style.opacity = '0'; }, 1500);
+                }
+            }
+
             async function persistProxyConfig({showSuccess = true} = {}) {
                 const config = getProxyFormConfig();
                 const data = await fetchJsonWithTimeout(`${API_BASE}/proxy`, {
@@ -1449,6 +1457,8 @@
                 if (data.message) {
                     if (showSuccess) {
                         showToast('代理配置已保存');
+                    } else {
+                        showProxySaveHint();
                     }
                     return data;
                 }
@@ -1460,6 +1470,30 @@
                     await persistProxyConfig();
                 } catch (error) {
                     showToast('保存失败: ' + error.message, 'error');
+                }
+            }
+
+            // 代理URL自动保存（防抖800ms）
+            let proxyDebounceTimer = null;
+            function setupProxyAutoSave() {
+                const proxyUrlInput = document.getElementById('proxyUrl');
+                const skipTlsCheckbox = document.getElementById('skipTlsVerify');
+                if (proxyUrlInput) {
+                    proxyUrlInput.addEventListener('input', function() {
+                        clearTimeout(proxyDebounceTimer);
+                        proxyDebounceTimer = setTimeout(() => {
+                            persistProxyConfig({showSuccess: false}).catch(err => {
+                                showToast('保存失败: ' + err.message, 'error');
+                            });
+                        }, 800);
+                    });
+                }
+                if (skipTlsCheckbox) {
+                    skipTlsCheckbox.addEventListener('change', function() {
+                        persistProxyConfig({showSuccess: false}).catch(err => {
+                            showToast('保存失败: ' + err.message, 'error');
+                        });
+                    });
                 }
             }
 
@@ -1475,6 +1509,7 @@
             // ==================== 初始化 ====================
 
             loadStatus();
+            setupProxyAutoSave();
         </script>
     </body>
 </html>

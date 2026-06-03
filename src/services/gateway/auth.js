@@ -10,6 +10,7 @@ import {existsSync, mkdirSync, writeFileSync, readFileSync} from 'fs';
 import {join} from 'path';
 import {rsaKeyManager} from './rsa-keys.js';
 import logger from '../../utils/logger.js';
+import {broadcast} from '../../utils/cluster-broadcaster.js';
 
 const GATEWAY_DIR = '.gateway';
 const GATEWAY_TOKEN_FILE = 'gateway_token.json';
@@ -275,5 +276,42 @@ export function regenerateGatewayToken() {
     _saveGatewayToken();
 
     logger.info('Gateway token regenerated');
+
+    // 广播到其他 worker 同步令牌
+    broadcast('gateway-token-regenerated').catch(() => {});
+
     return gatewayToken;
+}
+
+/**
+ * 从文件重新加载网关令牌（多进程同步用）
+ * 仅从文件读取，不生成新令牌
+ */
+export function reloadGatewayToken() {
+    _reloadGatewayToken();
+}
+
+/**
+ * 内部实现：从文件重新加载网关令牌
+ */
+function _reloadGatewayToken() {
+    const baseDir = join(process.cwd(), GATEWAY_DIR);
+    const tokenFile = join(baseDir, GATEWAY_TOKEN_FILE);
+
+    if (!existsSync(tokenFile)) {
+        logger.warn('Gateway token file not found during reload');
+        return;
+    }
+
+    try {
+        const data = JSON.parse(readFileSync(tokenFile, 'utf8'));
+        if (data.token_hash) {
+            gatewayTokenHash = data.token_hash;
+            gatewayTokenPrefix = data.token_prefix || 'sk-****';
+            gatewayToken = data.token_plain || null;
+            logger.info('Gateway token reloaded from file (cluster sync)');
+        }
+    } catch (err) {
+        logger.error('Failed to reload gateway token:', err.message);
+    }
 }

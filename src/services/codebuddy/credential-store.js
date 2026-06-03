@@ -10,14 +10,17 @@ import {join} from 'path';
 import logger from '../../utils/logger.js';
 import {CODEBUDDY_CREDS_DIR} from './config.js';
 import {TenantTokenManager} from './tenant-token-manager.js';
+import {broadcast} from '../../utils/cluster-broadcaster.js';
 
 const USAGE_FILE = 'usage.json';
+const DAILY_USAGE_FILE = 'daily_usage.json';
 const CREDENTIALS_DIR = 'credentials';
 
 class CredentialStore {
     constructor() {
         this.baseDir = join(process.cwd(), CODEBUDDY_CREDS_DIR);
         this.usageFile = join(this.baseDir, USAGE_FILE);
+        this.dailyUsageFile = join(this.baseDir, DAILY_USAGE_FILE);
         this.credentialsDir = join(this.baseDir, CREDENTIALS_DIR);
 
         // Usage tracking
@@ -33,6 +36,11 @@ class CredentialStore {
         this.customCredit = 0;
         this.dirtyCount = 0;
         this.DIRTY_FLUSH_THRESHOLD = 10;
+
+        // Daily usage memory buffer
+        this._dailyBuffer = {};
+        this._dailyDirtyCount = 0;
+        this._DAILY_DIRTY_FLUSH_THRESHOLD = 10;
 
         // Token manager
         this.tokenManager = null;
@@ -144,6 +152,7 @@ class CredentialStore {
         if (this.dirtyCount > 0) {
             this._saveUsage();
         }
+        this._flushDailyUsage();
     }
 
     getUsageStats() {
@@ -170,52 +179,87 @@ class CredentialStore {
         this._saveUsage();
     }
 
-    // Daily usage
-    recordDailyUsage(inputTokens, outputTokens, cacheHitTokens = 0, credit = 0) {
-        const dailyDir = this.baseDir;
-        const dailyFile = join(dailyDir, 'daily_usage.json');
-        let dailyData = {};
-        if (existsSync(dailyFile)) {
-            try { dailyData = JSON.parse(readFileSync(dailyFile, 'utf8')); } catch {}
-        }
+    // ==================== Daily Usage ====================
 
+    /**
+     * 记录每日使用量（仅写内存，达到阈值或 flush 时才写入文件）
+     */
+    recordDailyUsage(inputTokens, outputTokens, cacheHitTokens = 0, credit = 0) {
         const now = new Date();
         const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         const dayKey = String(now.getDate()).padStart(2, '0');
 
-        if (!dailyData[monthKey]) {
-            dailyData[monthKey] = {};
+        if (!this._dailyBuffer[monthKey]) this._dailyBuffer[monthKey] = {};
+        if (!this._dailyBuffer[monthKey][dayKey]) {
+            this._dailyBuffer[monthKey][dayKey] = {api_calls: 0, input_tokens: 0, output_tokens: 0, cache_hit_tokens: 0, credit: 0};
         }
-        if (!dailyData[monthKey][dayKey]) {
-            dailyData[monthKey][dayKey] = {api_calls: 0, input_tokens: 0, output_tokens: 0, cache_hit_tokens: 0, credit: 0};
+        this._dailyBuffer[monthKey][dayKey].api_calls++;
+        this._dailyBuffer[monthKey][dayKey].input_tokens += inputTokens || 0;
+        this._dailyBuffer[monthKey][dayKey].output_tokens += outputTokens || 0;
+        this._dailyBuffer[monthKey][dayKey].cache_hit_tokens += Math.min(cacheHitTokens || 0, inputTokens || 0);
+        this._dailyBuffer[monthKey][dayKey].credit = (this._dailyBuffer[monthKey][dayKey].credit || 0) + (credit || 0);
+
+        this._dailyDirtyCount++;
+        if (this._dailyDirtyCount >= this._DAILY_DIRTY_FLUSH_THRESHOLD) {
+            this._flushDailyUsage();
         }
+    }
 
-        dailyData[monthKey][dayKey].api_calls++;
-        dailyData[monthKey][dayKey].input_tokens += inputTokens || 0;
-        dailyData[monthKey][dayKey].output_tokens += outputTokens || 0;
-        dailyData[monthKey][dayKey].cache_hit_tokens = (dailyData[monthKey][dayKey].cache_hit_tokens || 0) + Math.min(cacheHitTokens || 0, inputTokens || 0);
-        dailyData[monthKey][dayKey].credit = (dailyData[monthKey][dayKey].credit || 0) + (credit || 0);
+    /**
+     * 将内存中的 daily 增量合并写入文件
+     */
+    _flushDailyUsage() {
+        if (this._dailyDirtyCount === 0) return;
 
-        // Cleanup old months (> 3 months ago)
-        const cutoff = new Date(now.getFullYear(), now.getMonth() - 3, 1);
-        const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
-        for (const key of Object.keys(dailyData)) {
-            if (key < cutoffKey) {
-                delete dailyData[key];
+        try {
+            let dailyData = {};
+            if (existsSync(this.dailyUsageFile)) {
+                try { dailyData = JSON.parse(readFileSync(this.dailyUsageFile, 'utf8')); } catch {}
             }
-        }
 
-        writeFileSync(dailyFile, JSON.stringify(dailyData, null, 2), 'utf8');
+            for (const [monthKey, monthData] of Object.entries(this._dailyBuffer)) {
+                if (!dailyData[monthKey]) dailyData[monthKey] = {};
+                for (const [dayKey, dayData] of Object.entries(monthData)) {
+                    if (!dailyData[monthKey][dayKey]) {
+                        dailyData[monthKey][dayKey] = {api_calls: 0, input_tokens: 0, output_tokens: 0, cache_hit_tokens: 0, credit: 0};
+                    }
+                    dailyData[monthKey][dayKey].api_calls += dayData.api_calls || 0;
+                    dailyData[monthKey][dayKey].input_tokens += dayData.input_tokens || 0;
+                    dailyData[monthKey][dayKey].output_tokens += dayData.output_tokens || 0;
+                    dailyData[monthKey][dayKey].cache_hit_tokens += dayData.cache_hit_tokens || 0;
+                    dailyData[monthKey][dayKey].credit = (dailyData[monthKey][dayKey].credit || 0) + (dayData.credit || 0);
+                }
+            }
+
+            // Cleanup old months
+            const now = new Date();
+            const cutoff = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+            const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
+            for (const key of Object.keys(dailyData)) {
+                if (key < cutoffKey) delete dailyData[key];
+            }
+
+            writeFileSync(this.dailyUsageFile, JSON.stringify(dailyData, null, 2), 'utf8');
+            this._dailyBuffer = {};
+            this._dailyDirtyCount = 0;
+        } catch (err) {
+            logger.error(`Failed to flush daily usage: ${err.message}`);
+        }
+    }
+
+    /**
+     * 获取当前 worker 的每日使用内存增量（供 /internal/stats/daily 端点使用）
+     */
+    getDailyUsageBuffer() {
+        return this._dailyBuffer;
     }
 
     getDailyUsage(month) {
-        const dailyFile = join(this.baseDir, 'daily_usage.json');
-        if (!existsSync(dailyFile)) return {};
+        this._flushDailyUsage();
+        if (!existsSync(this.dailyUsageFile)) return {};
         try {
-            const dailyData = JSON.parse(readFileSync(dailyFile, 'utf8'));
-            if (month) {
-                return dailyData[month] || {};
-            }
+            const dailyData = JSON.parse(readFileSync(this.dailyUsageFile, 'utf8'));
+            if (month) return dailyData[month] || {};
             return dailyData;
         } catch {
             return {};
@@ -223,15 +267,23 @@ class CredentialStore {
     }
 
     getAvailableMonths() {
-        const dailyFile = join(this.baseDir, 'daily_usage.json');
-        if (!existsSync(dailyFile)) return [];
+        this._flushDailyUsage();
+        if (!existsSync(this.dailyUsageFile)) return [];
         try {
-            const dailyData = JSON.parse(readFileSync(dailyFile, 'utf8'));
-            const months = Object.keys(dailyData).sort().reverse();
-            return months.slice(0, 3);
+            const dailyData = JSON.parse(readFileSync(this.dailyUsageFile, 'utf8'));
+            return Object.keys(dailyData).sort().reverse().slice(0, 3);
         } catch {
             return [];
         }
+    }
+
+    // ==================== Multi-process Support ====================
+
+    /**
+     * 重新加载配置（多进程同步用）
+     */
+    reload() {
+        this.tokenManager.reload();
     }
 }
 

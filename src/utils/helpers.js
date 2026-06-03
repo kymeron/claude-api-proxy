@@ -33,7 +33,9 @@ export function buildUrl(baseUrl, endpoint) {
         finalUrl += '/';
     }
 
-    return (finalUrl + finalEndpoint).replace(/(\/v1)+(?=\/)/g, '/v1');
+    // 去重：base_url 已含 /vN，endpoint 又带了 /vM，保留 base_url 的版本号
+    // e.g. /api/v3/v1/chat → /api/v3/chat, /v1/v1/chat → /v1/chat
+    return (finalUrl + finalEndpoint).replace(/\/(v\d+)\/v\d+\//g, '/$1/');
 }
 
 /**

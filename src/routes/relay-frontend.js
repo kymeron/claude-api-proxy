@@ -12,6 +12,7 @@ import logger from '../utils/logger.js';
 import {relayStore} from '../services/relay/relay-store.js';
 import {getGatewayApiKeyInfo, regenerateGatewayToken} from '../services/gateway/auth.js';
 import {buildUrl} from '../utils/helpers.js';
+import {gatherAllStats, broadcast} from '../utils/cluster-broadcaster.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -51,10 +52,10 @@ function readRequestBody(req) {
 /**
  * 获取状态信息
  */
-function handleStatus(req, res) {
+async function handleStatus(req, res) {
     const um = relayStore.getUpstreamManager();
     const apiInfo = getGatewayApiKeyInfo();
-    const usage = relayStore.getUsageStats();
+    const usage = await gatherAllStats('relay');
     const upstreams = um.listUpstreams();
     sendJson(res, 200, {
         upstreamCount: upstreams.length,
@@ -152,46 +153,6 @@ function handleDeleteUpstream(req, res, index) {
         }
     } catch (error) {
         logger.error('Relay 删除上游配置失败:', error);
-        sendJson(res, 500, {error: error.message});
-    }
-}
-
-/**
- * 上移上游（提高优先级）
- */
-async function handleMoveUpUpstream(req, res) {
-    try {
-        const manager = relayStore.getUpstreamManager();
-        const {index} = await readRequestBody(req);
-        if (index === undefined || index === null) return sendJson(res, 400, {error: 'index is required'});
-        const success = manager.moveUp(index);
-        if (success) {
-            sendJson(res, 200, {message: '上游已上移'});
-        } else {
-            sendJson(res, 400, {error: '无法上移，已在最顶部'});
-        }
-    } catch (error) {
-        logger.error('Relay 上移上游失败:', error);
-        sendJson(res, 500, {error: error.message});
-    }
-}
-
-/**
- * 下移上游（降低优先级）
- */
-async function handleMoveDownUpstream(req, res) {
-    try {
-        const manager = relayStore.getUpstreamManager();
-        const {index} = await readRequestBody(req);
-        if (index === undefined || index === null) return sendJson(res, 400, {error: 'index is required'});
-        const success = manager.moveDown(index);
-        if (success) {
-            sendJson(res, 200, {message: '上游已下移'});
-        } else {
-            sendJson(res, 400, {error: '无法下移，已在最底部'});
-        }
-    } catch (error) {
-        logger.error('Relay 下移上游失败:', error);
         sendJson(res, 500, {error: error.message});
     }
 }
@@ -342,16 +303,6 @@ export async function routeRelayFrontend(req, res) {
         }
     }
 
-    // 上移上游
-    if (pathname === '/relayFE/upstreams/move-up' && method === 'POST') {
-        return handleMoveUpUpstream(req, res);
-    }
-
-    // 下移上游
-    if (pathname === '/relayFE/upstreams/move-down' && method === 'POST') {
-        return handleMoveDownUpstream(req, res);
-    }
-
     // 测试上游连通性
     if (pathname === '/relayFE/upstreams/test' && method === 'POST') {
         return handleTestUpstream(req, res);
@@ -371,14 +322,18 @@ export async function routeRelayFrontend(req, res) {
 
     // 刷新统计数据
     if (pathname === '/relayFE/stats/refresh' && method === 'POST') {
+        await broadcast('stats-flush');
         relayStore.flushApiCallCounts();
-        return sendJson(res, 200, {message: '数据已刷新'});
+        const usage = await gatherAllStats('relay');
+        return sendJson(res, 200, {message: '数据已刷新', usage});
     }
 
     // 重置自定义统计数据
     if (pathname === '/relayFE/stats/custom-reset' && method === 'POST') {
         relayStore.resetCustomStats();
-        return sendJson(res, 200, {message: '自定义统计数据已重置'});
+        await broadcast('stats-reset', {service: 'relay'});
+        const usage = await gatherAllStats('relay');
+        return sendJson(res, 200, {message: '自定义统计数据已重置', usage});
     }
 
     // 获取每日使用数据
@@ -394,7 +349,7 @@ export async function routeRelayFrontend(req, res) {
 
     // 获取使用量统计
     if (pathname === '/relayFE/stats' && method === 'GET') {
-        const usage = relayStore.getUsageStats();
+        const usage = await gatherAllStats('relay');
         return sendJson(res, 200, usage);
     }
 

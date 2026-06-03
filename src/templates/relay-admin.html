@@ -336,14 +336,6 @@
                 transition: all 0.2s;
                 cursor: default;
             }
-            .upstream-item.dragging {
-                opacity: 0.4;
-            }
-            .upstream-item.drag-over {
-                border-top: 3px solid #667eea;
-                transform: scale(1.01);
-                box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
-            }
             .upstream-item.active-upstream {
                 border-left-color: #10b981;
                 background: #f0fdf4;
@@ -356,16 +348,6 @@
                 user-select: none;
                 flex-shrink: 0;
             }
-            .drag-handle:active {
-                cursor: grabbing;
-            }
-            .upstream-info h4 {
-                color: #1f2937;
-                margin-bottom: 2px;
-                font-size: 0.95rem;
-                display: flex;
-                align-items: center;
-                gap: 8px;
             }
             .upstream-info p {
                 color: #6b7280;
@@ -1155,13 +1137,7 @@
 
                             return `
                         <li class="upstream-item ${itemClass}"
-                            draggable="true"
-                            data-index="${idx}"
-                            ondragstart="onDragStart(event, ${idx})"
-                            ondragover="onDragOver(event, ${idx})"
-                            ondrop="onDrop(event, ${idx})"
-                            ondragend="onDragEnd(event)">
-                            <div class="drag-handle" draggable="false">⠿</div>
+                            data-index="${idx}">
                             <div class="upstream-info" style="flex:1">
                                 <h4>${up.name || '未命名'} ${activeTag} ${wsTag}</h4>
                                 <p>${up.base_url || ''}</p>
@@ -1184,31 +1160,6 @@
             }
 
             // ========== 拖拽排序 ==========
-            let dragSourceIndex = null;
-
-            function onDragStart(event, index) {
-                dragSourceIndex = index;
-                event.dataTransfer.effectAllowed = 'move';
-                event.target.classList.add('dragging');
-            }
-
-            function onDragOver(event, index) {
-                event.preventDefault();
-                event.dataTransfer.dropEffect = 'move';
-                // 移除所有 drag-over
-                document.querySelectorAll('.upstream-item').forEach((el) => el.classList.remove('drag-over'));
-                if (dragSourceIndex !== null && dragSourceIndex !== index) {
-                    event.currentTarget.classList.add('drag-over');
-                }
-            }
-
-            function onDragEnd(event) {
-                document.querySelectorAll('.upstream-item').forEach((el) => {
-                    el.classList.remove('dragging', 'drag-over');
-                });
-                dragSourceIndex = null;
-            }
-
             function toggleUpstreamKeyVisibility(el, fullKey) {
                 if (el.dataset.visible === 'true') {
                     el.textContent = 'API Key: ' + maskApiKey(fullKey);
@@ -1355,34 +1306,6 @@
                 } catch (error) {
                     showToast('删除失败: ' + error.message, 'error');
                 }
-            }
-
-            async function onDrop(event, targetIndex) {
-                event.preventDefault();
-                event.currentTarget.classList.remove('drag-over');
-                if (dragSourceIndex === null || dragSourceIndex === targetIndex) return;
-                const diff = dragSourceIndex - targetIndex;
-                const absDiff = Math.abs(diff);
-                const moveUrl = diff > 0 ? 'move-up' : 'move-down';
-                for (let i = 0; i < absDiff; i++) {
-                    const idx = diff > 0 ? dragSourceIndex - i : dragSourceIndex;
-                    try {
-                        const res = await fetch(`/relayFE/upstreams/${moveUrl}`, {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({index: idx})
-                        });
-                        if (!res.ok) {
-                            const data = await res.json().catch(() => ({}));
-                            showToast('排序失败: ' + (data.error || `HTTP ${res.status}`), 'error');
-                            break;
-                        }
-                    } catch (e) {
-                        showToast('排序失败: ' + e.message, 'error');
-                        break;
-                    }
-                }
-                loadUpstreams();
             }
 
             async function setActiveUpstream(index) {

@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import {fileURLToPath} from 'url';
 import logger from '../../utils/logger.js';
+import {broadcast} from '../../utils/cluster-broadcaster.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -121,6 +122,7 @@ class CopilotState {
 
     /**
      * 清除状态
+     * 多进程兼容：写空内容而非删除文件，确保其他 worker 能检测到变更
      */
     clearState() {
         this.githubToken = null;
@@ -130,13 +132,25 @@ class CopilotState {
         this.models = null;
 
         try {
-            if (fs.existsSync(GITHUB_TOKEN_FILE)) fs.unlinkSync(GITHUB_TOKEN_FILE);
-            if (fs.existsSync(COPILOT_TOKEN_FILE)) fs.unlinkSync(COPILOT_TOKEN_FILE);
-            if (fs.existsSync(USER_INFO_FILE)) fs.unlinkSync(USER_INFO_FILE);
+            ensureStateDir();
+            // 写空内容而非删除文件，以便集群广播时其他 worker 可以 reload
+            fs.writeFileSync(GITHUB_TOKEN_FILE, '', 'utf8');
+            fs.writeFileSync(COPILOT_TOKEN_FILE, '{}', 'utf8');
+            fs.writeFileSync(USER_INFO_FILE, '{}', 'utf8');
             logger.info('Cleared all state files');
         } catch (error) {
             logger.error('Failed to clear state:', error);
         }
+
+        // 广播到其他 worker 同步状态
+        broadcast('copilot-auth-cleared').catch(() => {});
+    }
+
+    /**
+     * 从磁盘重新加载状态（多进程同步用）
+     */
+    reload() {
+        this.loadState();
     }
 }
 

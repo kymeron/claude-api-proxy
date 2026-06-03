@@ -22,7 +22,11 @@ import {
     requireAdminAuth,
     requireGatewayAuth
 } from './services/gateway/admin-auth.js';
-import {isGatewayAuthEnabled, verifyGatewayToken} from './services/gateway/auth.js';
+import {isGatewayAuthEnabled, verifyGatewayToken, reloadGatewayToken} from './services/gateway/auth.js';
+import {copilotState} from './services/copilot/state.js';
+import {copilotStore} from './services/copilot/copilot-store.js';
+import {credentialStore} from './services/codebuddy/credential-store.js';
+import {relayStore} from './services/relay/relay-store.js';
 
 function sendJson(res, status, data) {
     res.writeHead(status, {'Content-Type': 'application/json'});
@@ -115,6 +119,66 @@ function requireGatewayAuthWS(req) {
     }
 
     return false;
+}
+
+/**
+ * 处理从其他 worker 接收的广播事件
+ * @param {object} data - {type: string, sourcePort: number, ...}
+ */
+function handleBroadcastEvent(data) {
+    const {type} = data;
+    logger.debug(`Broadcast received: ${type} from worker port ${data.sourcePort}`);
+
+    switch (type) {
+        // Gateway
+        case 'gateway-token-regenerated':
+            reloadGatewayToken();
+            break;
+
+        // Copilot
+        case 'copilot-auth-cleared':
+            copilotState.reload();
+            break;
+        case 'copilot-proxy-updated':
+            copilotStore.reload();
+            break;
+
+        // CodeBuddy
+        case 'codebuddy-credentials-changed':
+            credentialStore.reload();
+            break;
+        case 'codebuddy-state-changed':
+            credentialStore.getTokenManager().loadState();
+            break;
+
+        // Relay
+        case 'relay-upstreams-changed':
+            relayStore.getUpstreamManager()._loadUpstreams();
+            break;
+        case 'relay-settings-changed':
+            relayStore.getUpstreamManager()._loadSettings();
+            break;
+
+        // Stats
+        case 'stats-flush':
+            copilotStore.flushApiCallCounts();
+            credentialStore.flushApiCallCounts();
+            relayStore.flushApiCallCounts();
+            break;
+        case 'stats-reset':
+            if (data.service === 'copilot') copilotStore.resetCustomStats();
+            else if (data.service === 'codebuddy') credentialStore.resetCustomStats();
+            else if (data.service === 'relay') relayStore.resetCustomStats();
+            else {
+                copilotStore.resetCustomStats();
+                credentialStore.resetCustomStats();
+                relayStore.resetCustomStats();
+            }
+            break;
+
+        default:
+            logger.warn(`Unknown broadcast event type: ${type}`);
+    }
 }
 
 export function createServer() {
@@ -217,6 +281,98 @@ export function createServer() {
                 sendError(res, 500, 'Internal server error');
                 return;
             }
+        }
+
+        // ============ 内部通信端点（集群广播 + 统计聚合） ============
+
+        if (req.url.startsWith('/internal/')) {
+            // 仅允许本地访问
+            const remoteAddr = req.socket.remoteAddress || '';
+            if (!remoteAddr.includes('127.0.0.1') && !remoteAddr.includes('::1') && remoteAddr !== '::ffff:127.0.0.1') {
+                res.writeHead(403, {'Content-Type': 'application/json'});
+                res.end(JSON.stringify({error: 'Forbidden'}));
+                return;
+            }
+
+            // POST /internal/broadcast — 接收广播事件
+            if (req.method === 'POST' && req.url === '/internal/broadcast') {
+                try {
+                    const chunks = [];
+                    req.on('data', chunk => chunks.push(chunk));
+                    req.on('end', () => {
+                        try {
+                            const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+                            handleBroadcastEvent(data);
+                            res.writeHead(200, {'Content-Type': 'application/json'});
+                            res.end(JSON.stringify({ok: true}));
+                        } catch (err) {
+                            res.writeHead(400, {'Content-Type': 'application/json'});
+                            res.end(JSON.stringify({error: err.message}));
+                        }
+                    });
+                    return;
+                } catch (err) {
+                    res.writeHead(500, {'Content-Type': 'application/json'});
+                    res.end(JSON.stringify({error: err.message}));
+                    return;
+                }
+            }
+
+            // GET /internal/stats/{service} — 返回当前 worker 的统计数据
+            const statsMatch = req.url.match(/^\/internal\/stats\/([a-z]+)$/);
+            if (req.method === 'GET' && statsMatch) {
+                const service = statsMatch[1];
+                let stats = null;
+                switch (service) {
+                    case 'copilot':
+                        stats = copilotStore.getUsageStats();
+                        break;
+                    case 'codebuddy':
+                        stats = credentialStore.getUsageStats();
+                        break;
+                    case 'relay':
+                        stats = relayStore.getUsageStats();
+                        break;
+                    default:
+                        res.writeHead(404, {'Content-Type': 'application/json'});
+                        res.end(JSON.stringify({error: 'Unknown service'}));
+                        return;
+                }
+                res.writeHead(200, {'Content-Type': 'application/json'});
+                res.end(JSON.stringify(stats));
+                return;
+            }
+
+            // GET /internal/stats/daily/{service}?month=YYYY-MM — 返回当前 worker 的每日统计
+            const dailyMatch = req.url.match(/^\/internal\/stats\/daily\/([a-z]+)$/);
+            if (req.method === 'GET' && dailyMatch) {
+                const service = dailyMatch[1];
+                const urlObj = new URL(req.url, `http://${req.headers.host}`);
+                const month = urlObj.searchParams.get('month') || '';
+                let dailyData = null;
+                switch (service) {
+                    case 'copilot':
+                        dailyData = copilotStore.getDailyUsageBuffer();
+                        break;
+                    case 'codebuddy':
+                        dailyData = credentialStore.getDailyUsageBuffer();
+                        break;
+                    case 'relay':
+                        dailyData = relayStore.getDailyUsageBuffer();
+                        break;
+                    default:
+                        res.writeHead(404, {'Content-Type': 'application/json'});
+                        res.end(JSON.stringify({error: 'Unknown service'}));
+                        return;
+                }
+                res.writeHead(200, {'Content-Type': 'application/json'});
+                res.end(JSON.stringify(dailyData));
+                return;
+            }
+
+            res.writeHead(404, {'Content-Type': 'application/json'});
+            res.end(JSON.stringify({error: 'Not found'}));
+            return;
         }
 
         // ============ API 路由（需要网关令牌认证） ============

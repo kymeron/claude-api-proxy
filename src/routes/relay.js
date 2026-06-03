@@ -1186,18 +1186,25 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, signal
             const eventStream = wsResult.eventStream;
             const conn = wsResult.conn;
 
+            // 注意：必须用 finally 释放连接
+            // 否则 WS server 在收到 response.completed 后 break，会触发 generator return()，
+            // try 块尾部的 releaseWSConnection 永远到不了，连接将一直 busy 烂在池里
+            let connHandled = false;
             try {
                 for await (const event of eventStream) {
                     if (signal?.aborted) {
                         discardWSConnection(conn);
+                        connHandled = true;
                         return;
                     }
                     yield event;
                 }
-                releaseWSConnection(conn);
             } catch (err) {
                 discardWSConnection(conn);
+                connHandled = true;
                 throw err;
+            } finally {
+                if (!connHandled) releaseWSConnection(conn);
             }
             return;
         } catch (wsError) {

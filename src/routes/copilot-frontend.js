@@ -12,6 +12,7 @@ import {copilotStore} from '../services/copilot/copilot-store.js';
 import {getGatewayApiKeyInfo, regenerateGatewayToken} from '../services/gateway/auth.js';
 import {startDeviceAuth, pollDeviceAuth, clearAuthentication, isAuthenticated} from '../services/copilot/auth.js';
 import {shutdown as shutdownCopilotWsPool} from '../services/copilot/copilot-ws-pool.js';
+import {gatherAllStats, broadcast} from '../utils/cluster-broadcaster.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -68,9 +69,9 @@ function withTimeout(promise, timeout, message) {
 /**
  * 整体状态
  */
-function handleStatus(req, res) {
+async function handleStatus(req, res) {
     const apiInfo = getGatewayApiKeyInfo();
-    const usage = copilotStore.getUsageStats();
+    const usage = await gatherAllStats('copilot');
     const tokenStatus = copilotStore.getTokenStatus();
     const userInfo = copilotStore.getUserInfo();
     const proxyConfig = copilotStore.getProxyConfig();
@@ -284,15 +285,20 @@ export async function routeCopilotFrontend(req, res) {
     }
 
     if (pathname === '/copilotFE/stats' && method === 'GET') {
-        return sendJson(res, 200, copilotStore.getUsageStats());
+        const usage = await gatherAllStats('copilot');
+        return sendJson(res, 200, usage);
     }
     if (pathname === '/copilotFE/stats/refresh' && method === 'POST') {
+        await broadcast('stats-flush');
         copilotStore.flushApiCallCounts();
-        return sendJson(res, 200, {message: '数据已刷新'});
+        const usage = await gatherAllStats('copilot');
+        return sendJson(res, 200, {message: '数据已刷新', usage});
     }
     if (pathname === '/copilotFE/stats/custom-reset' && method === 'POST') {
         copilotStore.resetCustomStats();
-        return sendJson(res, 200, {message: '自定义统计数据已重置'});
+        await broadcast('stats-reset', {service: 'copilot'});
+        const usage = await gatherAllStats('copilot');
+        return sendJson(res, 200, {message: '自定义统计数据已重置', usage});
     }
     if (pathname === '/copilotFE/stats/daily' && method === 'GET') {
         return handleDailyStats(req, res);

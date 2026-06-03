@@ -8,6 +8,7 @@ import {readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkS
 import {join, basename} from 'path';
 import logger from '../../utils/logger.js';
 import {DEFAULT_BASE_URL, getCodebuddyBaseUrl, BLOCKED_DOMAINS} from './config.js';
+import {broadcast} from '../../utils/cluster-broadcaster.js';
 
 class TenantTokenManager {
     /**
@@ -407,6 +408,7 @@ class TenantTokenManager {
                     logger.debug(`Updated existing credential for user: ${userId}`);
                     this.loadAllTokens();
                     this.autoSelectByUserId(userId);
+                    broadcast('codebuddy-credentials-changed').catch(() => {});
                     return true;
                 } catch (error) {
                     logger.error(`Failed to update credential: ${error.message}`);
@@ -435,6 +437,7 @@ class TenantTokenManager {
             logger.debug(`Added new tenant credential: ${filename}`);
             this.loadAllTokens();
             this.autoSelectByUserId(userId);
+            broadcast('codebuddy-credentials-changed').catch(() => {});
             return true;
         } catch (error) {
             logger.error(`Failed to save credential: ${error.message}`);
@@ -489,6 +492,7 @@ class TenantTokenManager {
                 .map(i => i > index ? i - 1 : i);
 
             this.loadAllTokens();
+            broadcast('codebuddy-credentials-changed').catch(() => {});
             return true;
         } catch (error) {
             logger.error(`Failed to delete credential at index ${index}: ${error.message}`);
@@ -510,6 +514,7 @@ class TenantTokenManager {
             const filename = basename(this.credentials[index].filePath);
             logger.debug(`Manually selected credential: ${filename} (index: ${index})`);
             this.saveState();
+            broadcast('codebuddy-state-changed').catch(() => {});
             return true;
         } else {
             logger.error(`Invalid credential index: ${index}`);
@@ -592,6 +597,7 @@ class TenantTokenManager {
         }
 
         this.saveState();
+        broadcast('codebuddy-state-changed').catch(() => {});
         return {disabled: this.disabledIndexes.includes(index)};
     }
 
@@ -717,6 +723,14 @@ class TenantTokenManager {
      */
     hasCredentials() {
         return this.credentials.length > 0;
+    }
+
+    /**
+     * 从磁盘重新加载所有凭证和状态（多进程同步用）
+     */
+    reload() {
+        this.loadAllTokens();
+        this.loadState();
     }
 }
 

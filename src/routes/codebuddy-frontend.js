@@ -13,6 +13,7 @@ import logger from '../utils/logger.js';
 import {credentialStore} from '../services/codebuddy/credential-store.js';
 import {getGatewayApiKeyInfo, regenerateGatewayToken} from '../services/gateway/auth.js';
 import {getCodebuddyBaseUrl, getCodebuddyBaseUrlOptions, getEnterpriseBaseUrls, BLOCKED_DOMAINS, isPersonalHost} from '../services/codebuddy/config.js';
+import {gatherAllStats, broadcast} from '../utils/cluster-broadcaster.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -119,10 +120,10 @@ function sendJson(res, status, data) {
 /**
  * 获取状态信息（替代 handleMyTenant）
  */
-function handleStatus(req, res) {
+async function handleStatus(req, res) {
     const tm = credentialStore.getTokenManager();
     const apiInfo = getGatewayApiKeyInfo();
-    const usage = credentialStore.getUsageStats();
+    const usage = await gatherAllStats('codebuddy');
     sendJson(res, 200, {
         hasCredentials: tm.hasCredentials(),
         credentialCount: tm.credentials?.length || 0,
@@ -606,14 +607,18 @@ export async function routeCodebuddyFrontend(req, res) {
 
     // 刷新统计数据
     if (pathname === '/codebuddyFE/stats/refresh' && method === 'POST') {
+        await broadcast('stats-flush');
         credentialStore.flushApiCallCounts();
-        return sendJson(res, 200, {message: '数据已刷新'});
+        const usage = await gatherAllStats('codebuddy');
+        return sendJson(res, 200, {message: '数据已刷新', usage});
     }
 
     // 重置自定义统计数据
     if (pathname === '/codebuddyFE/stats/custom-reset' && method === 'POST') {
         credentialStore.resetCustomStats();
-        return sendJson(res, 200, {message: '自定义统计数据已重置'});
+        await broadcast('stats-reset', {service: 'codebuddy'});
+        const usage = await gatherAllStats('codebuddy');
+        return sendJson(res, 200, {message: '自定义统计数据已重置', usage});
     }
 
     // 获取每日使用数据

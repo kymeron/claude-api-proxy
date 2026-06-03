@@ -7,10 +7,15 @@
 
 import {readFileSync, writeFileSync, existsSync, mkdirSync} from 'fs';
 import {join} from 'path';
-import {request, readBody} from '../../utils/http-client.js';
-import {buildProtocolAwareUrl, getProxyAgent} from './api.js';
-import {buildUrl} from '../../utils/helpers.js';
+import {
+    isWSUpstream,
+    createChatCompletions, createResponses, createResponsesWS,
+    createAnthropicMessages,
+    releaseWSConnection, discardWSConnection,
+    RelayUpstreamError
+} from './api.js';
 import logger from '../../utils/logger.js';
+import {broadcast} from '../../utils/cluster-broadcaster.js';
 
 const UPSTREAMS_FILE = 'upstreams.json';
 const SETTINGS_FILE = 'settings.json';
@@ -156,6 +161,7 @@ export class UpstreamManager {
         this.rateLimitedIndexes.clear();
         logger.info(`Relay: 活跃上游已切换为「${this.upstreams[index].name}」(index: ${index})`);
         this._saveSettings();
+        broadcast('relay-settings-changed').catch(() => {});
         return true;
     }
 
@@ -289,6 +295,7 @@ export class UpstreamManager {
         }
         this.upstreams.push(upstream);
         this._saveUpstreams();
+        broadcast('relay-upstreams-changed').catch(() => {});
         return {index: this.upstreams.length - 1, ...upstream};
     }
 
@@ -305,6 +312,7 @@ export class UpstreamManager {
         if (data.protocol !== undefined) upstream.protocol = data.protocol;
         if (data.ws !== undefined) upstream.ws = data.ws;
         this._saveUpstreams();
+        broadcast('relay-upstreams-changed').catch(() => {});
         return {index, ...upstream};
     }
 
@@ -319,70 +327,8 @@ export class UpstreamManager {
         }
         this._saveUpstreams();
         this._saveSettings();
+        broadcast('relay-upstreams-changed').catch(() => {});
         return true;
-    }
-
-    /**
-     * 上移上游（提高优先级）
-     */
-    moveUp(index) {
-        if (index <= 0 || index >= this.upstreams.length) return false;
-        [this.upstreams[index - 1], this.upstreams[index]] = [this.upstreams[index], this.upstreams[index - 1]];
-        // 活跃上游跟随移动
-        if (this._activeIndex === index) {
-            this._activeIndex = index - 1;
-        } else if (this._activeIndex === index - 1) {
-            this._activeIndex = index;
-        }
-        this._saveUpstreams();
-        this._saveSettings();
-        return true;
-    }
-
-    /**
-     * 下移上游（降低优先级）
-     */
-    moveDown(index) {
-        if (index < 0 || index >= this.upstreams.length - 1) return false;
-        [this.upstreams[index], this.upstreams[index + 1]] = [this.upstreams[index + 1], this.upstreams[index]];
-        // 活跃上游跟随移动
-        if (this._activeIndex === index) {
-            this._activeIndex = index + 1;
-        } else if (this._activeIndex === index + 1) {
-            this._activeIndex = index;
-        }
-        this._saveUpstreams();
-        this._saveSettings();
-        return true;
-    }
-
-    /**
-     * 从上游获取模型列表
-     */
-    async _fetchFromModelsEndpoint(upstream) {
-        const url = buildUrl(upstream.base_url, 'v1/models');
-        const headers = {
-            Authorization: `Bearer ${upstream.api_key}`,
-            Accept: 'application/json',
-            'User-Agent': 'Relay/1.0'
-        };
-        const options = {method: 'GET', headers, timeout: 15000};
-
-        const proxyAgent = getProxyAgent(upstream.proxy);
-        if (proxyAgent) {
-            options.agent = proxyAgent;
-        }
-
-        try {
-            const response = await request(url, options);
-            const body = await readBody(response.body);
-            if (response.status >= 200 && response.status < 300) {
-                return JSON.parse(body);
-            }
-            return {_error: `HTTP ${response.status}: ${body.slice(0, 300)}`};
-        } catch (err) {
-            return {_error: err.message};
-        }
     }
 
     async testUpstream(index) {
@@ -391,7 +337,8 @@ export class UpstreamManager {
         }
         const upstream = this.upstreams[index];
 
-        // 优先用 model_map 的第一个 value，其次 models[0]，否则回退到 models 接口获取
+        // 优先用 model_map 的第一个 value，其次 models[0]
+        // 不调用上游 /v1/models 接口（部分厂商该接口计费或不开放）
         let model = null;
         if (upstream.model_map && typeof upstream.model_map === 'object') {
             const values = Object.values(upstream.model_map);
@@ -401,120 +348,136 @@ export class UpstreamManager {
             model = upstream.models?.[0];
         }
         if (!model) {
-            const modelsResult = await this._fetchFromModelsEndpoint(upstream);
-            if (modelsResult._error) {
-                return {success: false, message: modelsResult._error};
-            }
-            model = modelsResult.data?.[0]?.id;
-            if (!model) {
-                return {success: false, message: '未找到可用模型'};
-            }
+            return {success: false, message: '未配置模型：请在 model_map 或 models 中填写至少一个模型名'};
         }
 
         const protocol = upstream.protocol || 'openai';
+        const wsMode = protocol === 'responses' && isWSUpstream(upstream);
 
         try {
-            let response;
             if (protocol === 'anthropic') {
-                response = await this._testAnthropic(upstream, model);
+                await this._testAnthropic(upstream, model);
             } else if (protocol === 'responses') {
-                response = await this._testResponses(upstream, model);
+                await this._testResponses(upstream, model);
             } else {
                 // 默认 openai 协议
-                response = await this._testOpenAI(upstream, model);
+                await this._testOpenAI(upstream, model);
             }
 
-            if (response.status >= 200 && response.status < 300) {
-                return {success: true, message: `连接成功 (protocol: ${protocol}, model: ${model})`};
-            }
-            const body = await readBody(response.body);
-            const errorMsg = body.length > 300 ? body.substring(0, 300) + '...' : body;
-            return {success: false, message: `HTTP ${response.status}: ${errorMsg}`};
+            const wsInfo = wsMode ? ', ws: true' : '';
+            return {success: true, message: `连接成功 (protocol: ${protocol}${wsInfo}, model: ${model})`};
         } catch (err) {
+            // RelayUpstreamError 包含上游返回的 HTTP 状态码和错误信息
+            if (err instanceof RelayUpstreamError) {
+                return {success: false, message: `HTTP ${err.status}: ${err.message.slice(0, 300)}`};
+            }
             return {success: false, message: err.message};
         }
     }
 
     /**
-     * OpenAI 协议测试：POST chat/completions
+     * OpenAI 协议测试：复用 createChatCompletions，确保 URL 构建与正常请求一致
      */
     async _testOpenAI(upstream, model) {
-        const url = buildUrl(upstream.base_url, 'v1/chat/completions');
-        const headers = {
-            Authorization: `Bearer ${upstream.api_key}`,
-            'Content-Type': 'application/json',
-            'User-Agent': 'Relay/1.0'
-        };
         const payload = {
             model,
             messages: [{role: 'user', content: 'hi'}],
-            max_tokens: 1,
+            max_completion_tokens: 1,
             stream: false
         };
-        const options = {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(payload),
-            timeout: 30000
-        };
-        const proxyAgent = getProxyAgent(upstream.proxy);
-        if (proxyAgent) options.agent = proxyAgent;
-        return await request(url, options);
+        await createChatCompletions(payload, upstream);
     }
 
     /**
-     * Anthropic 协议测试：POST /v1/messages
+     * Anthropic 协议测试：复用 createAnthropicMessages，确保 URL 构建与正常请求一致
      */
     async _testAnthropic(upstream, model) {
-        const url = buildUrl(upstream.base_url, 'v1/messages');
-        const headers = {
-            Authorization: `Bearer ${upstream.api_key}`,
-            'anthropic-version': '2023-06-01',
-            'Content-Type': 'application/json',
-            'User-Agent': 'Relay/1.0'
-        };
         const payload = {
             model,
             max_tokens: 1,
             stream: false,
             messages: [{role: 'user', content: 'hi'}]
         };
-        const options = {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(payload),
-            timeout: 30000
-        };
-        const proxyAgent = getProxyAgent(upstream.proxy);
-        if (proxyAgent) options.agent = proxyAgent;
-        return await request(url, options);
+        await createAnthropicMessages(payload, upstream);
     }
 
     /**
-     * Responses 协议测试：POST /v1/responses
+     * Responses 协议测试
+     * WS 模式：先建立 WebSocket 连接再通过 WS 发送请求
+     * HTTP 模式：复用 createResponses，确保 URL 构建与正常请求一致
      */
     async _testResponses(upstream, model) {
-        const url = buildProtocolAwareUrl(upstream, 'v1/responses');
-        const headers = {
-            Authorization: `Bearer ${upstream.api_key}`,
-            'Content-Type': 'application/json',
-            'User-Agent': 'Relay/1.0'
-        };
+        // WS 模式：先连接 WebSocket，再发送请求
+        if (isWSUpstream(upstream)) {
+            return await this._testResponsesWS(upstream, model);
+        }
+
+        // 普通 HTTP 模式：复用 createResponses
         const payload = {
             model,
             input: 'hi',
-            max_output_tokens: 1,
+            max_output_tokens: 16,
             stream: false
         };
-        const options = {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(payload),
-            timeout: 30000
+        await createResponses(payload, upstream);
+    }
+
+    /**
+     * Responses WS 模式测试：通过连接池获取/复用 WS 连接，发送一次最小请求
+     * 成功正常返回，失败抛 RelayUpstreamError 或 Error
+     */
+    async _testResponsesWS(upstream, model) {
+        const payload = {
+            model,
+            input: 'hi',
+            max_output_tokens: 16
         };
-        const proxyAgent = getProxyAgent(upstream.proxy);
-        if (proxyAgent) options.agent = proxyAgent;
-        return await request(url, options);
+
+        let conn = null;
+        let shouldDiscard = false;
+        try {
+            // 通过连接池获取（可复用空闲连接，避免每次新建）
+            const {eventStream, conn: acquired} = await createResponsesWS(payload, upstream);
+            conn = acquired;
+
+            let completed = false;
+            let errorEvent = null;
+
+            for await (const event of eventStream) {
+                if (event.type === 'response.completed') {
+                    completed = true;
+                    break;
+                }
+                if (event.type === 'error') {
+                    errorEvent = event;
+                    break;
+                }
+            }
+
+            if (errorEvent) {
+                shouldDiscard = true;
+                const errMsg = errorEvent.data?.error?.message || 'WS request error';
+                const errStatus = errorEvent.data?.error?.status || 500;
+                throw new RelayUpstreamError(errStatus, `WS error: ${errMsg}`);
+            }
+
+            if (!completed) {
+                shouldDiscard = true;
+                throw new RelayUpstreamError(500, 'WS stream ended without completion');
+            }
+            // 成功，正常返回（连接归还池中）
+        } catch (err) {
+            if (!(err instanceof RelayUpstreamError)) {
+                shouldDiscard = true;
+            }
+            if (err instanceof RelayUpstreamError) throw err;
+            throw new Error(`WS 连接失败: ${err.message}`);
+        } finally {
+            if (conn) {
+                if (shouldDiscard) discardWSConnection(conn);
+                else releaseWSConnection(conn);
+            }
+        }
     }
 
     getEnabledCount() {
