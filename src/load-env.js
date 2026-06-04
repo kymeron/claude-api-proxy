@@ -20,11 +20,14 @@ try {
 
         const [key, ...valueParts] = line.split('=');
         if (key && valueParts.length > 0) {
+            const envKey = key.trim();
+            // 不覆盖已存在的环境变量（PM2 等进程管理器会预先设置 PORT 等变量）
+            if (process.env[envKey] !== undefined) return;
             let value = valueParts.join('=').trim();
             if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
                 value = value.slice(1, -1);
             }
-            process.env[key.trim()] = value;
+            process.env[envKey] = value;
         }
     });
 } catch {

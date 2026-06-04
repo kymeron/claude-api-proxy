@@ -14,7 +14,7 @@ function createWorker(index) {
         script: 'src/index.js',
         cwd: __dirname,
         interpreter: 'node',
-        node_args: '--use-system-ca',
+        // node_args: '--use-system-ca', // 已移除：Node.js v22 不支持此选项
         exec_mode: 'fork',
         instances: 1,
         autorestart: true,

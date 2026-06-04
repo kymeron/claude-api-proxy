@@ -374,7 +374,7 @@ Relay 可以将本机运行的 Copilot 或 CodeBuddy 端点作为上游，实现
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `PORT` | 服务监听端口 | `3080` |
+| `PORT` | 服务监听端口（单实例默认 `3080`，集群模式由 PM2 设定 3081~3084） | `3080` |
 | `HOST` | 绑定地址 | `0.0.0.0` |
 | `LOG_LEVEL` | 日志级别（`DEBUG`/`INFO`/`WARN`/`ERROR`） | `INFO` |
 | `CODEBUDDY_CREDS_DIR` | CodeBuddy 凭证存储目录 | `.codebuddy` |
@@ -398,11 +398,25 @@ npm run debug
 
 ### PM2 部署
 
+单实例：
+
 ```bash
 pm2 start ecosystem.config.cjs
 pm2 save
 pm2 startup
 ```
+
+集群（4 Worker + Nginx 负载均衡）：
+
+```bash
+pm2 start ecosystem.cluster.config.cjs
+pm2 save
+pm2 startup
+```
+
+集群模式启动 4 个 Worker（端口 3081~3084），需配合 Nginx 反向代理做负载均衡。完整 Nginx 配置见 [docs/nginx-cluster.md](docs/nginx-cluster.md)。
+
+> **注意**：集群模式下 `.env` 中的 `PORT` 不会覆盖 PM2 为各 Worker 设定的端口（`load-env.js` 已跳过已存在的环境变量）。
 
 ---
 
