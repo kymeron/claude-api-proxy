@@ -552,6 +552,73 @@ export function anthropicToResponses(anthropicPayload) {
     return responsesPayload;
 }
 
+/**
+ * 将 Responses API 完整响应转换为 Anthropic Messages API 响应格式
+ * 用于非流式场景
+ */
+export function responsesOutputToAnthropic(responsesRes) {
+    const content = [];
+
+    for (const item of responsesRes.output || []) {
+        if (item.type === 'message' && item.role === 'assistant') {
+            for (const c of item.content || []) {
+                if (c.type === 'output_text') {
+                    content.push({type: 'text', text: c.text || ''});
+                }
+            }
+        } else if (item.type === 'function_call') {
+            let input = {};
+            try {
+                input = JSON.parse(item.arguments || '{}');
+            } catch {
+                // 保留原始字符串
+            }
+            content.push({
+                type: 'tool_use',
+                id: item.call_id || `toolu_${generateId()}`,
+                name: item.name || '',
+                input
+            });
+        } else if (item.type === 'reasoning' && Array.isArray(item.summary)) {
+            const summaryText = item.summary
+                .filter(s => s.type === 'summary_text' && s.text)
+                .map(s => s.text)
+                .join('\n\n');
+            if (summaryText) {
+                content.push({type: 'thinking', thinking: summaryText});
+            }
+        }
+    }
+
+    if (content.length === 0) {
+        content.push({type: 'text', text: ''});
+    }
+
+    // 根据 Responses status 和内容推断 stop_reason
+    let stopReason = 'end_turn';
+    const hasToolUse = content.some(b => b.type === 'tool_use');
+    if (hasToolUse) {
+        stopReason = 'tool_use';
+    } else if (responsesRes.status === 'incomplete') {
+        stopReason = 'max_tokens';
+    }
+
+    return {
+        id: responsesRes.id?.replace(/^resp_/, 'msg_') || `msg_${generateId()}`,
+        type: 'message',
+        role: 'assistant',
+        content,
+        model: responsesRes.model || '',
+        stop_reason: stopReason,
+        stop_sequence: null,
+        usage: {
+            input_tokens: responsesRes.usage?.input_tokens || 0,
+            output_tokens: responsesRes.usage?.output_tokens || 0,
+            cache_read_input_tokens: responsesRes.usage?.input_tokens_details?.cached_tokens || 0
+        }
+    };
+}
+
 export {sharedOpenAIToAnthropic as openAIToAnthropic};
 
 export function responsesEventToAnthropicEvents(eventType, eventData, chatState, anthropicState) {

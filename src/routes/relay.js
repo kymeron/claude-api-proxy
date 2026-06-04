@@ -47,6 +47,12 @@ import {
 import {aggregateStreamResponse} from '../services/codebuddy/api.js';
 import {estimateMessageTokens} from '../utils/token-estimation.js';
 import {handleWSConnection} from '../services/ws/ws-server.js';
+import {
+    anthropicToResponses,
+    responsesEventToAnthropicEvents,
+    responsesOutputToAnthropic,
+    createStreamState as createAnthropicStreamState
+} from '../services/copilot/anthropic-translator.js';
 import logger from '../utils/logger.js';
 
 /* ==================== 工具函数 ==================== */
@@ -423,7 +429,7 @@ async function handleOpenAIChatCompletions(req, res) {
 /**
  * 处理 Anthropic 格式的 /relay/anthropic/v1/messages 请求
  * 根据上游协议自动选择最优路径：
- * - Responses 上游 → 报错引导
+ * - Responses 上游 → Anthropic↔Responses 转换（支持 WS 模式）
  * - Anthropic 上游 → 直接透传（零损耗）
  * - OpenAI 上游 → Anthropic→OpenAI 转换
  */
@@ -440,7 +446,188 @@ async function handleAnthropicMessages(req, res) {
         const anthropicPayload = JSON.parse(body);
 
         if (isResponsesUpstream(upstream)) {
-            sendAnthropicError(res, 400, getProtocolErrorMessage(upstream, 'anthropic', '/relay/v1/responses'));
+            const responsesReq = anthropicToResponses(anthropicPayload);
+            responsesReq.model = upstreamManager.resolveModel(anthropicPayload.model, upstream.index);
+
+            // WS 模式：通过 WebSocket 连接上游
+            if (isWSUpstream(upstream)) {
+                try {
+                    const wsResult = await createResponsesWS(
+                        responsesReq,
+                        upstream,
+                        {contextKey: responsesReq.conversation_id || responsesReq.metadata?.conversation_id}
+                    );
+
+                    if (anthropicPayload.stream) {
+                        res.writeHead(200, {
+                            'Content-Type': 'text/event-stream',
+                            'Cache-Control': 'no-cache',
+                            Connection: 'keep-alive'
+                        });
+
+                        const chatState = createChatCompletionsStreamState();
+                        const anthropicState = createAnthropicStreamState();
+                        let inputTokens = 0;
+                        let outputTokens = 0;
+                        let cacheHitTokens = 0;
+
+                        try {
+                            for await (const event of wsResult.eventStream) {
+                                if (event.type === 'response.completed' && event.data?.response?.usage) {
+                                    const usage = event.data.response.usage;
+                                    inputTokens = usage.input_tokens || 0;
+                                    outputTokens = usage.output_tokens || 0;
+                                    cacheHitTokens = usage.input_tokens_details?.cached_tokens || 0;
+                                }
+                                const anthropicEvents = responsesEventToAnthropicEvents(
+                                    event.type, event.data, chatState, anthropicState
+                                );
+                                for (const evt of anthropicEvents) {
+                                    res.write(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
+                                }
+                            }
+                            releaseWSConnection(wsResult.conn);
+                        } catch (err) {
+                            discardWSConnection(wsResult.conn);
+                            throw err;
+                        }
+
+                        recordUsage(
+                            inputTokens || estimateAnthropicInputTokens(anthropicPayload),
+                            outputTokens,
+                            cacheHitTokens,
+                            anthropicPayload.model
+                        );
+                        res.end();
+                    } else {
+                        let completedData = null;
+                        try {
+                            for await (const event of wsResult.eventStream) {
+                                if (event.type === 'response.completed') completedData = event.data;
+                            }
+                            releaseWSConnection(wsResult.conn);
+                        } catch (err) {
+                            discardWSConnection(wsResult.conn);
+                            throw err;
+                        }
+                        if (completedData?.response) {
+                            const usage = completedData.response.usage || {};
+                            recordUsage(
+                                usage.input_tokens || estimateAnthropicInputTokens(anthropicPayload),
+                                usage.output_tokens || 0,
+                                usage.input_tokens_details?.cached_tokens || 0,
+                                anthropicPayload.model
+                            );
+                            sendJson(res, 200, responsesOutputToAnthropic(completedData.response));
+                        } else {
+                            sendAnthropicError(res, 502, 'No response.completed event received from upstream');
+                        }
+                    }
+                    return;
+                } catch (wsError) {
+                    if (wsError instanceof ResponsesWSError) {
+                        if (res.headersSent) {
+                            if (!res.destroyed && !res.writableEnded) res.end();
+                            return;
+                        }
+                        sendAnthropicError(res, wsError.status || 400, wsError.message || 'WS upstream error');
+                        return;
+                    }
+                    if (res.headersSent) {
+                        logger.warn(`Relay Anthropic: WS stream failed after response started: ${wsError.message}`);
+                        if (!res.destroyed && !res.writableEnded) res.end();
+                        return;
+                    }
+                    logger.warn(`Relay Anthropic: WS failed, falling back to HTTP: ${wsError.message}`);
+                    // Fall through to HTTP logic below
+                }
+            }
+
+            // HTTP 模式：请求上游 Responses API，转换响应
+            const {response} = await callUpstream(upstream, (up) =>
+                createResponses(responsesReq, up, {
+                    requestType: 'AnthropicViaResponses',
+                    stream: anthropicPayload.stream,
+                    originalModel: anthropicPayload.model
+                })
+            );
+
+            if (anthropicPayload.stream) {
+                res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    Connection: 'keep-alive'
+                });
+
+                const chatState = createChatCompletionsStreamState();
+                const anthropicState = createAnthropicStreamState();
+                let inputTokens = 0;
+                let outputTokens = 0;
+                let cacheHitTokens = 0;
+                let buffer = '';
+
+                response.body.on('data', (chunk) => {
+                    buffer += chunk.toString('utf8');
+                    const parts = buffer.split(/\r?\n\r?\n/);
+                    buffer = parts.pop() || '';
+
+                    for (const part of parts) {
+                        const {event, data} = parseSSEBlock(part);
+                        if (!data || data === '[DONE]') continue;
+                        let parsed;
+                        try {
+                            parsed = JSON.parse(data);
+                        } catch {
+                            continue;
+                        }
+
+                        if (event === 'response.completed' && parsed.response?.usage) {
+                            const usage = parsed.response.usage;
+                            inputTokens = usage.input_tokens || 0;
+                            outputTokens = usage.output_tokens || 0;
+                            cacheHitTokens = usage.input_tokens_details?.cached_tokens || 0;
+                        }
+
+                        const anthropicEvents = responsesEventToAnthropicEvents(event, parsed, chatState, anthropicState);
+                        for (const evt of anthropicEvents) {
+                            res.write(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
+                        }
+                    }
+                });
+
+                response.body.on('end', () => {
+                    recordUsage(
+                        inputTokens || estimateAnthropicInputTokens(anthropicPayload),
+                        outputTokens,
+                        cacheHitTokens,
+                        anthropicPayload.model
+                    );
+                    res.end();
+                });
+
+                response.body.on('error', (err) => {
+                    logger.error('Relay Anthropic via Responses stream error:', err);
+                    res.end();
+                });
+                return;
+            }
+
+            // 非流式 HTTP
+            const responseBody = await readResponseBody(response.body);
+            let parsed;
+            try {
+                parsed = JSON.parse(responseBody);
+            } catch {
+                sendAnthropicError(res, 502, 'Upstream returned invalid JSON');
+                return;
+            }
+            recordUsage(
+                parsed.usage?.input_tokens || estimateAnthropicInputTokens(anthropicPayload),
+                parsed.usage?.output_tokens || 0,
+                parsed.usage?.input_tokens_details?.cached_tokens || 0,
+                anthropicPayload.model
+            );
+            sendJson(res, 200, responsesOutputToAnthropic(parsed));
             return;
         }
 
