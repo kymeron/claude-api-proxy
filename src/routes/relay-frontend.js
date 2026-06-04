@@ -108,6 +108,7 @@ async function handleAddUpstream(req, res) {
             base_url: data.base_url,
             api_key: data.api_key,
             proxy: data.proxy,
+            skip_tls_verify: data.skip_tls_verify,
             models: data.models,
             model_map: data.model_map,
             protocol: data.protocol,
@@ -180,7 +181,7 @@ async function handleTestUpstream(req, res) {
  */
 async function handleFetchUpstreamModels(req, res) {
     try {
-        const {base_url, api_key, proxy} = await readRequestBody(req);
+        const {base_url, api_key, proxy, skip_tls_verify} = await readRequestBody(req);
         if (!base_url || !api_key) {
             return sendJson(res, 400, {error: 'base_url 和 api_key 为必填'});
         }
@@ -188,17 +189,19 @@ async function handleFetchUpstreamModels(req, res) {
         const {HttpsProxyAgent} = await import('https-proxy-agent');
         const {SocksProxyAgent} = await import('socks-proxy-agent');
 
+        const rejectUnauthorized = skip_tls_verify !== true;
         const headers = {
             'Authorization': `Bearer ${api_key}`,
             'Accept': 'application/json',
             'User-Agent': 'Relay/1.0'
         };
-        const options = {method: 'GET', headers, timeout: 15000};
+        const options = {method: 'GET', headers, timeout: 15000, rejectUnauthorized};
 
         if (proxy) {
+            const agentOptions = {rejectUnauthorized};
             options.agent = proxy.startsWith('socks')
-                ? new SocksProxyAgent(proxy)
-                : new HttpsProxyAgent(proxy);
+                ? new SocksProxyAgent(proxy, agentOptions)
+                : new HttpsProxyAgent(proxy, agentOptions);
         }
 
         const url = buildUrl(base_url, 'v1/models');

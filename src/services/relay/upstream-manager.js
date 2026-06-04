@@ -108,6 +108,7 @@ export class UpstreamManager {
             api_key_preview: u.api_key ? u.api_key.slice(0, 8) + '****' + u.api_key.slice(-4) : '',
             api_key_full: u.api_key || '',
             proxy: u.proxy || '',
+            skip_tls_verify: u.skip_tls_verify === true,
             models: u.models || [],
             model_map: u.model_map || {},
             protocol: u.protocol || '',
@@ -283,6 +284,7 @@ export class UpstreamManager {
             base_url: data.base_url || '',
             api_key: data.api_key || '',
             proxy: data.proxy || '',
+            skip_tls_verify: data.skip_tls_verify === true,
             models: data.models || [],
             model_map: data.model_map || {},
             protocol: data.protocol || '',
@@ -306,6 +308,7 @@ export class UpstreamManager {
         if (data.base_url !== undefined) upstream.base_url = data.base_url;
         if (data.api_key !== undefined) upstream.api_key = data.api_key;
         if (data.proxy !== undefined) upstream.proxy = data.proxy;
+        if (data.skip_tls_verify !== undefined) upstream.skip_tls_verify = data.skip_tls_verify === true;
         if (data.enabled !== undefined) upstream.enabled = data.enabled;
         if (data.models !== undefined) upstream.models = data.models;
         if (data.model_map !== undefined) upstream.model_map = data.model_map;

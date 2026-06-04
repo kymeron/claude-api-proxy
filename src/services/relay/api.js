@@ -47,30 +47,33 @@ const proxyAgentCache = new Map();
  * - http:// / https:// 开头使用 HttpsProxyAgent
  *
  * @param {string} [proxyUrl] - 代理地址
+ * @param {boolean} [rejectUnauthorized=true] - 是否校验 TLS 证书
  * @returns {HttpsProxyAgent|SocksProxyAgent|undefined}
  */
-export function getProxyAgent(proxyUrl) {
+export function getProxyAgent(proxyUrl, rejectUnauthorized = true) {
     if (!proxyUrl) {
         return undefined;
     }
 
-    // 命中缓存
-    if (proxyAgentCache.has(proxyUrl)) {
-        return proxyAgentCache.get(proxyUrl);
+    // 命中缓存（区分 TLS 校验模式）
+    const cacheKey = `${proxyUrl}:${rejectUnauthorized ? 'tls-verify' : 'tls-skip'}`;
+    if (proxyAgentCache.has(cacheKey)) {
+        return proxyAgentCache.get(cacheKey);
     }
 
     let agent;
     try {
+        const agentOptions = {rejectUnauthorized};
         if (proxyUrl.startsWith('socks5://') || proxyUrl.startsWith('socks4://') || proxyUrl.startsWith('socks://')) {
-            agent = new SocksProxyAgent(proxyUrl);
+            agent = new SocksProxyAgent(proxyUrl, agentOptions);
         } else if (proxyUrl.startsWith('http://') || proxyUrl.startsWith('https://')) {
-            agent = new HttpsProxyAgent(proxyUrl);
+            agent = new HttpsProxyAgent(proxyUrl, agentOptions);
         } else {
             logger.warn(`Relay API: 不支持的代理协议 "${proxyUrl}"，将直连`);
             return undefined;
         }
 
-        proxyAgentCache.set(proxyUrl, agent);
+        proxyAgentCache.set(cacheKey, agent);
         return agent;
     } catch (err) {
         logger.error(`Relay API: 创建代理 Agent 失败 (${proxyUrl}): ${err.message}`);
@@ -132,10 +135,14 @@ function applyProxyAndCopilot(upstream, headers, options) {
         headers['X-Copilot-Proxy'] = upstream.proxy;
     }
 
-    const proxyAgent = getProxyAgent(upstream.proxy);
+    const rejectUnauthorized = upstream.skip_tls_verify !== true;
+
+    const proxyAgent = getProxyAgent(upstream.proxy, rejectUnauthorized);
     if (proxyAgent) {
         options.agent = proxyAgent;
     }
+
+    options.rejectUnauthorized = rejectUnauthorized;
 }
 
 async function requestJson(url, upstream, {method = 'POST', headers = {}, body, timeout = 300000} = {}) {
@@ -383,9 +390,10 @@ export async function createResponsesWS(payload, upstream, options = {}) {
     const connectFn = async () => {
         const wsUrl = buildWSUrl(upstream);
         const headers = buildWSHeaders(upstream);
-        const proxyAgent = getProxyAgent(upstream.proxy);
+        const rejectUnauthorized = upstream.skip_tls_verify !== true;
+        const proxyAgent = getProxyAgent(upstream.proxy, rejectUnauthorized);
         logger.info(`Relay WS: creating new connection to ${wsUrl}`);
-        return connectWebSocket(wsUrl, headers, proxyAgent, undefined, true);
+        return connectWebSocket(wsUrl, headers, proxyAgent, undefined, rejectUnauthorized);
     };
 
     const conn = await relayWSPool.acquire(poolKey, connectFn, {

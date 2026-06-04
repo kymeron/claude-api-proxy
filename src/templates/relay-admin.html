@@ -474,6 +474,35 @@
                 margin-left: 6px;
                 vertical-align: middle;
             }
+            .proxy-options-row {
+                display: flex;
+                align-items: flex-start;
+                gap: 10px;
+                margin-top: 8px;
+                color: #374151;
+                font-size: 0.9rem;
+            }
+            .proxy-options-row input[type="checkbox"] {
+                width: 16px;
+                height: 16px;
+                margin-top: 2px;
+                accent-color: #667eea;
+                flex: 0 0 auto;
+            }
+            .proxy-option-text {
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+            }
+            .proxy-option-title {
+                font-weight: 500;
+                color: #1f2937;
+            }
+            .proxy-option-desc {
+                color: #6b7280;
+                font-size: 0.8rem;
+                line-height: 1.4;
+            }
         </style>
         <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     </head>
@@ -523,6 +552,13 @@
                 <div class="form-group">
                     <label for="upstreamProxy">代理地址（可选）</label>
                     <input type="text" id="upstreamProxy" />
+                    <label class="proxy-options-row" for="upstreamSkipTls">
+                        <input type="checkbox" id="upstreamSkipTls" />
+                        <span class="proxy-option-text">
+                            <span class="proxy-option-title">跳过 TLS 证书验证</span>
+                            <span class="proxy-option-desc">代理或上游使用自签名证书时可启用</span>
+                        </span>
+                    </label>
                 </div>
                 <div class="form-group">
                     <label>模型映射 (model_map)</label>
@@ -1142,7 +1178,7 @@
                                 <h4>${up.name || '未命名'} ${activeTag} ${wsTag}</h4>
                                 <p>${up.base_url || ''}</p>
                                 <p class="upstream-proxy">协议: ${protocolText}</p>
-                                <p class="upstream-proxy">代理: ${proxyText}</p>
+                                <p class="upstream-proxy">代理: ${proxyText}${up.skip_tls_verify ? ' <span style="color:#f59e0b">（跳过TLS验证）</span>' : ''}</p>
                                 <p style="font-size:0.78rem;margin-top:4px">${modelMapTags ? '映射: ' + modelMapTags : ''}</p>
                                 <span id="testResult${idx}" class="test-result"></span>
                             </div>
@@ -1193,6 +1229,7 @@
                 toggleWSGroup();
                 document.getElementById('upstreamApiKey').value = '';
                 document.getElementById('upstreamProxy').value = '';
+                document.getElementById('upstreamSkipTls').checked = false;
                 document.getElementById('upstreamModelMap').value = 'sonnet=\nopus=\nhaiku=';
                 document.getElementById('upstreamModal').classList.add('show');
             }
@@ -1211,6 +1248,7 @@
                 toggleWSGroup();
                 document.getElementById('upstreamApiKey').value = up.api_key_full || '';
                 document.getElementById('upstreamProxy').value = up.proxy || '';
+                document.getElementById('upstreamSkipTls').checked = up.skip_tls_verify === true;
 
                 const modelMap = up.model_map || {};
                 const modelMapText = Object.entries(modelMap)
@@ -1232,6 +1270,7 @@
                 const ws = document.getElementById('upstreamWS').checked && protocol === 'responses';
                 const api_key = document.getElementById('upstreamApiKey').value.trim();
                 const proxy = document.getElementById('upstreamProxy').value.trim();
+                const skip_tls_verify = document.getElementById('upstreamSkipTls').checked;
 
                 if (!name || !base_url || !api_key) {
                     showToast('名称、Base URL 和 API Key 为必填项', 'error');
@@ -1260,7 +1299,7 @@
                 submitBtn.disabled = true;
 
                 try {
-                    const body = {name, base_url, protocol, ws: ws || undefined, api_key, proxy: proxy || undefined, models, model_map};
+                    const body = {name, base_url, protocol, ws: ws || undefined, api_key, proxy: proxy || undefined, skip_tls_verify, models, model_map};
                     let url, method;
                     if (editingUpstreamIndex !== null) {
                         url = `/relayFE/upstreams/${editingUpstreamIndex}`;
