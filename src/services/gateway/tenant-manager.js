@@ -377,6 +377,7 @@ class UnifiedTenantManager {
         const existing = this.usernameMap.get(username);
         if (existing) return existing;
 
+        const role = username && username === process.env.LOCAL_ADMIN_USER ? 'superadmin' : 'user';
         const apiKey = API_KEY_PREFIX + randomBytes(16).toString('hex');
         const apiKeyHash = createHash('sha256').update(apiKey).digest('hex');
         const body = apiKey.slice(API_KEY_PREFIX.length);
@@ -388,7 +389,7 @@ class UnifiedTenantManager {
             api_key_hash: apiKeyHash,
             api_key_prefix: apiKeyPrefix,
             api_key_plain: apiKey,
-            role: 'user'
+            role
         });
 
         // Create service profiles for relay and codebuddy (enabled by default)

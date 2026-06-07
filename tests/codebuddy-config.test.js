@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {getHostModelOverrides, getModelsForHost, getCodebuddyCustomSiteLabel, getCodebuddyCustomSiteLabels} from '../src/services/codebuddy/config.js';
-import {getCodebuddyAdminOptions} from '../src/routes/admin-codebuddy.js';
+import {getCodebuddyAdminOptions} from '../src/routes/dashboard-codebuddy.js';
 
 test('CodeBuddy model overrides are read from environment JSON', () => {
     const saved = process.env.CODEBUDDY_MODEL_OVERRIDES;

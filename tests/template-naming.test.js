@@ -15,9 +15,9 @@ test('unified admin console includes all service management surfaces', () => {
     assert.equal(existsSync(join(root, 'src/templates/admin.html')), true);
     assert.equal(existsSync(join(root, 'src/templates/login.html')), true);
     assert.equal(existsSync(join(root, 'src/templates/404.html')), true);
-    const frontendRoute = readFileSync(join(root, 'src/routes/admin-frontend.js'), 'utf8');
-    const codebuddyRoute = readFileSync(join(root, 'src/routes/admin-codebuddy.js'), 'utf8');
-    const adminUsersRoute = readFileSync(join(root, 'src/routes/admin-users.js'), 'utf8');
+    const frontendRoute = readFileSync(join(root, 'src/routes/dashboard-frontend.js'), 'utf8');
+    const codebuddyRoute = readFileSync(join(root, 'src/routes/dashboard-codebuddy.js'), 'utf8');
+    const adminUsersRoute = readFileSync(join(root, 'src/routes/dashboard-users.js'), 'utf8');
     const upstreamManager = readFileSync(join(root, 'src/services/relay/upstream-manager.js'), 'utf8');
     const upstreamModel = readFileSync(join(root, 'src/db/models/tenant-upstream.js'), 'utf8');
     const adminHtml = readFileSync(join(root, 'src/templates/admin.html'), 'utf8');
@@ -36,7 +36,7 @@ test('unified admin console includes all service management surfaces', () => {
     assert.match(frontendRoute, /templates', 'admin\.html'/);
     assert.match(frontendRoute, /\/regenerate-key/);
     assert.match(frontendRoute, /\/upstreams\/test/);
-    assert.match(frontendRoute, /\/admin\/stats\/overview/);
+    assert.match(frontendRoute, /\/dashboard\/stats\/overview/);
     assert.match(frontendRoute, /session\.role === 'superadmin' \? tenants : tenants\.filter/);
     assert.doesNotMatch(frontendRoute, /isAdmin \? tenants : tenants\.filter/);
     assert.match(codebuddyRoute, /\/v2\/plugin\/auth\/state/);
@@ -79,10 +79,10 @@ test('unified admin console includes all service management surfaces', () => {
     assert.match(adminHtml, /function readModelMappings\(\)/);
     assert.match(adminHtml, /GitHub/);
     assert.match(adminHtml, /showStats/);
-    assert.match(adminHtml, /#\/dashboard\/overview/);
-    assert.match(adminHtml, /#\/dashboard\/relay/);
-    assert.match(adminHtml, /#\/dashboard\/codebuddy/);
-    assert.match(adminHtml, /#\/dashboard\/copilot/);
+    assert.match(adminHtml, /#\/console\/overview/);
+    assert.match(adminHtml, /#\/console\/relay/);
+    assert.match(adminHtml, /#\/console\/codebuddy/);
+    assert.match(adminHtml, /#\/console\/copilot/);
     assert.match(adminHtml, /#\/stats\/relay\/users/);
     assert.match(adminHtml, /#\/stats\/codebuddy\/model-cache/);
     assert.match(adminHtml, /#\/stats\/copilot\/trend/);
@@ -92,7 +92,7 @@ test('unified admin console includes all service management surfaces', () => {
     assert.match(adminHtml, /function syncHashRoute\(/);
     assert.match(adminHtml, /function syncStatsHash\(/);
     assert.doesNotMatch(adminHtml, /history\.pushState|history\.replaceState/);
-    assert.match(adminHtml, /\['relay','codebuddy','copilot','overview'\]\.includes\(tab\)&&!options\.skipHash\)syncHashRoute\('dashboard',tab\)/);
+    assert.match(adminHtml, /\['relay','codebuddy','copilot','overview'\]\.includes\(tab\)&&!options\.skipHash\)syncHashRoute\('console',tab\)/);
     assert.doesNotMatch(adminHtml, /tab==='overview'\?'relay':tab/);
     assert.match(adminHtml, /function loadServiceStats\(type\)/);
     assert.match(adminHtml, /\/public\/js\/echarts\.min\.js/);
@@ -131,6 +131,10 @@ test('unified admin console includes all service management surfaces', () => {
     assert.match(adminHtml, /adminStatsCharts/);
     assert.match(adminHtml, /function enabledServices\(\)/);
     assert.match(adminHtml, /function canUseService\(type\)/);
+    assert.match(adminHtml, /function protocolBaseUrl\(\)/);
+    assert.match(adminHtml, /location\.origin\}\/api\/coding/);
+    assert.doesNotMatch(adminHtml, /api\.shifeng1993\.com/);
+    assert.match(adminHtml, /\/api\/stats/);
     assert.match(adminHtml, /const tabs=\[\['overview'/);
     assert.match(adminHtml, /enabledServices\(\)\.map\(\(\[type,title,desc,color\]\)=>serviceCard/);
     assert.match(adminHtml, /total_api_calls|apiCalls/);
@@ -179,7 +183,7 @@ test('unified admin console includes all service management surfaces', () => {
     assert.match(adminHtml, /id="editUserModal"/);
     assert.match(adminHtml, /function openUserEdit\(/);
     assert.match(adminHtml, /function saveUserEdit\(/);
-    assert.match(adminHtml, /\/admin\/users\/\$\{encodeURIComponent\(S\.editingUser\)\}/);
+    assert.match(adminHtml, /\/dashboard\/users\/\$\{encodeURIComponent\(S\.editingUser\)\}/);
     assert.match(adminHtml, /method:'PUT'/);
     assert.match(adminHtml, /value="admin"/);
     assert.match(adminHtml, /openFeedbackDetail/);
@@ -250,7 +254,7 @@ test('admin Claude Code guides document auth compatibility and model pass-throug
     assert.doesNotMatch(adminHtml, /ANTHROPIC_CUSTOM_HEADERS/);
     assert.match(adminHtml, /loadCodebuddyOptions/);
     assert.match(adminHtml, /renderCodebuddyModelGuide/);
-    assert.match(adminHtml, /\/admin\/codebuddy\/options/);
+    assert.match(adminHtml, /\/dashboard\/codebuddy\/options/);
     assert.doesNotMatch(readme, /ANTHROPIC_CUSTOM_HEADERS/);
     assert.doesNotMatch(readme, /x-api-key/);
 });

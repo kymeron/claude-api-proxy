@@ -163,6 +163,41 @@ test('environment bootstrap synchronizes the initial account as superadmin', asy
     assert.equal(updateBody.role, 'superadmin');
 });
 
+test('LDAP auto-created initial account is a superadmin', async t => {
+    const originalAdminUser = process.env.LOCAL_ADMIN_USER;
+    process.env.LOCAL_ADMIN_USER = 'root';
+    t.after(() => {
+        if (originalAdminUser === undefined) delete process.env.LOCAL_ADMIN_USER;
+        else process.env.LOCAL_ADMIN_USER = originalAdminUser;
+    });
+
+    const originalBulkCreate = models.TenantServiceProfile.bulkCreate;
+    const originalCache = unifiedTenantManager.tenantsCache;
+    const originalUsernameMap = unifiedTenantManager.usernameMap;
+    const created = [];
+    patchTenant(t, {
+        create: async body => {
+            created.push({id: 12, ...body});
+            return {id: 12, ...body};
+        },
+        findAll: async () => created.map(row => ({toJSON: () => row}))
+    });
+    models.TenantServiceProfile.bulkCreate = async () => {};
+    unifiedTenantManager.tenantsCache = new Map();
+    unifiedTenantManager.usernameMap = new Map();
+    t.after(() => {
+        models.TenantServiceProfile.bulkCreate = originalBulkCreate;
+        unifiedTenantManager.tenantsCache = originalCache;
+        unifiedTenantManager.usernameMap = originalUsernameMap;
+    });
+
+    const tenantId = await unifiedTenantManager.createTenantForUser('root', 'Root User');
+
+    assert.equal(tenantId, 12);
+    assert.equal(created[0].role, 'superadmin');
+    assert.equal(unifiedTenantManager.getTenant(tenantId).role, 'superadmin');
+});
+
 test('unified tenant manager treats superadmin as administrator', () => {
     const original = unifiedTenantManager.tenantsCache;
     unifiedTenantManager.tenantsCache = new Map([

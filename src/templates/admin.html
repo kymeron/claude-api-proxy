@@ -433,9 +433,20 @@ const SERVICE_META={relay:['relay','Relay','配置 OpenAI、Responses 或 Anthro
 function canUseService(type){return S.me?.isAdmin||profile(S.tenant,type).enabled===true;}
 function enabledServices(){return Object.values(SERVICE_META).filter(([type])=>canUseService(type));}
 function toast(message,type='success'){const el=document.getElementById('toast');el.textContent=message;el.className='toast show '+(type==='error'?'error':'');clearTimeout(el._t);el._t=setTimeout(()=>el.className='toast',3500);}
+function pageApiOrigin(){
+    return '';
+}
+function apiUrl(path){
+    if(/^https?:\/\//i.test(path))return path;
+    if(path==='/login'||path.startsWith('/login?')||path==='/logout'||path.startsWith('/logout?')||path==='/dashboard'||path.startsWith('/dashboard/'))path='/api'+path;
+    else if(path==='/stats/api')path='/api/stats';
+    else if(path.startsWith('/stats/api/'))path='/api/stats/'+path.slice('/stats/api/'.length);
+    const origin=pageApiOrigin();
+    return origin?origin+path:path;
+}
 async function api(url,options={}){
     const headers=options.body instanceof FormData?{}:{'Content-Type':'application/json'};
-    const response=await fetch(url,{credentials:'same-origin',headers,...options});
+    const response=await fetch(apiUrl(url),{credentials:'include',headers,...options});
     if(response.status===401){location.href='/login';throw new Error('登录已过期');}
     const text=await response.text();let data={};try{data=text?JSON.parse(text):{};}catch{data={error:text||'请求失败'};}
     if(!response.ok)throw new Error(data.error||data.message||`HTTP ${response.status}`);
@@ -484,7 +495,7 @@ async function init(){
         document.getElementById('newRoleAdminOption').hidden=S.me.role!=='superadmin';
         document.getElementById('editRoleAdminOption').hidden=S.me.role!=='superadmin';
         await loadMyTenant({deferRoute:true});
-        if(location.hash&&!location.hash.startsWith('#/'))syncHashRoute('console','overview',{replace:true});
+        if(!location.hash||!location.hash.startsWith('#/'))syncHashRoute('console','overview',{replace:true});
         routeFromHash();
     }catch(e){document.getElementById('main').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
 }
@@ -615,8 +626,11 @@ function renderCopilot(){
 }
 function scrollToSection(id){document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});}
 function renderAnchorNav(items){return `<nav class="anchor-nav">${items.map(([id,label])=>`<button type="button" onclick="scrollToSection(${jsArg(id)})">${label}</button>`).join('')}</nav>`;}
+function protocolBaseUrl(){
+    return `${location.origin}/api/coding`;
+}
 function serviceInsights(type){
-    const p=profile(S.tenant,type);const base=location.origin;
+    const p=profile(S.tenant,type);const base=protocolBaseUrl();
     const key=esc(S.tenant.api_key_plain||S.tenant.api_key_prefix||'');
     const defaults=type==='codebuddy'?{haiku:'glm-5.1',sonnet:'glm-5.1',opus:'glm-5.0'}:{haiku:'haiku',sonnet:'sonnet',opus:'opus'};
     const guideConfig=`{\n  "env": {\n    "ANTHROPIC_AUTH_TOKEN": "${key}",\n    "ANTHROPIC_BASE_URL": "${base}/${type}/anthropic",\n    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "${defaults.haiku}",\n    "ANTHROPIC_DEFAULT_SONNET_MODEL": "${defaults.sonnet}",\n    "ANTHROPIC_DEFAULT_OPUS_MODEL": "${defaults.opus}"\n  }\n}`;
@@ -806,7 +820,7 @@ function renderInlineFeedbackRow(item){
 function openFeedbackDetail(id){
     const item=S.feedbackItems.find(x=>Number(x.id)===Number(id));if(!item)return toast('反馈不存在，请刷新列表','error');
     feedbackDetailMeta.textContent=`#${item.id} · ${esc(item.category)} · ${feedbackStatusLabel(item.status)} · ${item.created_at?new Date(item.created_at).toLocaleString():'-'}`;
-    const attachments=(item.attachments||[]).length?`<div class="actions">${(item.attachments||[]).map(f=>`<a class="btn btn-sm" href="/api/feedback/attachment/${item.id}/${encodeURIComponent(f.name)}" target="_blank">下载 ${esc(f.name)}</a>`).join('')}</div>`:'<div class="muted">无附件</div>';
+    const attachments=(item.attachments||[]).length?`<div class="actions">${(item.attachments||[]).map(f=>`<a class="btn btn-sm" href="${apiUrl(`/api/feedback/attachment/${item.id}/${encodeURIComponent(f.name)}`)}" target="_blank">下载 ${esc(f.name)}</a>`).join('')}</div>`:'<div class="muted">无附件</div>';
     feedbackDetailBody.innerHTML=`<div><div class="muted">提交人</div><div>${esc(item.username||'-')}</div></div><div><div class="muted">问题描述</div><div class="detail-box">${esc(item.description||'')}</div></div><div><div class="muted">附件</div>${attachments}</div>`;
     document.getElementById('feedbackDetailModal').classList.add('show');
 }

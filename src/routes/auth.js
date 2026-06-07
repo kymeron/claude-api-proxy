@@ -21,6 +21,7 @@ import logger from '../utils/logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOGIN_PAGE = readFileSync(join(__dirname, '..', 'templates', 'login.html'), 'utf8');
+export const DASHBOARD_ENTRY_PATH = '/dashboard#/console/overview';
 
 function currentAuthMode() {
     try {
@@ -46,6 +47,14 @@ function sendJson(res, status, data) {
     res.end(JSON.stringify(data));
 }
 
+export async function resolveLoginRole({authMode, username, displayName, resultRole, tenantManager = unifiedTenantManager}) {
+    if (authMode !== 'ldap') return resultRole || 'user';
+
+    const tenantId = await tenantManager.createTenantForUser(username, displayName || username);
+    const tenant = tenantManager.getTenant(tenantId);
+    return tenant?.role || resultRole || 'user';
+}
+
 function readBody(req) {
     return new Promise((resolve, reject) => {
         const chunks = [];
@@ -69,7 +78,7 @@ export async function routeAuthRequest(req, res) {
     // GET /login — serve login page
     if (isLoginPath && method === 'GET') {
         if (getSessionUser(req).authenticated) {
-            res.writeHead(302, {Location: '/'});
+            res.writeHead(302, {Location: DASHBOARD_ENTRY_PATH});
             res.end();
             return;
         }
@@ -95,19 +104,20 @@ export async function routeAuthRequest(req, res) {
                 return sendJson(res, 401, {error: result.message});
             }
 
-            const token = createSessionToken(result.username, result.role || 'user');
-            setSessionCookie(res, token);
-
-            // LDAP auto-provision tenant
-            if (authMode === 'ldap') {
-                await unifiedTenantManager.createTenantForUser(username, result.displayName || username);
-            }
+            const role = await resolveLoginRole({
+                authMode,
+                username: result.username,
+                displayName: result.displayName,
+                resultRole: result.role
+            });
+            const token = createSessionToken(result.username, role);
+            setSessionCookie(res, token, req);
 
             return sendJson(res, 200, {
                 success: true,
                 username: result.username,
                 displayName: result.displayName,
-                redirect: '/'
+                redirect: DASHBOARD_ENTRY_PATH
             });
         } catch (error) {
             logger.error('登录失败:', error);
@@ -117,7 +127,7 @@ export async function routeAuthRequest(req, res) {
 
     // POST /logout — handle logout
     if (pathname === '/logout' && method === 'POST') {
-        clearSessionCookie(res);
+        clearSessionCookie(res, req);
         return sendJson(res, 200, {message: '已退出登录'});
     }
 

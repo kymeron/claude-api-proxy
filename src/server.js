@@ -13,7 +13,7 @@ import {routeCodebuddyRequest, handleCodebuddyResponsesWS} from './routes/codebu
 import {routeRelayRequest, handleRelayResponsesWS} from './routes/relay.js';
 import {routeCopilotRequest, handleCopilotResponsesWS} from './routes/copilot.js';
 import {routeAdminFrontend} from './routes/dashboard-frontend.js';
-import {routeAuthRequest} from './routes/auth.js';
+import {DASHBOARD_ENTRY_PATH, routeAuthRequest} from './routes/auth.js';
 import {routeStatsRequest} from './routes/stats.js';
 import {handleFeedback} from './routes/feedback.js';
 import {routeFeedbackAdmin} from './routes/feedback-admin.js';
@@ -28,6 +28,10 @@ import {unifiedTenantManager} from './services/gateway/tenant-manager.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const publicDir = join(__dirname, '..', 'public');
+const CODING_PROTOCOL_PREFIX = '/coding';
+const API_PREFIX = '/api';
+const API_CODING_PROTOCOL_PREFIX = '/api/coding';
+const PROTOCOL_ROUTE_PREFIXES = ['/relay', '/codebuddy', '/copilot'];
 
 const MIME_TYPES = {
     '.js': 'application/javascript',
@@ -102,6 +106,99 @@ function sendError(res, status, message) {
     res.end(message);
 }
 
+function configuredCorsOrigins() {
+    return (process.env.DASHBOARD_CORS_ORIGINS || '')
+        .split(',')
+        .map(origin => origin.trim())
+        .filter(Boolean);
+}
+
+function isAllowedCorsOrigin(origin) {
+    if (!origin) return false;
+    if (configuredCorsOrigins().includes(origin)) return true;
+    try {
+        const url = new URL(origin);
+        return url.protocol === 'https:' && (
+            url.hostname === 'shifeng1993.com' ||
+            url.hostname.endsWith('.shifeng1993.com')
+        );
+    } catch {
+        return false;
+    }
+}
+
+function applyCorsHeaders(req, res) {
+    const origin = req.headers.origin;
+    if (!isAllowedCorsOrigin(origin)) return false;
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        req.headers['access-control-request-headers'] || 'Content-Type, Authorization, X-API-Key'
+    );
+    res.setHeader('Access-Control-Max-Age', '86400');
+    res.setHeader('Vary', 'Origin');
+    return true;
+}
+
+function withSearch(pathname, search) {
+    return `${pathname}${search || ''}`;
+}
+
+function normalizeApiNamespacePath(pathname) {
+    if (pathname === '/api/login' || pathname.startsWith('/api/login/')) {
+        return pathname.slice(API_PREFIX.length) || '/login';
+    }
+    if (pathname === '/api/logout' || pathname.startsWith('/api/logout/')) {
+        return pathname.slice(API_PREFIX.length) || '/logout';
+    }
+    if (pathname === '/api/dashboard' || pathname.startsWith('/api/dashboard/')) {
+        return pathname.slice(API_PREFIX.length) || '/dashboard';
+    }
+    if (pathname === '/api/stats') return '/stats/api/overview';
+    if (pathname.startsWith('/api/stats/')) {
+        const statsPath = pathname.slice('/api/stats'.length);
+        if (statsPath === '/api' || statsPath.startsWith('/api/')) {
+            return `/stats${statsPath}`;
+        }
+        return `/stats/api${statsPath}`;
+    }
+    return pathname;
+}
+
+function normalizeRequestUrl(req) {
+    let url;
+    try {
+        url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    } catch {
+        return req.url || '';
+    }
+    let pathname = url.pathname;
+
+    const protocolPrefix = pathname.startsWith(`${API_CODING_PROTOCOL_PREFIX}/`)
+        ? API_CODING_PROTOCOL_PREFIX
+        : pathname.startsWith(`${CODING_PROTOCOL_PREFIX}/`)
+            ? CODING_PROTOCOL_PREFIX
+            : '';
+    if (!protocolPrefix) {
+        const normalizedPath = normalizeApiNamespacePath(pathname);
+        req.url = withSearch(normalizedPath, url.search);
+        return normalizedPath;
+    }
+
+    const strippedPath = pathname.slice(protocolPrefix.length);
+    const isProtocolPath = PROTOCOL_ROUTE_PREFIXES.some(
+        prefix => strippedPath === prefix || strippedPath.startsWith(`${prefix}/`)
+    );
+    if (!isProtocolPath) {
+        req.url = withSearch(pathname, url.search);
+        return pathname;
+    }
+    req.url = withSearch(strippedPath, url.search);
+    return strippedPath;
+}
+
 /**
  * 健康检查处理
  * @param {import('http').ServerResponse} res - HTTP 响应对象
@@ -119,6 +216,14 @@ function handleHealthCheck(res) {
  */
 export function createServer() {
     const server = http.createServer(async (req, res) => {
+        const corsApplied = applyCorsHeaders(req, res);
+        if (req.method === 'OPTIONS' && corsApplied) {
+            res.writeHead(204);
+            res.end();
+            return;
+        }
+        normalizeRequestUrl(req);
+
         // 静态文件服务
         if (req.method === 'GET' && req.url.startsWith('/public/')) {
             try {
@@ -312,6 +417,14 @@ export function createServer() {
     </div>
   </div>
   <script>
+    function pageApiOrigin(){
+      return '';
+    }
+    function apiUrl(path){
+      if(/^https?:\/\//i.test(path))return path;
+      const origin=pageApiOrigin();
+      return origin?origin+path:path;
+    }
     const fileInput = document.getElementById('fileInput');
     const fileLabel = document.getElementById('fileLabel');
     const uploadBtn = document.getElementById('uploadBtn');
@@ -335,7 +448,7 @@ export function createServer() {
       const formData = new FormData();
       formData.append('file', fileInput.files[0]);
       try {
-        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        const res = await fetch(apiUrl('/api/upload'), { method: 'POST', credentials: 'include', body: formData });
         const data = await res.json();
         if (data.success) {
           message.className = 'message success';
@@ -409,7 +522,7 @@ export function createServer() {
 
         // 根路径统一进入管理控制台；未登录时先进入登录页
         if (req.method === 'GET' && new URL(req.url, `http://${req.headers.host}`).pathname === '/') {
-            const location = getSessionUser(req).authenticated ? '/dashboard' : '/login';
+            const location = getSessionUser(req).authenticated ? DASHBOARD_ENTRY_PATH : '/login';
             res.writeHead(302, {Location: location});
             res.end();
             return;
@@ -430,7 +543,7 @@ export function createServer() {
     server.on('upgrade', (req, socket, head) => {
         let pathname;
         try {
-            pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
+            pathname = normalizeRequestUrl(req);
         } catch {
             socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
             socket.destroy();

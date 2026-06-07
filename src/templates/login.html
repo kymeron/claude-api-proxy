@@ -220,15 +220,24 @@ document.getElementById('togglePassword').addEventListener('click',event=>{
     passwordInput.type=show?'text':'password';
     event.currentTarget.textContent=show?'隐藏':'显示';
 });
+function pageApiOrigin(){
+    return '';
+}
+function apiUrl(path){
+    if(/^https?:\/\//i.test(path))return path;
+    if(path==='/login'||path.startsWith('/login?'))path='/api'+path;
+    const origin=pageApiOrigin();
+    return origin?origin+path:path;
+}
 form.addEventListener('submit',async event=>{
     event.preventDefault();
     errorBox.classList.remove('show');
     submitButton.disabled=true;
     submitButton.textContent='正在登录...';
     try{
-        const response=await fetch('/login',{
+        const response=await fetch(apiUrl('/login'),{
             method:'POST',
-            credentials:'same-origin',
+            credentials:'include',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
                 username:document.getElementById('username').value.trim(),
@@ -237,7 +246,7 @@ form.addEventListener('submit',async event=>{
         });
         const data=await response.json();
         if(response.ok&&data.success){
-            window.location.replace(data.redirect||'/');
+            window.location.replace(data.redirect||'/dashboard#/console/overview');
             return;
         }
         throw new Error(data.error||'登录失败');

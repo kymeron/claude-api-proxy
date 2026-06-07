@@ -7,6 +7,7 @@
 import jwt from 'jsonwebtoken';
 
 const COOKIE_NAME = 'cap_session';
+const SHARED_COOKIE_DOMAIN = '.shifeng1993.com';
 
 function parseCookies(req) {
     const cookieHeader = req.headers.cookie || '';
@@ -35,13 +36,40 @@ export function verifySessionToken(token) {
     }
 }
 
-export function setSessionCookie(res, token) {
-    const maxAge = 7 * 24 * 60 * 60;
-    res.setHeader('Set-Cookie', `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}`);
+function hostFromReq(req) {
+    return String(req?.headers?.host || '').split(':')[0].toLowerCase();
 }
 
-export function clearSessionCookie(res) {
-    res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; Max-Age=0`);
+function sessionCookieDomain(req) {
+    const configured = process.env.SESSION_COOKIE_DOMAIN || process.env.COOKIE_DOMAIN || '';
+    if (configured) return configured;
+    const host = hostFromReq(req);
+    return host === 'shifeng1993.com' || host.endsWith(SHARED_COOKIE_DOMAIN)
+        ? SHARED_COOKIE_DOMAIN
+        : '';
+}
+
+function isSecureCookie(req) {
+    const proto = String(req?.headers?.['x-forwarded-proto'] || '').toLowerCase();
+    const host = hostFromReq(req);
+    return proto === 'https' || host === 'shifeng1993.com' || host.endsWith(SHARED_COOKIE_DOMAIN);
+}
+
+function buildCookie(value, req, maxAge) {
+    const parts = [`${COOKIE_NAME}=${value}`, 'HttpOnly', 'SameSite=Strict', 'Path=/', `Max-Age=${maxAge}`];
+    const domain = sessionCookieDomain(req);
+    if (domain) parts.push(`Domain=${domain}`);
+    if (isSecureCookie(req)) parts.push('Secure');
+    return parts.join('; ');
+}
+
+export function setSessionCookie(res, token, req) {
+    const maxAge = 7 * 24 * 60 * 60;
+    res.setHeader('Set-Cookie', buildCookie(token, req, maxAge));
+}
+
+export function clearSessionCookie(res, req) {
+    res.setHeader('Set-Cookie', buildCookie('', req, 0));
 }
 
 export function getSessionUser(req) {
