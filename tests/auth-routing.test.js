@@ -107,6 +107,20 @@ test('api-prefixed dashboard and usage routes are normalized before page session
     assert.match(await dashboard.text(), /登录|过期/);
 });
 
+test('authenticated usage API is not blocked by stats IP whitelist', async t => {
+    const base = await startServer(t);
+
+    const response = await fetch(`${base}/api/usage/overview?service=relay`, {
+        headers: {
+            ...sessionHeaders(),
+            accept: 'application/json',
+            'x-forwarded-for': '203.0.113.10'
+        }
+    });
+
+    assert.notEqual(response.status, 403);
+});
+
 test('unauthenticated page routes lead to login and legacy FE routes lead to dashboard', async t => {
     const base = await startServer(t);
 

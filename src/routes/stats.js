@@ -12,23 +12,6 @@ import {models} from '../db/models/index.js';
 import {runAnalysis, runBatchAnalysis, getSampleCount, getSamples} from '../services/coach/index.js';
 import logger from '../utils/logger.js';
 
-// Stats page IP whitelist (read lazily because .env is loaded by index.js).
-function getStatsIpWhitelist() {
-    return (process.env.STATS_IP_WHITELIST || '')
-        .split(',')
-        .map((ip) => ip.trim())
-        .filter(Boolean);
-}
-
-function isIpAllowed(req) {
-    const whitelist = getStatsIpWhitelist();
-    if (whitelist.length === 0) return true;
-    const clientIp =
-        req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress?.replace('::ffff:', '');
-    if (clientIp === '127.0.0.1' || clientIp === '::1' || clientIp === 'localhost') return true;
-    return whitelist.includes(clientIp);
-}
-
 /**
  * 发送JSON响应
  */
@@ -1284,14 +1267,6 @@ async function getUserDetail(serviceType = 'codebuddy', username) {
 export async function routeStatsRequest(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const pathname = url.pathname;
-
-    if (!isIpAllowed(req)) {
-        const clientIp =
-            req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress?.replace('::ffff:', '');
-        logger.warn(`Stats access denied for IP: ${clientIp}`);
-        sendJson(res, 403, {error: 'Access denied'});
-        return true;
-    }
 
     // API请求
     if (pathname.startsWith('/stats/api/')) {
