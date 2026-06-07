@@ -55,9 +55,9 @@ function isSecureCookie(req) {
     return proto === 'https' || host === 'shifeng1993.com' || host.endsWith(SHARED_COOKIE_DOMAIN);
 }
 
-function buildCookie(value, req, maxAge) {
+function buildCookie(value, req, maxAge, options = {}) {
     const parts = [`${COOKIE_NAME}=${value}`, 'HttpOnly', 'SameSite=Strict', 'Path=/', `Max-Age=${maxAge}`];
-    const domain = sessionCookieDomain(req);
+    const domain = options.hostOnly ? '' : sessionCookieDomain(req);
     if (domain) parts.push(`Domain=${domain}`);
     if (isSecureCookie(req)) parts.push('Secure');
     return parts.join('; ');
@@ -69,7 +69,9 @@ export function setSessionCookie(res, token, req) {
 }
 
 export function clearSessionCookie(res, req) {
-    res.setHeader('Set-Cookie', buildCookie('', req, 0));
+    const domainCookie = buildCookie('', req, 0);
+    const hostOnlyCookie = buildCookie('', req, 0, {hostOnly: true});
+    res.setHeader('Set-Cookie', domainCookie === hostOnlyCookie ? domainCookie : [domainCookie, hostOnlyCookie]);
 }
 
 export function getSessionUser(req) {

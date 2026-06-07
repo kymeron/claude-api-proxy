@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'fs';
 import {createServer} from '../src/server.js';
-import {createSessionToken, setSessionCookie} from '../src/services/gateway/session.js';
+import {createSessionToken, setSessionCookie, clearSessionCookie} from '../src/services/gateway/session.js';
 import {DASHBOARD_ENTRY_PATH, resolveLoginRole} from '../src/routes/auth.js';
 
 async function startServer(t) {
@@ -56,6 +56,19 @@ test('session cookies are shared across shifeng1993 subdomains', () => {
     assert.match(headers['Set-Cookie'], /Domain=\.shifeng1993\.com/);
     assert.match(headers['Set-Cookie'], /Secure/);
     assert.match(headers['Set-Cookie'], /SameSite=Strict/);
+});
+
+test('logout clears both shared-domain and host-only session cookies', () => {
+    const headers = {};
+    const res = {setHeader: (name, value) => { headers[name] = value; }};
+
+    clearSessionCookie(res, {headers: {host: 'copilot.shifeng1993.com'}});
+
+    assert.ok(Array.isArray(headers['Set-Cookie']));
+    assert.equal(headers['Set-Cookie'].length, 2);
+    assert.match(headers['Set-Cookie'][0], /Domain=\.shifeng1993\.com/);
+    assert.doesNotMatch(headers['Set-Cookie'][1], /Domain=/);
+    assert.ok(headers['Set-Cookie'].every(cookie => /cap_session=/.test(cookie) && /Max-Age=0/.test(cookie)));
 });
 
 test('server allows dashboard pages to call the api namespace with credentials', async t => {
