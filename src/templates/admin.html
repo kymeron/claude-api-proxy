@@ -418,7 +418,7 @@
 <div class="toast" id="toast"></div>
 <script>
 const S={me:null,tenants:[],tenant:null,tab:'overview',statsTab:'relay',statsPage:'users',adminStats:null,adminStatsSearch:'',adminStatsPageNo:1,adminStatsPageSize:20,adminStatsSort:'apiCalls',adminStatsSortDir:'desc',adminStatsStartDate:'',adminStatsEndDate:'',adminModelStartDate:'',adminModelEndDate:'',adminModelPageNo:1,adminTrendPageNo:1,adminCoachPageNo:1,adminTrendWorkdayOnly:true,adminModelCache:[],adminSelectedCoach:null,upstreams:[],credentials:[],currentCredential:0,codebuddyOptions:null,codebuddyCustomSiteLabels:{},editingUpstream:null,oauthState:null,oauthTimer:null,passwordUser:null,editingUser:null,copilotCredentials:[],editingCopilot:null,copilotAuthId:null,copilotDeviceCode:null,copilotAuthTimer:null,feedbackItems:[],feedbackPage:1,feedbackPageSize:10,feedbackTotal:0};
-const HASH_ROUTES=['#/dashboard/overview','#/dashboard/relay','#/dashboard/codebuddy','#/dashboard/copilot','#/stats/relay/users','#/stats/relay/model-cache','#/stats/relay/trend','#/stats/relay/coach','#/stats/codebuddy/users','#/stats/codebuddy/model-cache','#/stats/codebuddy/trend','#/stats/codebuddy/coach','#/stats/copilot/users','#/stats/copilot/model-cache','#/stats/copilot/trend','#/stats/copilot/coach'];
+const HASH_ROUTES=['#/console/overview','#/console/relay','#/console/codebuddy','#/console/copilot','#/stats/relay/users','#/stats/relay/model-cache','#/stats/relay/trend','#/stats/relay/coach','#/stats/codebuddy/users','#/stats/codebuddy/model-cache','#/stats/codebuddy/trend','#/stats/codebuddy/coach','#/stats/copilot/users','#/stats/copilot/model-cache','#/stats/copilot/trend','#/stats/copilot/coach'];
 const ADMIN_STATS_TABS=[['users','用户排行'],['model-cache','模型分析'],['trend','用户趋势'],['coach','使用建议']];
 const ADMIN_STATS_SERVICES=[['relay','Relay'],['codebuddy','CodeBuddy'],['copilot','Copilot']];
 const STATS_DAILY_TREND_API='/stats/api/daily-trend';
@@ -456,9 +456,9 @@ function syncStatsHash(page,options={}){
     location.hash=hash;
 }
 function parseHashRoute(){
-    const raw=(location.hash||'#/dashboard/overview').replace(/^#\/?/,'');
+    const raw=(location.hash||'#/console/overview').replace(/^#\/?/,'');
     const parts=raw.split('/').filter(Boolean);
-    const view=parts[0]||'dashboard';
+    const view=parts[0]||'console';
     if(view==='stats'){
         const service=ADMIN_STATS_SERVICES.some(([id])=>id===parts[1])?parts[1]:S.statsTab;
         const detail=ADMIN_STATS_SERVICES.some(([id])=>id===parts[1])?parts[2]:parts[1];
@@ -478,13 +478,13 @@ function routeFromHash(){
 window.addEventListener('hashchange',routeFromHash);
 async function init(){
     try{
-        S.me=await api('/admin/me');document.getElementById('username').textContent=S.me.username;
+        S.me=await api('/dashboard/me');document.getElementById('username').textContent=S.me.username;
         document.getElementById('avatar').textContent=(S.me.username||'U').slice(0,1).toUpperCase();
         if(S.me.isAdmin){document.getElementById('nav-users').style.display='';}
         document.getElementById('newRoleAdminOption').hidden=S.me.role!=='superadmin';
         document.getElementById('editRoleAdminOption').hidden=S.me.role!=='superadmin';
         await loadMyTenant({deferRoute:true});
-        if(location.hash&&!location.hash.startsWith('#/'))syncHashRoute('dashboard','overview',{replace:true});
+        if(location.hash&&!location.hash.startsWith('#/'))syncHashRoute('console','overview',{replace:true});
         routeFromHash();
     }catch(e){document.getElementById('main').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
 }
@@ -495,15 +495,15 @@ function setNav(active){
 async function loadMyTenant(){
     const options=arguments[0]||{};
     try{
-        const data=await api('/admin/my-tenant');S.tenant=data.tenant;S.tab='overview';
+        const data=await api('/dashboard/my-tenant');S.tenant=data.tenant;S.tab='overview';
         setNav('console');
         document.getElementById('pageTitle').textContent='服务控制台';
         document.getElementById('pageSubtitle').textContent='@'+(S.tenant.username||S.me.username||'-')+' · 当前用户配置';
         if(!options.deferRoute)renderTenant();
     }catch(e){toast(e.message,'error');}
 }
-function showConsole(){const tab=arguments[0]||S.tab||'overview';const options=arguments[1]||{};if(S.tenant){if(!options.skipHash)syncHashRoute('dashboard',tab);setNav('console');document.getElementById('pageTitle').textContent='服务控制台';document.getElementById('pageSubtitle').textContent='@'+(S.tenant.username||S.me.username||'-')+' · 当前用户配置';switchTab(tab,{skipHash:true});}}
-function switchTab(tab){const options=arguments[1]||{};S.tab=tab;if(['relay','codebuddy','copilot','overview'].includes(tab)&&!options.skipHash)syncHashRoute('dashboard',tab);renderTenant();if(tab==='relay')loadRelay();if(tab==='codebuddy')loadCodebuddy();if(tab==='copilot')loadCopilot();if(['relay','codebuddy','copilot'].includes(tab))loadServiceStats(tab);}
+function showConsole(){const tab=arguments[0]||S.tab||'overview';const options=arguments[1]||{};if(S.tenant){if(!options.skipHash)syncHashRoute('console',tab);setNav('console');document.getElementById('pageTitle').textContent='服务控制台';document.getElementById('pageSubtitle').textContent='@'+(S.tenant.username||S.me.username||'-')+' · 当前用户配置';switchTab(tab,{skipHash:true});}}
+function switchTab(tab){const options=arguments[1]||{};S.tab=tab;if(['relay','codebuddy','copilot','overview'].includes(tab)&&!options.skipHash)syncHashRoute('console',tab);renderTenant();if(tab==='relay')loadRelay();if(tab==='codebuddy')loadCodebuddy();if(tab==='copilot')loadCopilot();if(['relay','codebuddy','copilot'].includes(tab))loadServiceStats(tab);}
 function renderTenant(){
     const t=S.tenant;if(!t)return;
     const tabs=[['overview','概览'],...enabledServices().map(([type,label])=>[type,label])];
@@ -531,9 +531,9 @@ function renderOverview(){
     </div>`;
 }
 async function copyKey(){try{await navigator.clipboard.writeText(S.tenant.api_key_plain||'');toast('API Key 已复制');}catch{toast('浏览器不允许复制，请手动选择','error');}}
-async function regenerateKey(){if(!confirm('重新生成后，旧 API Key 会立即失效。确认继续？'))return;try{const d=await api(`/admin/tenants/${S.tenant.id}/regenerate-key`,{method:'POST'});S.tenant.api_key_plain=d.api_key;S.tenant.api_key_prefix=d.api_key_prefix;renderOverview();toast('API Key 已重新生成');}catch(e){toast(e.message,'error');}}
+async function regenerateKey(){if(!confirm('重新生成后，旧 API Key 会立即失效。确认继续？'))return;try{const d=await api(`/dashboard/tenants/${S.tenant.id}/regenerate-key`,{method:'POST'});S.tenant.api_key_plain=d.api_key;S.tenant.api_key_prefix=d.api_key_prefix;renderOverview();toast('API Key 已重新生成');}catch(e){toast(e.message,'error');}}
 function renderRelay(){document.getElementById('tabBody').innerHTML=`<div class="content-with-anchor">${renderAnchorNav([['section-relay-list','上游配置列表'],['section-guide','使用指南'],['section-monthly-stats','月度使用统计'],['section-custom-stats','自定义统计面板']])}<div id="section-relay-list" class="card"><div class="card-head"><div><h2>Relay 上游</h2><div class="muted">请求仅发送到当前活跃上游，可手动切换使用的配置。</div></div><button class="btn btn-primary" onclick="openUpstream()">添加上游</button></div><div class="list" id="relayList"><div class="empty">正在加载...</div></div></div>${serviceInsights('relay')}</div>`;}
-async function loadRelay(){try{const d=await api(`/admin/tenants/${S.tenant.id}/upstreams`);S.upstreams=d.upstreams||[];renderRelayList();}catch(e){document.getElementById('relayList').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}}
+async function loadRelay(){try{const d=await api(`/dashboard/tenants/${S.tenant.id}/upstreams`);S.upstreams=d.upstreams||[];renderRelayList();}catch(e){document.getElementById('relayList').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}}
 function renderRelayList(){
     const el=document.getElementById('relayList');if(!el)return;
     if(!S.upstreams.length){el.innerHTML='<div class="empty">还没有上游。添加第一个上游后，Relay 即可开始转发请求。</div>';return;}
@@ -581,16 +581,16 @@ async function saveUpstream(){
     let modelMap;try{modelMap=readModelMappings();}catch(e){return toast(e.message,'error');}
     const body={name:upName.value.trim(),protocol:upProtocol.value,base_url:upUrl.value.trim(),api_key:upKey.value.trim(),proxy:upProxy.value.trim(),skip_tls_verify:upTls.checked,model_map:modelMap,enabled:S.editingUpstream===null?true:S.upstreams[S.editingUpstream].enabled};
     if(!body.base_url)return toast('请填写 Base URL','error');
-    try{const suffix=S.editingUpstream===null?'':`/${S.editingUpstream}`;await api(`/admin/tenants/${S.tenant.id}/upstreams${suffix}`,{method:S.editingUpstream===null?'POST':'PUT',body:JSON.stringify(body)});closeModal('upstreamModal');await loadRelay();toast('上游配置已保存');}catch(e){toast(e.message,'error');}
+    try{const suffix=S.editingUpstream===null?'':`/${S.editingUpstream}`;await api(`/dashboard/tenants/${S.tenant.id}/upstreams${suffix}`,{method:S.editingUpstream===null?'POST':'PUT',body:JSON.stringify(body)});closeModal('upstreamModal');await loadRelay();toast('上游配置已保存');}catch(e){toast(e.message,'error');}
 }
-async function setActive(i){try{await api(`/admin/tenants/${S.tenant.id}/upstreams/set-active`,{method:'POST',body:JSON.stringify({index:i})});await loadRelay();toast('活跃上游已切换');}catch(e){toast(e.message,'error');}}
-async function testUpstream(i){toast('正在测试连接...');try{const d=await api(`/admin/tenants/${S.tenant.id}/upstreams/test`,{method:'POST',body:JSON.stringify({index:i})});toast(d.message,d.success?'success':'error');}catch(e){toast(e.message,'error');}}
-async function cloneUpstream(i){try{await api(`/admin/tenants/${S.tenant.id}/upstreams/${i}/clone`,{method:'POST'});await loadRelay();toast('已复制上游');}catch(e){toast(e.message,'error');}}
-async function moveUpstream(i,direction){try{await api(`/admin/tenants/${S.tenant.id}/upstreams/move-${direction}`,{method:'POST',body:JSON.stringify({index:i})});await loadRelay();}catch(e){toast(e.message,'error');}}
-async function deleteUpstream(i){if(!confirm('确认删除这个上游？'))return;try{await api(`/admin/tenants/${S.tenant.id}/upstreams/${i}`,{method:'DELETE'});await loadRelay();toast('上游已删除');}catch(e){toast(e.message,'error');}}
+async function setActive(i){try{await api(`/dashboard/tenants/${S.tenant.id}/upstreams/set-active`,{method:'POST',body:JSON.stringify({index:i})});await loadRelay();toast('活跃上游已切换');}catch(e){toast(e.message,'error');}}
+async function testUpstream(i){toast('正在测试连接...');try{const d=await api(`/dashboard/tenants/${S.tenant.id}/upstreams/test`,{method:'POST',body:JSON.stringify({index:i})});toast(d.message,d.success?'success':'error');}catch(e){toast(e.message,'error');}}
+async function cloneUpstream(i){try{await api(`/dashboard/tenants/${S.tenant.id}/upstreams/${i}/clone`,{method:'POST'});await loadRelay();toast('已复制上游');}catch(e){toast(e.message,'error');}}
+async function moveUpstream(i,direction){try{await api(`/dashboard/tenants/${S.tenant.id}/upstreams/move-${direction}`,{method:'POST',body:JSON.stringify({index:i})});await loadRelay();}catch(e){toast(e.message,'error');}}
+async function deleteUpstream(i){if(!confirm('确认删除这个上游？'))return;try{await api(`/dashboard/tenants/${S.tenant.id}/upstreams/${i}`,{method:'DELETE'});await loadRelay();toast('上游已删除');}catch(e){toast(e.message,'error');}}
 function renderCodebuddy(){document.getElementById('tabBody').innerHTML=`<div class="content-with-anchor">${renderAnchorNav([['section-codebuddy-list','\u51ed\u8bc1\u914d\u7f6e\u5217\u8868'],['section-codebuddy-models','\u53ef\u7528\u6a21\u578b'],['section-guide','\u4f7f\u7528\u6307\u5357'],['section-monthly-stats','\u6708\u5ea6\u4f7f\u7528\u7edf\u8ba1'],['section-custom-stats','\u81ea\u5b9a\u4e49\u7edf\u8ba1\u9762\u677f']])}<div id="section-codebuddy-list" class="card"><div class="card-head"><div><h2>CodeBuddy \u51ed\u8bc1</h2><div class="muted">\u53ef\u6dfb\u52a0\u591a\u4e2a\u8d26\u53f7\uff0c\u5e76\u624b\u52a8\u6307\u5b9a\u5f53\u524d\u6d3b\u8dc3\u51ed\u8bc1\u3002</div></div><button class="btn btn-primary" onclick="openOAuth()">\u6dfb\u52a0\u51ed\u8bc1</button></div><div class="list" id="credentialList"><div class="empty">\u6b63\u5728\u52a0\u8f7d...</div></div></div><div id="section-codebuddy-models" class="card" style="margin-top:16px"><div class="card-head"><div><h2>CodeBuddy \u53ef\u7528\u6a21\u578b</h2><div class="muted">\u4ece\u670d\u52a1\u7aef\u914d\u7f6e\u52a8\u6001\u8bfb\u53d6\uff0c\u5305\u62ec\u81ea\u5b9a\u4e49\u4e0a\u6e38\u7684\u6a21\u578b\u8986\u76d6\u3002</div></div></div><div id="codebuddyModelGuide" class="empty">\u6b63\u5728\u52a0\u8f7d...</div></div>${serviceInsights('codebuddy')}</div>`;renderCodebuddyModelGuide();}
-async function loadCodebuddy(){try{const [d]=await Promise.all([api(`/admin/tenants/${S.tenant.id}/codebuddy/credentials`),loadCodebuddyOptions()]);S.credentials=d.credentials||[];S.currentCredential=d.currentIndex||0;renderCredentialList();}catch(e){document.getElementById('credentialList').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}}
-async function loadCodebuddyOptions(){const d=await api('/admin/codebuddy/options');S.codebuddyOptions=d.options||[];S.codebuddyCustomSiteLabels=d.customSiteLabels||{};renderCodebuddyModelGuide();return d;}
+async function loadCodebuddy(){try{const [d]=await Promise.all([api(`/dashboard/tenants/${S.tenant.id}/codebuddy/credentials`),loadCodebuddyOptions()]);S.credentials=d.credentials||[];S.currentCredential=d.currentIndex||0;renderCredentialList();}catch(e){document.getElementById('credentialList').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}}
+async function loadCodebuddyOptions(){const d=await api('/dashboard/codebuddy/options');S.codebuddyOptions=d.options||[];S.codebuddyCustomSiteLabels=d.customSiteLabels||{};renderCodebuddyModelGuide();return d;}
 function codebuddyOptionLabel(o){return o.label||(o.personal?'\u4e2a\u4eba\u7ad9':S.codebuddyCustomSiteLabels[o.host]||'\u81ea\u5b9a\u4e49\u7ad9');}
 function renderCodebuddyOption(o){return `<option value="${esc(o.url)}">${esc(o.host)} (${esc(codebuddyOptionLabel(o))})</option>`;}
 function renderCodebuddyModelGuide(){
@@ -604,11 +604,11 @@ function renderCredentialList(){
     const el=document.getElementById('credentialList');if(!el)return;if(!S.credentials.length){el.innerHTML='<div class="empty">暂无凭证。点击“添加凭证”完成 CodeBuddy 登录授权。</div>';return;}
     el.innerHTML=S.credentials.map((c,i)=>`<div class="item ${i===S.currentCredential&&!c.isDisabled?'active':''}"><div><h3>${esc(c.name||c.email||c.userId||('凭证 #'+(i+1)))} ${i===S.currentCredential?'<span class="badge on">活跃</span>':''}</h3><p>${esc(c.baseUrl||'-')}</p><p>${c.enterpriseName?esc(c.enterpriseName)+' · ':''}${c.timeRemainingStr?`剩余 ${esc(c.timeRemainingStr)}`:''}${c.isExpired?' · 已过期':''}</p></div><div class="actions">${i!==S.currentCredential&&!c.isDisabled?`<button class="btn btn-sm" onclick="credentialAction('select',${i})">设为活跃</button>`:''}<button class="btn btn-sm" ${i===0?'disabled':''} onclick="moveCodebuddyCredential(${i},'up')">上移</button><button class="btn btn-sm" ${i===S.credentials.length-1?'disabled':''} onclick="moveCodebuddyCredential(${i},'down')">下移</button><button class="btn btn-sm" onclick="credentialAction('toggle',${i})">${c.isDisabled?'启用':'禁用'}</button><button class="btn btn-danger btn-sm" onclick="credentialAction('delete',${i})">删除</button></div></div>`).join('');
 }
-async function credentialAction(action,index){if(action==='delete'&&!confirm('确认删除这个 CodeBuddy 凭证？'))return;try{await api(`/admin/tenants/${S.tenant.id}/codebuddy/credentials/${action}`,{method:'POST',body:JSON.stringify({index})});await loadCodebuddy();toast('操作成功');}catch(e){toast(e.message,'error');}}
-async function moveCodebuddyCredential(index,direction){try{await api(`/admin/tenants/${S.tenant.id}/codebuddy/credentials/move-${direction}`,{method:'POST',body:JSON.stringify({index})});await loadCodebuddy();toast('凭证顺序已更新');}catch(e){toast(e.message,'error');}}
+async function credentialAction(action,index){if(action==='delete'&&!confirm('确认删除这个 CodeBuddy 凭证？'))return;try{await api(`/dashboard/tenants/${S.tenant.id}/codebuddy/credentials/${action}`,{method:'POST',body:JSON.stringify({index})});await loadCodebuddy();toast('操作成功');}catch(e){toast(e.message,'error');}}
+async function moveCodebuddyCredential(index,direction){try{await api(`/dashboard/tenants/${S.tenant.id}/codebuddy/credentials/move-${direction}`,{method:'POST',body:JSON.stringify({index})});await loadCodebuddy();toast('凭证顺序已更新');}catch(e){toast(e.message,'error');}}
 async function openOAuth(){try{const d=await loadCodebuddyOptions();oauthBase.innerHTML=(d.options||[]).map(renderCodebuddyOption).join('');oauthStart.style.display='';oauthPending.style.display='none';document.getElementById('oauthModal').classList.add('show');}catch(e){toast(e.message,'error');}}
-async function startOAuth(){try{const d=await api(`/admin/tenants/${S.tenant.id}/codebuddy/auth/start?base_url=${encodeURIComponent(oauthBase.value)}`);S.oauthState=d.auth_state;oauthStart.style.display='none';oauthPending.style.display='';oauthLink.href=d.verification_uri_complete;window.open(d.verification_uri_complete,'_blank','noopener');clearInterval(S.oauthTimer);S.oauthTimer=setInterval(pollOAuth,Math.max(3000,(d.interval||5)*1000));}catch(e){toast(e.message,'error');}}
-async function pollOAuth(){if(!S.oauthState)return;try{const d=await api(`/admin/tenants/${S.tenant.id}/codebuddy/auth/poll`,{method:'POST',body:JSON.stringify({auth_state:S.oauthState})});if(d.status==='success'){closeOAuth();await loadCodebuddy();toast('CodeBuddy 凭证添加成功');}else if(d.status==='error'){closeOAuth();toast(d.message||'授权失败','error');}}catch(e){closeOAuth();toast(e.message,'error');}}
+async function startOAuth(){try{const d=await api(`/dashboard/tenants/${S.tenant.id}/codebuddy/auth/start?base_url=${encodeURIComponent(oauthBase.value)}`);S.oauthState=d.auth_state;oauthStart.style.display='none';oauthPending.style.display='';oauthLink.href=d.verification_uri_complete;window.open(d.verification_uri_complete,'_blank','noopener');clearInterval(S.oauthTimer);S.oauthTimer=setInterval(pollOAuth,Math.max(3000,(d.interval||5)*1000));}catch(e){toast(e.message,'error');}}
+async function pollOAuth(){if(!S.oauthState)return;try{const d=await api(`/dashboard/tenants/${S.tenant.id}/codebuddy/auth/poll`,{method:'POST',body:JSON.stringify({auth_state:S.oauthState})});if(d.status==='success'){closeOAuth();await loadCodebuddy();toast('CodeBuddy 凭证添加成功');}else if(d.status==='error'){closeOAuth();toast(d.message||'授权失败','error');}}catch(e){closeOAuth();toast(e.message,'error');}}
 function closeOAuth(){clearInterval(S.oauthTimer);S.oauthTimer=null;S.oauthState=null;closeModal('oauthModal');}
 function renderCopilot(){
     document.getElementById('tabBody').innerHTML=`<div class="content-with-anchor">${renderAnchorNav([['section-copilot-list','凭证配置列表'],['section-guide','使用指南'],['section-monthly-stats','月度使用统计'],['section-custom-stats','自定义统计面板']])}<div id="section-copilot-list" class="card"><div class="card-head"><div><h2>GitHub Copilot 凭据</h2><div class="muted">每个租户独立授权，API 请求只会使用当前租户已启用的凭据。</div></div><div class="actions"><span class="badge ${profile(S.tenant,'copilot').enabled?'on':'off'}">${profile(S.tenant,'copilot').enabled?'服务已启用':'服务已停用'}</span><button class="btn btn-primary" onclick="openCopilotCredential()">新增凭据</button></div></div><div class="list" id="copilotCredentialList"><div class="empty">正在加载...</div></div></div>${serviceInsights('copilot')}</div>`;
@@ -653,7 +653,7 @@ function renderCreditChart(id,title,days){
 }
 async function loadServiceStats(type){
     const el=document.getElementById(type+'StatsBody');const month=document.getElementById(type+'StatsMonth')?.value;if(!el||!month)return;
-    try{const d=await api(`/admin/tenants/${S.tenant.id}/stats?service=${type}&month=${encodeURIComponent(month)}`);const rows=d.data||[];renderStatsBlock(el,type,month,rows);}catch(e){el.className='empty';el.textContent=e.message;}
+    try{const d=await api(`/dashboard/tenants/${S.tenant.id}/stats?service=${type}&month=${encodeURIComponent(month)}`);const rows=d.data||[];renderStatsBlock(el,type,month,rows);}catch(e){el.className='empty';el.textContent=e.message;}
 }
 function updateCustomStatsCard(type, serviceProfile){
     if(!serviceProfile)return;
@@ -669,17 +669,17 @@ function updateCustomStatsCard(type, serviceProfile){
 }
 async function refreshServiceStats(type){
     try{
-        const d=await api(`/admin/tenants/${S.tenant.id}/service-profile?service=${encodeURIComponent(type)}`);
+        const d=await api(`/dashboard/tenants/${S.tenant.id}/service-profile?service=${encodeURIComponent(type)}`);
         updateCustomStatsCard(type,d.profile);
         toast('自定义统计已刷新');
     }catch(e){toast(e.message,'error');}
 }
-async function resetServiceStats(type){if(!confirm(`确认重置 ${type} 的自定义累计统计？月度历史不会删除。`))return;try{const d=await api(`/admin/tenants/${S.tenant.id}/stats/reset`,{method:'POST',body:JSON.stringify({service:type})});S.tenant=d.tenant;renderTenant();if(type==='relay')loadRelay();if(type==='codebuddy')loadCodebuddy();if(type==='copilot')loadCopilot();loadServiceStats(type);toast('自定义统计已重置');}catch(e){toast(e.message,'error');}}
+async function resetServiceStats(type){if(!confirm(`确认重置 ${type} 的自定义累计统计？月度历史不会删除。`))return;try{const d=await api(`/dashboard/tenants/${S.tenant.id}/stats/reset`,{method:'POST',body:JSON.stringify({service:type})});S.tenant=d.tenant;renderTenant();if(type==='relay')loadRelay();if(type==='codebuddy')loadCodebuddy();if(type==='copilot')loadCopilot();loadServiceStats(type);toast('自定义统计已重置');}catch(e){toast(e.message,'error');}}
 function copyGuideConfig(type){copyTextFromElement(type+'GuideConfig');}
 function copyGuideOpenAIUrl(type){copyTextFromElement(type+'GuideOpenAIUrl');}
 function copyGuideResponsesUrl(type){copyTextFromElement(type+'GuideResponsesUrl');}
 async function copyTextFromElement(id){const el=document.getElementById(id);if(!el)return;try{await navigator.clipboard.writeText(el.textContent);toast('已复制');}catch{toast('浏览器不允许复制，请手动选择','error');}}
-async function loadCopilot(){try{const d=await api(`/admin/tenants/${S.tenant.id}/copilot-credentials`);S.copilotCredentials=d.credentials||[];renderCopilotCredentials();}catch(e){const el=document.getElementById('copilotCredentialList');if(el)el.innerHTML='<div class="empty">'+esc(e.message)+'</div>';}}
+async function loadCopilot(){try{const d=await api(`/dashboard/tenants/${S.tenant.id}/copilot-credentials`);S.copilotCredentials=d.credentials||[];renderCopilotCredentials();}catch(e){const el=document.getElementById('copilotCredentialList');if(el)el.innerHTML='<div class="empty">'+esc(e.message)+'</div>';}}
 function renderCopilotCredentials(){
     const el=document.getElementById('copilotCredentialList');if(!el)return;
     if(!S.copilotCredentials.length){el.innerHTML='<div class="empty">还没有 Copilot 凭据。新增后点击“连接 GitHub”完成设备授权。</div>';return;}
@@ -694,23 +694,23 @@ function openCopilotCredential(id=null){
 async function saveCopilotCredential(){
     const body={name:copilotName.value.trim(),account_type:copilotAccount.value,vscode_version:copilotVsCode.value.trim(),proxy:copilotProxy.value.trim(),enabled:copilotEnabled.checked,skip_tls_verify:copilotTls.checked};
     if(!body.name)return toast('请填写凭据名称','error');
-    try{const suffix=S.editingCopilot===null?'':`/${S.editingCopilot}`;await api(`/admin/tenants/${S.tenant.id}/copilot-credentials${suffix}`,{method:S.editingCopilot===null?'POST':'PUT',body:JSON.stringify(body)});closeModal('copilotCredentialModal');await loadCopilot();toast('Copilot 凭据已保存');}catch(e){toast(e.message,'error');}
+    try{const suffix=S.editingCopilot===null?'':`/${S.editingCopilot}`;await api(`/dashboard/tenants/${S.tenant.id}/copilot-credentials${suffix}`,{method:S.editingCopilot===null?'POST':'PUT',body:JSON.stringify(body)});closeModal('copilotCredentialModal');await loadCopilot();toast('Copilot 凭据已保存');}catch(e){toast(e.message,'error');}
 }
-async function deleteCopilotCredential(id){if(!confirm('确认删除这条 Copilot 凭据？'))return;try{await api(`/admin/tenants/${S.tenant.id}/copilot-credentials/${id}`,{method:'DELETE'});await loadCopilot();toast('Copilot 凭据已删除');}catch(e){toast(e.message,'error');}}
-async function setCopilotActive(id){try{await api(`/admin/tenants/${S.tenant.id}/copilot-credentials/${id}/active`,{method:'POST'});await loadCopilot();toast('Copilot 活跃凭据已切换');}catch(e){toast(e.message,'error');}}
-async function toggleCopilotCredential(id){try{await api(`/admin/tenants/${S.tenant.id}/copilot-credentials/${id}/toggle`,{method:'POST'});await loadCopilot();toast('Copilot 凭据状态已更新');}catch(e){toast(e.message,'error');}}
-async function moveCopilotCredential(id,direction){try{await api(`/admin/tenants/${S.tenant.id}/copilot-credentials/${id}/move-${direction}`,{method:'POST'});await loadCopilot();toast('Copilot 凭据顺序已更新');}catch(e){toast(e.message,'error');}}
+async function deleteCopilotCredential(id){if(!confirm('确认删除这条 Copilot 凭据？'))return;try{await api(`/dashboard/tenants/${S.tenant.id}/copilot-credentials/${id}`,{method:'DELETE'});await loadCopilot();toast('Copilot 凭据已删除');}catch(e){toast(e.message,'error');}}
+async function setCopilotActive(id){try{await api(`/dashboard/tenants/${S.tenant.id}/copilot-credentials/${id}/active`,{method:'POST'});await loadCopilot();toast('Copilot 活跃凭据已切换');}catch(e){toast(e.message,'error');}}
+async function toggleCopilotCredential(id){try{await api(`/dashboard/tenants/${S.tenant.id}/copilot-credentials/${id}/toggle`,{method:'POST'});await loadCopilot();toast('Copilot 凭据状态已更新');}catch(e){toast(e.message,'error');}}
+async function moveCopilotCredential(id,direction){try{await api(`/dashboard/tenants/${S.tenant.id}/copilot-credentials/${id}/move-${direction}`,{method:'POST'});await loadCopilot();toast('Copilot 凭据顺序已更新');}catch(e){toast(e.message,'error');}}
 async function startCopilotAuth(id){
     S.copilotAuthId=id;copilotAuthLoading.style.display='';copilotAuthPending.style.display='none';document.getElementById('copilotAuthModal').classList.add('show');
-    try{const d=await api(`/admin/tenants/${S.tenant.id}/copilot-credentials/${id}/auth/start`,{method:'POST'});S.copilotDeviceCode=d.device_code;copilotUserCode.textContent=d.user_code;copilotAuthLink.href=d.verification_uri;copilotAuthLoading.style.display='none';copilotAuthPending.style.display='';window.open(d.verification_uri,'_blank','noopener');const interval=Math.max(5,Number(d.interval)||5)*1000;S.copilotAuthTimer=setTimeout(pollCopilotAuth,interval);}catch(e){closeCopilotAuth();toast(e.message,'error');}
+    try{const d=await api(`/dashboard/tenants/${S.tenant.id}/copilot-credentials/${id}/auth/start`,{method:'POST'});S.copilotDeviceCode=d.device_code;copilotUserCode.textContent=d.user_code;copilotAuthLink.href=d.verification_uri;copilotAuthLoading.style.display='none';copilotAuthPending.style.display='';window.open(d.verification_uri,'_blank','noopener');const interval=Math.max(5,Number(d.interval)||5)*1000;S.copilotAuthTimer=setTimeout(pollCopilotAuth,interval);}catch(e){closeCopilotAuth();toast(e.message,'error');}
 }
 async function pollCopilotAuth(){
     if(!S.copilotAuthId||!S.copilotDeviceCode)return;
-    try{const d=await api(`/admin/tenants/${S.tenant.id}/copilot-credentials/${S.copilotAuthId}/auth/poll`,{method:'POST',body:JSON.stringify({device_code:S.copilotDeviceCode})});if(d.status==='success'){closeCopilotAuth();await loadCopilot();toast('GitHub Copilot 认证成功');return;}if(d.status==='expired_token'||d.status==='access_denied'){closeCopilotAuth();toast(d.message||'GitHub 授权未完成','error');return;}const wait=d.status==='slow_down'?10000:5000;S.copilotAuthTimer=setTimeout(pollCopilotAuth,wait);}catch(e){closeCopilotAuth();toast(e.message,'error');}
+    try{const d=await api(`/dashboard/tenants/${S.tenant.id}/copilot-credentials/${S.copilotAuthId}/auth/poll`,{method:'POST',body:JSON.stringify({device_code:S.copilotDeviceCode})});if(d.status==='success'){closeCopilotAuth();await loadCopilot();toast('GitHub Copilot 认证成功');return;}if(d.status==='expired_token'||d.status==='access_denied'){closeCopilotAuth();toast(d.message||'GitHub 授权未完成','error');return;}const wait=d.status==='slow_down'?10000:5000;S.copilotAuthTimer=setTimeout(pollCopilotAuth,wait);}catch(e){closeCopilotAuth();toast(e.message,'error');}
 }
 function closeCopilotAuth(){clearTimeout(S.copilotAuthTimer);S.copilotAuthTimer=null;S.copilotAuthId=null;S.copilotDeviceCode=null;closeModal('copilotAuthModal');}
-async function clearCopilotAuth(id){if(!confirm('确认解除这条凭据的 GitHub 认证？'))return;try{await api(`/admin/tenants/${S.tenant.id}/copilot-credentials/${id}/auth/clear`,{method:'POST'});await loadCopilot();toast('认证已解除');}catch(e){toast(e.message,'error');}}
-async function refreshCopilot(id){try{await api(`/admin/tenants/${S.tenant.id}/copilot-credentials/${id}/refresh`,{method:'POST'});await loadCopilot();toast('Copilot Token 已刷新');}catch(e){toast(e.message,'error');}}
+async function clearCopilotAuth(id){if(!confirm('确认解除这条凭据的 GitHub 认证？'))return;try{await api(`/dashboard/tenants/${S.tenant.id}/copilot-credentials/${id}/auth/clear`,{method:'POST'});await loadCopilot();toast('认证已解除');}catch(e){toast(e.message,'error');}}
+async function refreshCopilot(id){try{await api(`/dashboard/tenants/${S.tenant.id}/copilot-credentials/${id}/refresh`,{method:'POST'});await loadCopilot();toast('Copilot Token 已刷新');}catch(e){toast(e.message,'error');}}
 function renderStatsDashboard(el,type,data){el.className='';el.innerHTML=`<pre style="white-space:pre-wrap;overflow:auto">${esc(JSON.stringify(data,null,2))}</pre>`;}
 function renderStatsTrendChart(id,title,labels,rows,type){const el=document.getElementById(id);if(!el||!window.echarts)return;const chart=echarts.init(el);chart.setOption({title:{text:title},xAxis:{type:'category',data:labels},yAxis:{type:'value'},series:[{type:'line',data:rows.map(r=>r.apiCalls||0)}]});}
 function renderModelCacheChart(id,models){const el=document.getElementById(id);if(!el||!window.echarts)return;const chart=echarts.init(el);chart.setOption({xAxis:{type:'value'},yAxis:{type:'category',data:models.map(m=>m.model)},series:[{type:'bar',data:models.map(m=>m.cacheHitRate||0)}]});}
@@ -823,15 +823,15 @@ async function showUsers(){
     setNav('users');document.getElementById('pageTitle').textContent='用户管理';document.getElementById('pageSubtitle').textContent='管理本地登录账号与用户端点';
     const serviceLabels={relay:'Relay',codebuddy:'CodeBuddy',copilot:'Copilot'};
     const serviceToggles=u=>u.tenant?Object.entries(serviceLabels).map(([type,label])=>{const p=profile(u.tenant,type);return `<label class="actions" style="gap:6px;margin-right:10px"><input class="toggle user-service-toggle" type="checkbox" autocomplete="off" ${p.enabled?'checked':''} onchange="toggleUserService(${u.tenant.id},'${type}',this.checked)"><span>${label}</span></label>`;}).join(''):'<span class="muted">未绑定配置</span>';
-    try{const d=await api('/admin/users');document.getElementById('main').innerHTML=`<div class="card"><div class="card-head"><div><h2>本地用户</h2><div class="muted">超级管理员账号不会出现在列表中；超级管理员可创建管理员和普通用户，管理员只管理普通用户。</div></div><button class="btn btn-primary" onclick="document.getElementById('userModal').classList.add('show')">创建用户</button></div><div class="table-wrap"><table><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>服务端点</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${(d.users||[]).map(u=>{const canManage=S.me.role==='superadmin'||u.role!=='admin';return `<tr><td>${esc(u.username)}</td><td>${esc(u.displayName||'-')}</td><td>${esc(u.role)}</td><td><div class="actions">${serviceToggles(u)}</div></td><td>${u.createdAt?new Date(u.createdAt*1000).toLocaleString():'-'}</td><td><div class="actions">${canManage?`<button class="btn btn-sm" onclick="openUserEdit(${jsArg(u.username)},${jsArg(u.displayName||'')},${jsArg(u.role||'user')})">编辑</button><button class="btn btn-sm" onclick="openPassword(${jsArg(u.username)})">重置密码</button><button class="btn btn-danger btn-sm" onclick="deleteUser(${jsArg(u.username)})">删除</button>`:'-'}</div></td></tr>`;}).join('')}</tbody></table></div></div>`;}catch(e){toast(e.message,'error');}
+    try{const d=await api('/dashboard/users');document.getElementById('main').innerHTML=`<div class="card"><div class="card-head"><div><h2>本地用户</h2><div class="muted">超级管理员账号不会出现在列表中；超级管理员可创建管理员和普通用户，管理员只管理普通用户。</div></div><button class="btn btn-primary" onclick="document.getElementById('userModal').classList.add('show')">创建用户</button></div><div class="table-wrap"><table><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>服务端点</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${(d.users||[]).map(u=>{const canManage=S.me.role==='superadmin'||u.role!=='admin';return `<tr><td>${esc(u.username)}</td><td>${esc(u.displayName||'-')}</td><td>${esc(u.role)}</td><td><div class="actions">${serviceToggles(u)}</div></td><td>${u.createdAt?new Date(u.createdAt*1000).toLocaleString():'-'}</td><td><div class="actions">${canManage?`<button class="btn btn-sm" onclick="openUserEdit(${jsArg(u.username)},${jsArg(u.displayName||'')},${jsArg(u.role||'user')})">编辑</button><button class="btn btn-sm" onclick="openPassword(${jsArg(u.username)})">重置密码</button><button class="btn btn-danger btn-sm" onclick="deleteUser(${jsArg(u.username)})">删除</button>`:'-'}</div></td></tr>`;}).join('')}</tbody></table></div></div>`;}catch(e){toast(e.message,'error');}
 }
-async function toggleUserService(tenantId,type,enabled){try{await api(`/admin/tenants/${tenantId}/services/${type}`,{method:'PUT',body:JSON.stringify({enabled})});await showUsers();if(S.tenant?.id===tenantId)await loadMyTenant();toast(`${type} 已${enabled?'启用':'停用'}`);}catch(e){toast(e.message,'error');await showUsers();}}
-async function createUser(){try{await api('/admin/users',{method:'POST',body:JSON.stringify({username:newUsername.value.trim(),displayName:newDisplayName.value.trim(),password:newPassword.value,role:newRole.value})});closeModal('userModal');newUsername.value=newDisplayName.value=newPassword.value='';newRole.value='user';await loadMyTenant();await showUsers();toast('用户已创建');}catch(e){toast(e.message,'error');}}
+async function toggleUserService(tenantId,type,enabled){try{await api(`/dashboard/tenants/${tenantId}/services/${type}`,{method:'PUT',body:JSON.stringify({enabled})});await showUsers();if(S.tenant?.id===tenantId)await loadMyTenant();toast(`${type} 已${enabled?'启用':'停用'}`);}catch(e){toast(e.message,'error');await showUsers();}}
+async function createUser(){try{await api('/dashboard/users',{method:'POST',body:JSON.stringify({username:newUsername.value.trim(),displayName:newDisplayName.value.trim(),password:newPassword.value,role:newRole.value})});closeModal('userModal');newUsername.value=newDisplayName.value=newPassword.value='';newRole.value='user';await loadMyTenant();await showUsers();toast('用户已创建');}catch(e){toast(e.message,'error');}}
 function openUserEdit(username,displayName,role){S.editingUser=username;editUserName.textContent='账号：'+username;editDisplayName.value=displayName||'';editRole.value=role||'user';editRole.disabled=S.me.role!=='superadmin';editRoleAdminOption.hidden=S.me.role!=='superadmin';document.getElementById('editUserModal').classList.add('show');}
-async function saveUserEdit(){try{await api(`/admin/users/${encodeURIComponent(S.editingUser)}`,{method:'PUT',body:JSON.stringify({displayName:editDisplayName.value.trim(),role:editRole.value})});closeModal('editUserModal');await loadMyTenant();await showUsers();toast('用户信息已更新');}catch(e){toast(e.message,'error');}}
+async function saveUserEdit(){try{await api(`/dashboard/users/${encodeURIComponent(S.editingUser)}`,{method:'PUT',body:JSON.stringify({displayName:editDisplayName.value.trim(),role:editRole.value})});closeModal('editUserModal');await loadMyTenant();await showUsers();toast('用户信息已更新');}catch(e){toast(e.message,'error');}}
 function openPassword(username){S.passwordUser=username;passwordTarget.textContent='账号：'+username;resetPassword.value='';document.getElementById('passwordModal').classList.add('show');}
-async function resetUserPassword(){try{await api(`/admin/users/${encodeURIComponent(S.passwordUser)}/password`,{method:'PUT',body:JSON.stringify({password:resetPassword.value})});closeModal('passwordModal');toast('密码已重置');}catch(e){toast(e.message,'error');}}
-async function deleteUser(username){if(!confirm(`确认删除用户 ${username}？关联配置数据也会被删除。`))return;try{await api(`/admin/users/${encodeURIComponent(username)}`,{method:'DELETE'});await loadMyTenant();await showUsers();toast('用户已删除');}catch(e){toast(e.message,'error');}}
+async function resetUserPassword(){try{await api(`/dashboard/users/${encodeURIComponent(S.passwordUser)}/password`,{method:'PUT',body:JSON.stringify({password:resetPassword.value})});closeModal('passwordModal');toast('密码已重置');}catch(e){toast(e.message,'error');}}
+async function deleteUser(username){if(!confirm(`确认删除用户 ${username}？关联配置数据也会被删除。`))return;try{await api(`/dashboard/users/${encodeURIComponent(username)}`,{method:'DELETE'});await loadMyTenant();await showUsers();toast('用户已删除');}catch(e){toast(e.message,'error');}}
 function closeModal(id){document.getElementById(id).classList.remove('show');}
 Object.assign(window,{
     showConsole,showFeedback,showStats,showUsers,routeFromHash,syncHashRoute,syncStatsHash,scrollToSection,logout,switchTab,copyKey,regenerateKey,

@@ -1302,7 +1302,7 @@ export async function routeStatsRequest(req, res) {
     // 统计页面
     if (pathname === '/stats' || pathname === '/stats/') {
         if (req.method === 'GET') {
-            res.writeHead(302, {Location: '/admin#/stats/relay/users'});
+            res.writeHead(302, {Location: '/dashboard#/stats/relay/users'});
             res.end();
             return true;
         }

@@ -55,7 +55,7 @@ function getLocalIp() {
         server.listen(PORT, HOST, () => {
             const localIp = getLocalIp() || 'localhost';
             logger.info(`Server running at http://${localIp}:${PORT}`);
-            logger.info(`Admin panel: http://${localIp}:${PORT}/admin`);
+            logger.info(`Admin panel: http://${localIp}:${PORT}/dashboard`);
             logger.info(`Relay:    http://${localIp}:${PORT}/relay`);
             logger.info(`CodeBuddy: http://${localIp}:${PORT}/codebuddy`);
             logger.info(`Copilot:  http://${localIp}:${PORT}/copilot\n`);

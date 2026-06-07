@@ -12,7 +12,7 @@ import logger from './utils/logger.js';
 import {routeCodebuddyRequest, handleCodebuddyResponsesWS} from './routes/codebuddy.js';
 import {routeRelayRequest, handleRelayResponsesWS} from './routes/relay.js';
 import {routeCopilotRequest, handleCopilotResponsesWS} from './routes/copilot.js';
-import {routeAdminFrontend} from './routes/admin-frontend.js';
+import {routeAdminFrontend} from './routes/dashboard-frontend.js';
 import {routeAuthRequest} from './routes/auth.js';
 import {routeStatsRequest} from './routes/stats.js';
 import {handleFeedback} from './routes/feedback.js';
@@ -21,7 +21,7 @@ import {sendNotFoundPage, wantsHtml} from './routes/not-found.js';
 import Busboy from 'busboy';
 import {verifyInternalRequest, handleSyncNotification} from './services/shared/cluster-broadcaster.js';
 import {authenticateApiKey} from './services/gateway/gateway-auth.js';
-import {requireApiAuth} from './services/gateway/admin-auth.js';
+import {requireApiAuth} from './services/gateway/dashboard-auth.js';
 import {getSessionUser} from './services/gateway/session.js';
 import {unifiedTenantManager} from './services/gateway/tenant-manager.js';
 
@@ -177,7 +177,7 @@ export function createServer() {
         }
 
         // ========== 统一管理面板 ==========
-        if (req.url.startsWith('/admin')) {
+        if (req.url.startsWith('/dashboard')) {
             try {
                 await routeAdminFrontend(req, res);
                 return;
@@ -190,7 +190,7 @@ export function createServer() {
 
         // 旧管理面板路径重定向
         if (req.url.startsWith('/relayFE') || req.url.startsWith('/codebuddyFE') || req.url.startsWith('/copilotFE')) {
-            res.writeHead(301, {'Location': '/admin'});
+            res.writeHead(301, {'Location': '/dashboard'});
             res.end();
             return;
         }
@@ -409,7 +409,7 @@ export function createServer() {
 
         // 根路径统一进入管理控制台；未登录时先进入登录页
         if (req.method === 'GET' && new URL(req.url, `http://${req.headers.host}`).pathname === '/') {
-            const location = getSessionUser(req).authenticated ? '/admin' : '/login';
+            const location = getSessionUser(req).authenticated ? '/dashboard' : '/login';
             res.writeHead(302, {Location: location});
             res.end();
             return;

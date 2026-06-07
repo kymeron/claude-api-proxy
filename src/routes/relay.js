@@ -363,7 +363,7 @@ async function authenticateAndGetUpstream(req) {
 
     const upstream = upstreamManager.getActiveUpstream();
     if (!upstream) {
-        return {error: {status: 503, message: '未配置可用上游，请在管理面板 /admin 配置'}};
+        return {error: {status: 503, message: '未配置可用上游，请在管理面板 /dashboard 配置'}};
     }
 
     return {upstream, tenantId, upstreamManager};

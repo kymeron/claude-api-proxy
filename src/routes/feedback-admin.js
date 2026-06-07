@@ -52,7 +52,7 @@ export async function routeFeedbackAdmin(req, res) {
 
     // 渲染管理页面
     if (method === 'GET' && (pathname === '/feedback' || pathname === '/feedback/')) {
-        res.writeHead(302, {Location: '/admin#/feedback'});
+        res.writeHead(302, {Location: '/dashboard#/feedback'});
         res.end();
         return true;
     }

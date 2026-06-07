@@ -1,6 +1,6 @@
 /**
  * 统一管理面板路由
- * @module routes/admin-frontend
+ * @module routes/dashboard-frontend
  */
 
 import {readFileSync} from 'fs';
@@ -10,10 +10,10 @@ import logger from '../utils/logger.js';
 import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
 import {broadcast} from '../services/shared/cluster-broadcaster.js';
 import {getSessionUser} from '../services/gateway/session.js';
-import {handleAdminUsers} from './admin-users.js';
-import {getCodebuddyAdminOptions, handleCodebuddyAdminRoute} from './admin-codebuddy.js';
+import {handleAdminUsers} from './dashboard-users.js';
+import {getCodebuddyAdminOptions, handleCodebuddyAdminRoute} from './dashboard-codebuddy.js';
 import {getCodebuddyCustomSiteLabels} from '../services/codebuddy/config.js';
-import {handleCopilotAdminRoute} from './admin-copilot.js';
+import {handleCopilotAdminRoute} from './dashboard-copilot.js';
 import {sendNotFoundPage, wantsHtml} from './not-found.js';
 import {Op} from 'sequelize';
 import {models} from '../db/models/index.js';
@@ -234,7 +234,7 @@ export async function routeAdminFrontend(req, res) {
     const pathname = url.pathname;
     const method = req.method;
 
-    if (pathname === '/admin' || pathname === '/admin/') {
+    if (pathname === '/dashboard' || pathname === '/dashboard/') {
         const session = getSessionUser(req);
         if (!session.authenticated) {
             res.writeHead(302, {Location: '/login'});
@@ -251,41 +251,41 @@ export async function routeAdminFrontend(req, res) {
     const username = session.username;
     const isAdmin = unifiedTenantManager.isAdmin(username);
 
-    if (pathname === '/admin/me' && method === 'GET') {
+    if (pathname === '/dashboard/me' && method === 'GET') {
         return sendJson(res, 200, {username, role: session.role, isAdmin, isSuperAdmin: session.role === 'superadmin'});
     }
 
-    if (pathname === '/admin/codebuddy/options' && method === 'GET') {
+    if (pathname === '/dashboard/codebuddy/options' && method === 'GET') {
         return sendJson(res, 200, {customSiteLabels: getCodebuddyCustomSiteLabels(), options: getCodebuddyAdminOptions()});
     }
 
-    if (pathname === '/admin/stats/overview' && method === 'GET') {
+    if (pathname === '/dashboard/stats/overview' && method === 'GET') {
         return adminStatsOverview(req, res, username);
     }
 
-    if (pathname.startsWith('/admin/users')) {
+    if (pathname.startsWith('/dashboard/users')) {
         if (!isAdmin) return sendJson(res, 403, {error: '需要管理员权限'});
-        const handled = await handleAdminUsers(req, res, pathname.replace('/admin/users', ''), username, session.role);
+        const handled = await handleAdminUsers(req, res, pathname.replace('/dashboard/users', ''), username, session.role);
         if (handled) {
             await unifiedTenantManager.reloadRegistry();
             return;
         }
     }
 
-    if (pathname === '/admin/tenants' && method === 'GET') {
+    if (pathname === '/dashboard/tenants' && method === 'GET') {
         const tenants = unifiedTenantManager.listTenants();
         return sendJson(res, 200, {
             tenants: session.role === 'superadmin' ? tenants : tenants.filter(tenant => tenant.username === username)
         });
     }
 
-    if (pathname === '/admin/my-tenant' && method === 'GET') {
+    if (pathname === '/dashboard/my-tenant' && method === 'GET') {
         let tenantId = unifiedTenantManager.findTenantByUsername(username);
         if (!tenantId) tenantId = await unifiedTenantManager.createTenantForUser(username, username);
         return sendJson(res, 200, {tenant: tenantView(unifiedTenantManager.getTenant(tenantId), true)});
     }
 
-    const tenantMatch = pathname.match(/^\/admin\/tenants\/(\d+)(\/.*)?$/);
+    const tenantMatch = pathname.match(/^\/dashboard\/tenants\/(\d+)(\/.*)?$/);
     if (tenantMatch) {
         const tenantId = Number(tenantMatch[1]);
         const subPath = tenantMatch[2] || '';

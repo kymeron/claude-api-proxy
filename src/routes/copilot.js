@@ -204,7 +204,7 @@ async function parseBody(req) {
 async function ensureCopilotAuth(networkOptions = {}) {
     // Copilot 认证检查
     if (!isAuthenticated()) {
-        return {error: {status: 401, message: 'Not authenticated. Open the Copilot tab in /admin to connect GitHub.'}};
+        return {error: {status: 401, message: 'Not authenticated. Open the Copilot tab in /dashboard to connect GitHub.'}};
     }
 
     try {
@@ -1128,7 +1128,7 @@ function handleCopilotResponsesWSInContext(clientWs, req) {
         handleRequest: async function* (payload, authResult, {signal}) {
             // Copilot 认证
             if (!isAuthenticated()) {
-                throw Object.assign(new Error('Not authenticated. Open the Copilot tab in /admin to connect GitHub.'), {
+                throw Object.assign(new Error('Not authenticated. Open the Copilot tab in /dashboard to connect GitHub.'), {
                     name: 'ResponsesWSError',
                     event: {type: 'error', error: {message: 'Not authenticated', code: 'unauthorized'}}
                 });
