@@ -195,7 +195,7 @@
             font-size: 11px; font-weight: 800; cursor: help;
         }
         .mode-tip::after {
-            content: attr(data-tip); position: absolute; right: 0; bottom: calc(100% + 10px);
+            content: attr(data-tip); position: absolute; left: 0; bottom: calc(100% + 10px);
             z-index: 30; width: max-content; max-width: 280px; padding: 8px 10px;
             border-radius: 8px; color: #fff; background: rgba(2, 8, 18, .96);
             box-shadow: 0 10px 28px rgba(0, 0, 0, .34); line-height: 1.45;
@@ -203,7 +203,7 @@
             transform: translateY(4px); transition: opacity .14s ease, transform .14s ease;
         }
         .mode-tip::before {
-            content: ""; position: absolute; right: 12px; bottom: calc(100% + 4px);
+            content: ""; position: absolute; left: 12px; bottom: calc(100% + 4px);
             z-index: 31; border: 6px solid transparent; border-top-color: rgba(2, 8, 18, .96);
             opacity: 0; pointer-events: none;
             transition: opacity .14s ease;
