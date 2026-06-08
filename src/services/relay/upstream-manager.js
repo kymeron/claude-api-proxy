@@ -15,6 +15,7 @@ import {
     buildResponsesWebSocketUrl
 } from './api.js';
 import {discardByPoolKey, connectionPoolKey} from '../shared/responses-ws-pool.js';
+import {normalizeResponsesWebSocketMode} from '../shared/responses-ws-mode.js';
 import logger from '../../utils/logger.js';
 import {models} from '../../db/models/index.js';
 
@@ -102,6 +103,7 @@ export class UpstreamManager {
             model_map: u.model_map || {},
             model_auto: u.model_auto !== false,
             protocol: u.protocol || '',
+            ws_mode: normalizeResponsesWebSocketMode(u.ws_mode),
             enabled: u.enabled !== false,
             skip_tls_verify: u.skip_tls_verify === true,
             created_at: u.created_at,
@@ -194,6 +196,7 @@ export class UpstreamManager {
             model_map: data.model_map || {},
             model_auto: data.model_auto !== false,
             protocol: data.protocol || '',
+            ws_mode: normalizeResponsesWebSocketMode(data.ws_mode),
             enabled: data.enabled !== false,
             skip_tls_verify: data.skip_tls_verify === true
         };
@@ -219,6 +222,7 @@ export class UpstreamManager {
         if (data.model_map !== undefined) updateData.model_map = data.model_map;
         if (data.model_auto !== undefined) updateData.model_auto = data.model_auto;
         if (data.protocol !== undefined) updateData.protocol = data.protocol;
+        if (data.ws_mode !== undefined) updateData.ws_mode = normalizeResponsesWebSocketMode(data.ws_mode);
         if (data.skip_tls_verify !== undefined) updateData.skip_tls_verify = data.skip_tls_verify === true;
 
         await models.TenantUpstream.update(updateData, {where: {id: upstream.id}});
@@ -297,6 +301,7 @@ export class UpstreamManager {
                     model_map: u.model_map,
                     model_auto: u.model_auto,
                     protocol: u.protocol,
+                    ws_mode: normalizeResponsesWebSocketMode(u.ws_mode),
                     enabled: u.enabled
                 }));
             }

@@ -21,7 +21,7 @@ import logger from '../utils/logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOGIN_PAGE = readFileSync(join(__dirname, '..', 'templates', 'login.html'), 'utf8');
-export const DASHBOARD_ENTRY_PATH = '/dashboard#/console/overview';
+export const DASHBOARD_ENTRY_PATH = '/dashboard#/relay';
 
 function currentAuthMode() {
     try {

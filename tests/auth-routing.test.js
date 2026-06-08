@@ -21,16 +21,16 @@ function adminSessionHeaders() {
     return {cookie: `cap_session=${createSessionToken('route-test-admin', 'admin')}`};
 }
 
-test('dashboard entry path includes the default console hash route', () => {
-    assert.equal(DASHBOARD_ENTRY_PATH, '/dashboard#/console/overview');
+test('dashboard entry path includes the default dashboard hash route', () => {
+    assert.equal(DASHBOARD_ENTRY_PATH, '/dashboard#/relay');
 });
 
 test('browser templates fall back to the default dashboard hash route', () => {
     const adminHtml = readFileSync('src/templates/admin.html', 'utf8');
     const loginHtml = readFileSync('src/templates/login.html', 'utf8');
 
-    assert.match(adminHtml, /if\(!location\.hash\|\|!location\.hash\.startsWith\('#\/'\)\)syncHashRoute\('console','overview',\{replace:true\}\);/);
-    assert.match(loginHtml, /data\.redirect\|\|'\/dashboard#\/console\/overview'/);
+    assert.match(adminHtml, /if\(!location\.hash\|\|!location\.hash\.startsWith\('#\/'\)\)syncHashRoute\('relay',null,\{replace:true\}\);/);
+    assert.match(loginHtml, /data\.redirect\|\|'\/dashboard#\/relay'/);
 });
 
 test('browser page API calls stay on the same host under the api namespace', () => {
@@ -120,7 +120,7 @@ test('api-prefixed dashboard and usage routes are normalized before page session
     assert.match(await dashboard.text(), /登录|过期/);
 });
 
-test('authenticated usage API is not blocked by stats IP whitelist', async t => {
+test('usage API is administrator-only and not blocked by stats IP whitelist for admins', async t => {
     const base = await startServer(t);
 
     const response = await fetch(`${base}/api/usage/overview?service=relay`, {
@@ -131,7 +131,17 @@ test('authenticated usage API is not blocked by stats IP whitelist', async t => 
         }
     });
 
-    assert.notEqual(response.status, 403);
+    assert.equal(response.status, 403);
+
+    const adminResponse = await fetch(`${base}/api/usage/overview?service=relay`, {
+        headers: {
+            ...adminSessionHeaders(),
+            accept: 'application/json',
+            'x-forwarded-for': '203.0.113.10'
+        }
+    });
+
+    assert.notEqual(adminResponse.status, 403);
 });
 
 test('unauthenticated page routes lead to login and legacy FE routes lead to dashboard', async t => {
@@ -209,10 +219,10 @@ test('unknown browser pages render the unified 404 page while APIs keep non-HTML
     assert.doesNotMatch(api.headers.get('content-type') || '', /text\/html/);
 });
 
-test('stats and feedback require a logged-in session but not administrator role', async t => {
+test('feedback requires a logged-in session but not administrator role', async t => {
     const base = await startServer(t);
 
-    for (const path of ['/stats', '/feedback']) {
+    for (const path of ['/feedback']) {
         const unauthenticated = await fetch(base + path, {
             headers: {accept: 'text/html'},
             redirect: 'manual'
@@ -225,21 +235,40 @@ test('stats and feedback require a logged-in session but not administrator role'
             redirect: 'manual'
         });
         assert.equal(ordinaryUser.status, 302);
-        assert.equal(
-            ordinaryUser.headers.get('location'),
-            path === '/stats' ? '/dashboard#/stats/relay/users' : '/dashboard#/feedback'
-        );
+        assert.equal(ordinaryUser.headers.get('location'), '/dashboard#/feedback');
 
         const administrator = await fetch(base + path, {
             headers: {...adminSessionHeaders(), accept: 'text/html'},
             redirect: 'manual'
         });
         assert.equal(administrator.status, 302);
-        assert.equal(
-            administrator.headers.get('location'),
-            path === '/stats' ? '/dashboard#/stats/relay/users' : '/dashboard#/feedback'
-        );
+        assert.equal(administrator.headers.get('location'), '/dashboard#/feedback');
     }
+});
+
+test('stats root no longer serves a standalone dashboard page', async t => {
+    const base = await startServer(t);
+
+    const unauthenticated = await fetch(`${base}/stats`, {
+        headers: {accept: 'text/html'},
+        redirect: 'manual'
+    });
+    assert.equal(unauthenticated.status, 404);
+    assert.match(await unauthenticated.text(), /HTTP 404/);
+
+    const ordinaryUser = await fetch(`${base}/stats`, {
+        headers: {...sessionHeaders(), accept: 'text/html'},
+        redirect: 'manual'
+    });
+    assert.equal(ordinaryUser.status, 404);
+    assert.match(await ordinaryUser.text(), /HTTP 404/);
+
+    const administrator = await fetch(`${base}/stats`, {
+        headers: {...adminSessionHeaders(), accept: 'text/html'},
+        redirect: 'manual'
+    });
+    assert.equal(administrator.status, 404);
+    assert.match(await administrator.text(), /HTTP 404/);
 });
 
 test('LDAP login uses the persisted tenant role for the session', async () => {

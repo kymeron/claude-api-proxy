@@ -7,13 +7,14 @@
 
 import logger from '../utils/logger.js';
 import {
-    listLocalUsers,
+    listManagedUsers,
     createLocalUser,
-    updateLocalUser,
+    updateManagedUser,
     resetLocalUserPassword,
-    deleteLocalUser
+    deleteManagedUser
 } from '../services/shared/local-user-manager.js';
 import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
+import {getAuthMode} from '../services/shared/auth-mode.js';
 
 function sendJson(res, status, data) {
     res.writeHead(status, {'Content-Type': 'application/json'});
@@ -66,12 +67,20 @@ function userTenant(username) {
  */
 export async function handleAdminUsers(req, res, pathSuffix, currentUsername, currentRole = 'admin') {
     const method = req.method;
+    const authMode = getAuthMode();
 
     try {
         // GET /admin/users — 列表
         if (pathSuffix === '' && method === 'GET') {
-            const users = await listLocalUsers(currentRole);
+            const users = await listManagedUsers(currentRole, authMode);
             sendJson(res, 200, {
+                authMode,
+                capabilities: {
+                    canCreate: authMode !== 'ldap',
+                    canResetPassword: authMode !== 'ldap',
+                    canEdit: true,
+                    canDelete: true
+                },
                 users: users.map(user => ({
                     ...user,
                     tenant: userTenant(user.username)
@@ -82,6 +91,10 @@ export async function handleAdminUsers(req, res, pathSuffix, currentUsername, cu
 
         // POST /admin/users — 创建
         if (pathSuffix === '' && method === 'POST') {
+            if (authMode === 'ldap') {
+                sendJson(res, 403, {error: 'LDAP mode does not allow creating local users'});
+                return true;
+            }
             const body = await readRequestBody(req);
             const result = await createLocalUser(body, currentRole);
             if (!result.ok) {
@@ -99,6 +112,10 @@ export async function handleAdminUsers(req, res, pathSuffix, currentUsername, cu
         // PUT /admin/users/:username/password — 重置密码
         const pwMatch = pathSuffix.match(/^\/([^/]+)\/password$/);
         if (pwMatch && method === 'PUT') {
+            if (authMode === 'ldap') {
+                sendJson(res, 403, {error: 'LDAP mode does not allow password reset'});
+                return true;
+            }
             const targetUser = decodeURIComponent(pwMatch[1]);
             const body = await readRequestBody(req);
             const result = await resetLocalUserPassword(targetUser, body.password, currentRole);
@@ -115,7 +132,7 @@ export async function handleAdminUsers(req, res, pathSuffix, currentUsername, cu
         if (updateMatch && method === 'PUT') {
             const targetUser = decodeURIComponent(updateMatch[1]);
             const body = await readRequestBody(req);
-            const result = await updateLocalUser(targetUser, body, currentRole);
+            const result = await updateManagedUser(targetUser, body, currentRole, authMode);
             if (!result.ok) {
                 sendJson(res, result.status, {error: result.error});
             } else {
@@ -128,7 +145,7 @@ export async function handleAdminUsers(req, res, pathSuffix, currentUsername, cu
         const delMatch = pathSuffix.match(/^\/([^/]+)$/);
         if (delMatch && method === 'DELETE') {
             const targetUser = decodeURIComponent(delMatch[1]);
-            const result = await deleteLocalUser(targetUser, currentUsername, currentRole);
+            const result = await deleteManagedUser(targetUser, currentUsername, currentRole, authMode);
             if (!result.ok) {
                 sendJson(res, result.status, {error: result.error});
             } else {

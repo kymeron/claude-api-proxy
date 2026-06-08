@@ -10,6 +10,7 @@ import {getSessionUser} from '../services/gateway/session.js';
 import {TenantDailyUsage} from '../db/models/tenant-daily-usage.js';
 import {models} from '../db/models/index.js';
 import {runAnalysis, runBatchAnalysis, getSampleCount, getSamples} from '../services/coach/index.js';
+import {getAuthMode} from '../services/shared/auth-mode.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -68,11 +69,74 @@ function getStatsService(url) {
     return normalizeStatsService(url.searchParams.get('service') || 'codebuddy');
 }
 
+function currentAuthMode() {
+    try {
+        return getAuthMode();
+    } catch {
+        return 'local';
+    }
+}
+
+function isStatsTenantIncluded(tenant) {
+    return !(currentAuthMode() === 'local' && tenant?.role === 'superadmin');
+}
+
 function buildDateRangeWhere(startDate, endDate) {
     const where = {};
     if (startDate && endDate) where.date = {[Op.between]: [startDate, endDate]};
     else if (startDate) where.date = {[Op.gte]: startDate};
     else if (endDate) where.date = {[Op.lte]: endDate};
+    return where;
+}
+
+function monthDateRange(month) {
+    if (!/^\d{4}-\d{2}$/.test(month || '')) return {};
+    const [year, monthNo] = month.split('-').map(Number);
+    const lastDay = new Date(year, monthNo, 0).getDate();
+    return {
+        startDate: month + '-01',
+        endDate: `${month}-${String(lastDay).padStart(2, '0')}`
+    };
+}
+
+function resolveDateRange(url) {
+    const monthRange = monthDateRange(url.searchParams.get('month'));
+    return {
+        startDate: monthRange.startDate || url.searchParams.get('startDate'),
+        endDate: monthRange.endDate || url.searchParams.get('endDate')
+    };
+}
+
+async function getCurrentStatsTenantId(req) {
+    const session = getSessionUser(req);
+    if (!session.authenticated || !session.username) return null;
+    const cachedTenantId = unifiedTenantManager.findTenantByUsername?.(session.username);
+    if (cachedTenantId !== undefined && cachedTenantId !== null) return cachedTenantId;
+    const entry = (await getStatsTenantEntries()).find(([, tenant]) => tenant?.username === session.username);
+    return entry?.[1]?.id || null;
+}
+
+async function getExcludedStatsTenantIds() {
+    if (currentAuthMode() !== 'local') return [];
+    return (await getStatsTenantEntries())
+        .filter(([, tenant]) => tenant?.role === 'superadmin')
+        .map(([, tenant]) => tenant.id)
+        .filter(id => id !== undefined && id !== null);
+}
+
+async function buildStatsUsageWhere(service, startDate, endDate, extra = {}) {
+    const where = {service_type: service, ...buildDateRangeWhere(startDate, endDate), ...extra};
+    const excludedTenantIds = await getExcludedStatsTenantIds();
+    if (excludedTenantIds.length > 0) {
+        if (where.tenant_id) {
+            const tenantCondition = where.tenant_id;
+            if (!excludedTenantIds.includes(tenantCondition)) return where;
+            delete where.tenant_id;
+            where[Op.and] = [{tenant_id: tenantCondition}, {tenant_id: {[Op.notIn]: excludedTenantIds}}];
+        } else {
+            where.tenant_id = {[Op.notIn]: excludedTenantIds};
+        }
+    }
     return where;
 }
 
@@ -139,7 +203,7 @@ function syncKeyPersonnelCache(username, isKeyPersonnel) {
 /**
  * 获取月度统计数据
  */
-async function getMonthlyStats(serviceType = 'codebuddy') {
+async function getMonthlyStats(serviceType = 'codebuddy', tenantId, startDate, endDate) {
     const monthlyStats = {};
     const service = normalizeStatsService(serviceType);
 
@@ -157,7 +221,7 @@ async function getMonthlyStats(serviceType = 'codebuddy') {
                 [fn('SUM', col('input_cache_hit')), 'cacheHitTokens'],
                 [fn('SUM', col('credit')), 'credit']
             ],
-            where: {service_type: service},
+            where: await buildStatsUsageWhere(service, startDate, endDate, tenantId ? {tenant_id: tenantId} : {}),
             group: [fn('SUBSTRING', col('date'), 1, 7)],
             raw: true
         });
@@ -181,8 +245,8 @@ async function getMonthlyStats(serviceType = 'codebuddy') {
 /**
  * 获取月度趋势数据（用于图表）
  */
-async function getMonthlyTrendData(serviceType = 'codebuddy') {
-    const monthlyStats = await getMonthlyStats(serviceType);
+async function getMonthlyTrendData(serviceType = 'codebuddy', tenantId, startDate, endDate) {
+    const monthlyStats = await getMonthlyStats(serviceType, tenantId, startDate, endDate);
 
     // 按月份排序
     const sortedMonths = Object.keys(monthlyStats).sort();
@@ -203,14 +267,14 @@ async function getMonthlyTrendData(serviceType = 'codebuddy') {
  * @param {string} [startDate] - 可选，起始日期 YYYY-MM-DD
  * @param {string} [endDate] - 可选，结束日期 YYYY-MM-DD
  */
-async function getModelCacheStats(serviceType = 'codebuddy', startDate, endDate) {
+async function getModelCacheStats(serviceType = 'codebuddy', startDate, endDate, tenantId) {
     if (!unifiedTenantManager.isEnabled()) {
         return [];
     }
     const service = normalizeStatsService(serviceType);
 
     try {
-        const where = {service_type: service, ...buildDateRangeWhere(startDate, endDate)};
+        const where = await buildStatsUsageWhere(service, startDate, endDate, tenantId ? {tenant_id: tenantId} : {});
 
         const rows = await TenantDailyUsage.findAll({
             attributes: [
@@ -256,17 +320,14 @@ async function getModelCacheStats(serviceType = 'codebuddy', startDate, endDate)
  * @param {string} [startDate] - 可选，起始日期 YYYY-MM-DD
  * @param {string} [endDate] - 可选，结束日期 YYYY-MM-DD
  */
-async function getModelCacheDailyTrend(serviceType = 'codebuddy', model, startDate, endDate) {
+async function getModelCacheDailyTrend(serviceType = 'codebuddy', model, startDate, endDate, tenantId) {
     if (!unifiedTenantManager.isEnabled()) {
         return [];
     }
     const service = normalizeStatsService(serviceType);
 
     try {
-        const where = {service_type: service, model};
-        if (startDate && endDate) where.date = {[Op.between]: [startDate, endDate]};
-        else if (startDate) where.date = {[Op.gte]: startDate};
-        else if (endDate) where.date = {[Op.lte]: endDate};
+        const where = await buildStatsUsageWhere(service, startDate, endDate, {model, ...(tenantId ? {tenant_id: tenantId} : {})});
 
         const rows = await TenantDailyUsage.findAll({
             attributes: [
@@ -317,7 +378,7 @@ async function getDailyTrendData(serviceType = 'codebuddy') {
                 [fn('SUM', col('input_cache_hit')), 'cacheHitTokens'],
                 [fn('SUM', col('credit')), 'credit']
             ],
-            where: {service_type: service},
+            where: await buildStatsUsageWhere(service),
             group: ['date'],
             order: [['date', 'ASC']],
             raw: true
@@ -345,13 +406,15 @@ async function getDailyTrendData(serviceType = 'codebuddy') {
 /**
  * 获取用户趋势数据（每日累计用户数 + 每日活跃用户数）
  */
-async function getUserTrendData(serviceType = 'codebuddy') {
+async function getUserTrendData(serviceType = 'codebuddy', tenantId) {
     if (!unifiedTenantManager.isEnabled()) {
         return [];
     }
     const service = normalizeStatsService(serviceType);
 
-    const tenants = await getStatsTenantEntries();
+    const tenants = (await getStatsTenantEntries())
+        .filter(([, tenant]) => isStatsTenantIncluded(tenant))
+        .filter(([, tenant]) => !tenantId || tenant.id === tenantId);
 
     // 按注册日期统计新增用户
     const newUsersByDate = {};
@@ -367,10 +430,7 @@ async function getUserTrendData(serviceType = 'codebuddy') {
     try {
         const activeRows = await TenantDailyUsage.findAll({
             attributes: ['date', [fn('COUNT', fn('DISTINCT', col('tenant_id'))), 'activeCount']],
-            where: {
-                service_type: service,
-                api_calls: {[Op.gt]: 0}
-            },
+            where: await buildStatsUsageWhere(service, undefined, undefined, {api_calls: {[Op.gt]: 0}, ...(tenantId ? {tenant_id: tenantId} : {})}),
             group: ['date'],
             raw: true
         });
@@ -403,7 +463,7 @@ async function getUserTrendData(serviceType = 'codebuddy') {
 /**
  * 获取统计概览数据
  */
-async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate) {
+async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate, tenantId) {
     if (!unifiedTenantManager.isEnabled()) {
         return {
             totalUsers: 0,
@@ -420,8 +480,10 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate) {
     }
     const service = normalizeStatsService(serviceType);
 
-    const tenants = await getStatsTenantEntries();
-    const usageWhere = {service_type: service, ...buildDateRangeWhere(startDate, endDate)};
+    const tenants = (await getStatsTenantEntries())
+        .filter(([, tenant]) => isStatsTenantIncluded(tenant))
+        .filter(([, tenant]) => !tenantId || tenant.id === tenantId);
+    const usageWhere = await buildStatsUsageWhere(service, startDate, endDate, tenantId ? {tenant_id: tenantId} : {});
     let tenantsWithCreds = 0;
     let totalCreds = 0;
 
@@ -459,10 +521,7 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate) {
     try {
         const lastActiveRows = await TenantDailyUsage.findAll({
             attributes: ['tenant_id', [fn('MAX', col('date')), 'lastActiveDate']],
-            where: {
-                service_type: service,
-                api_calls: {[Op.gt]: 0}
-            },
+            where: await buildStatsUsageWhere(service, undefined, undefined, {api_calls: {[Op.gt]: 0}, ...(tenantId ? {tenant_id: tenantId} : {})}),
             group: ['tenant_id'],
             raw: true
         });
@@ -479,6 +538,8 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate) {
     let totalCacheHitTokens = 0;
     let totalCredit = 0;
     let activeUsers = 0;
+    let cacheHitRateUsers = 0;
+    let cacheHitRateTotal = 0;
 
     const users = tenants.map(([tenantId, tenant]) => {
         const usage = usageMap[tenant.id] || {
@@ -503,6 +564,10 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate) {
         totalCacheHitTokens += usage.cacheHitTokens;
         totalCredit += usage.credit;
         if (usage.apiCalls > 0) activeUsers++;
+        if (usage.inputTokens > 0 && usage.cacheHitTokens > 0) {
+            cacheHitRateUsers++;
+            cacheHitRateTotal += Math.round((usage.cacheHitTokens / usage.inputTokens) * 100);
+        }
         if (credCount > 0) tenantsWithCreds++;
         totalCreds += credCount;
 
@@ -529,7 +594,7 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate) {
     // 按调用次数排序取前50
     const topUsers = users.sort((a, b) => b.apiCalls - a.apiCalls).slice(0, 50);
 
-    const monthlyStats = await getMonthlyStats(service);
+    const monthlyStats = await getMonthlyStats(service, tenantId, startDate, endDate);
 
     return {
         totalUsers: tenants.length,
@@ -539,7 +604,8 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate) {
         totalOutputTokens,
         totalTokens: totalInputTokens + totalOutputTokens,
         totalCacheHitTokens,
-        cacheHitRate: totalInputTokens > 0 ? Math.round((totalCacheHitTokens / totalInputTokens) * 100) : 0,
+        cacheHitRate: cacheHitRateUsers > 0 ? Math.round(cacheHitRateTotal / cacheHitRateUsers) : 0,
+        cacheHitRateUsers,
         totalCredit,
         tenantsWithCreds,
         totalCreds,
@@ -577,10 +643,10 @@ async function handleApiRequest(req, res) {
     // 概览统计API
     if (pathname === '/stats/api/overview' && req.method === 'GET') {
         const service = getStatsService(url);
-        const startDate = url.searchParams.get('startDate');
-        const endDate = url.searchParams.get('endDate');
+        const {startDate, endDate} = resolveDateRange(url);
         try {
-            const stats = await getOverviewStats(service, startDate, endDate);
+            const tenantId = await getCurrentStatsTenantId(req);
+            const stats = await getOverviewStats(service, startDate, endDate, tenantId);
 
             const activeRate = stats.totalUsers > 0 ? Math.round((stats.activeUsers / stats.totalUsers) * 100) : 0;
 
@@ -613,8 +679,8 @@ async function handleApiRequest(req, res) {
                 })),
                 allUsers: stats.allUsers,
                 monthlyStats: stats.monthlyStats,
-                monthlyTrend: await getMonthlyTrendData(service),
-                userTrend: await getUserTrendData(service)
+                monthlyTrend: await getMonthlyTrendData(service, tenantId, startDate, endDate),
+                userTrend: await getUserTrendData(service, tenantId)
             });
         } catch (error) {
             logger.error('获取统计数据失败:', error);
@@ -626,10 +692,10 @@ async function handleApiRequest(req, res) {
     // 模型缓存命中统计API
     if (pathname === '/stats/api/model-cache-stats' && req.method === 'GET') {
         const service = getStatsService(url);
-        const startDate = url.searchParams.get('startDate');
-        const endDate = url.searchParams.get('endDate');
+        const {startDate, endDate} = resolveDateRange(url);
         try {
-            const data = await getModelCacheStats(service, startDate, endDate);
+            const tenantId = await getCurrentStatsTenantId(req);
+            const data = await getModelCacheStats(service, startDate, endDate, tenantId);
             sendJson(res, 200, data);
         } catch (error) {
             logger.error('获取模型缓存统计失败:', error);
@@ -642,14 +708,14 @@ async function handleApiRequest(req, res) {
     if (pathname === '/stats/api/model-cache-daily' && req.method === 'GET') {
         const service = getStatsService(url);
         const model = url.searchParams.get('model');
-        const startDate = url.searchParams.get('startDate');
-        const endDate = url.searchParams.get('endDate');
+        const {startDate, endDate} = resolveDateRange(url);
         if (!model) {
             sendJson(res, 400, {error: '缺少 model 参数'});
             return true;
         }
         try {
-            const data = await getModelCacheDailyTrend(service, model, startDate, endDate);
+            const tenantId = await getCurrentStatsTenantId(req);
+            const data = await getModelCacheDailyTrend(service, model, startDate, endDate, tenantId);
             sendJson(res, 200, data);
         } catch (error) {
             logger.error('获取模型每日缓存趋势失败:', error);
@@ -854,11 +920,11 @@ function parseRequestBody(req) {
 async function getKeyPersonnelList(serviceType = 'codebuddy') {
     const service = normalizeStatsService(serviceType);
     try {
-        const tenants = await models.Tenant.findAll({
-            attributes: ['id', 'name', 'username', 'is_key_personnel'],
+        const tenants = (await models.Tenant.findAll({
+            attributes: ['id', 'name', 'username', 'role', 'is_key_personnel'],
             order: [['is_key_personnel', 'DESC'], ['id', 'ASC']],
             raw: true
-        });
+        })).filter(t => isStatsTenantIncluded(t));
 
         const usageRows = await TenantDailyUsage.findAll({
             attributes: [
@@ -867,7 +933,7 @@ async function getKeyPersonnelList(serviceType = 'codebuddy') {
                 [fn('SUM', col('input_tokens')), 'inputTokens'],
                 [fn('SUM', col('output_tokens')), 'outputTokens']
             ],
-            where: {service_type: service},
+            where: await buildStatsUsageWhere(service),
             group: ['tenant_id'],
             raw: true
         });
@@ -1088,7 +1154,7 @@ async function getDailyUserLists(serviceType = 'codebuddy', date) {
     }
     const service = normalizeStatsService(serviceType);
 
-    const tenants = await getStatsTenantEntries();
+    const tenants = (await getStatsTenantEntries()).filter(([, tenant]) => isStatsTenantIncluded(tenant));
 
     // 新增用户：created_at 对应的日期等于目标日期
     const newUsers = [];
@@ -1109,11 +1175,7 @@ async function getDailyUserLists(serviceType = 'codebuddy', date) {
     try {
         const activeRows = await TenantDailyUsage.findAll({
             attributes: ['tenant_id', [fn('SUM', col('api_calls')), 'totalCalls']],
-            where: {
-                service_type: service,
-                date: date,
-                api_calls: {[Op.gt]: 0}
-            },
+            where: await buildStatsUsageWhere(service, undefined, undefined, {date, api_calls: {[Op.gt]: 0}}),
             group: ['tenant_id'],
             raw: true
         });
@@ -1131,10 +1193,7 @@ async function getDailyUserLists(serviceType = 'codebuddy', date) {
             try {
                 const streakRows = await TenantDailyUsage.findAll({
                     attributes: ['tenant_id', 'date', [fn('SUM', col('api_calls')), 'totalCalls']],
-                    where: {
-                        tenant_id: {[Op.in]: activeTenantIds},
-                        service_type: service
-                    },
+                    where: await buildStatsUsageWhere(service, undefined, undefined, {tenant_id: {[Op.in]: activeTenantIds}}),
                     group: ['tenant_id', 'date'],
                     raw: true
                 });
@@ -1275,13 +1334,5 @@ export async function routeStatsRequest(req, res) {
 
     // 静态资源
     // 统计页面
-    if (pathname === '/stats' || pathname === '/stats/') {
-        if (req.method === 'GET') {
-            res.writeHead(302, {Location: '/dashboard#/stats/relay/users'});
-            res.end();
-            return true;
-        }
-    }
-
     return false;
 }

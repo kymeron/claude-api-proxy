@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {Op} from 'sequelize';
 
 import {routeStatsRequest} from '../src/routes/stats.js';
 import {TenantDailyUsage} from '../src/db/models/tenant-daily-usage.js';
 import {unifiedTenantManager} from '../src/services/gateway/tenant-manager.js';
+import {createSessionToken} from '../src/services/gateway/session.js';
 
 function mockJsonResponse() {
     return {
@@ -15,6 +17,14 @@ function mockJsonResponse() {
         end(chunk = '') {
             this.body += chunk;
         }
+    };
+}
+
+function adminHeaders(username = 'alice') {
+    process.env.JWT_SECRET = process.env.JWT_SECRET || 'stats-service-filter-secret';
+    return {
+        host: 'localhost',
+        cookie: `cap_session=${createSessionToken(username, 'admin')}`
     };
 }
 
@@ -54,6 +64,107 @@ test('stats overview filters daily usage by requested service endpoint', async (
         assert.equal(res.status, 200);
         assert.ok(serviceFilters.length >= 3);
         assert.deepEqual([...new Set(serviceFilters)], ['copilot']);
+    } finally {
+        TenantDailyUsage.findAll = originalFindAll;
+        unifiedTenantManager.isEnabled = originalIsEnabled;
+        unifiedTenantManager.registry = originalRegistry;
+    }
+});
+
+test('stats overview excludes local superadmin and averages only cache-hit users', async () => {
+    const originalFindAll = TenantDailyUsage.findAll;
+    const originalIsEnabled = unifiedTenantManager.isEnabled;
+    const originalRegistry = unifiedTenantManager.registry;
+
+    let call = 0;
+    TenantDailyUsage.findAll = async (options = {}) => {
+        call++;
+        if (call === 1) {
+            return [
+                {tenant_id: 1, apiCalls: 10, inputTokens: 1000, outputTokens: 100, cacheHitTokens: 900, credit: 1},
+                {tenant_id: 2, apiCalls: 5, inputTokens: 500, outputTokens: 50, cacheHitTokens: 0, credit: 0.5},
+                {tenant_id: 3, apiCalls: 100, inputTokens: 10000, outputTokens: 1000, cacheHitTokens: 5000, credit: 10}
+            ];
+        }
+        return [];
+    };
+    unifiedTenantManager.isEnabled = () => true;
+    unifiedTenantManager.registry = {
+        tenants: {
+            tenant_1: {id: 1, name: 'Alice', username: 'alice', role: 'user', created_at: Date.now(), serviceProfiles: []},
+            tenant_2: {id: 2, name: 'Bob', username: 'bob', role: 'user', created_at: Date.now(), serviceProfiles: []},
+            tenant_3: {id: 3, name: 'Root', username: 'root', role: 'superadmin', created_at: Date.now(), serviceProfiles: []}
+        }
+    };
+
+    try {
+        const req = {
+            method: 'GET',
+            url: '/stats/api/overview?service=relay',
+            headers: {host: 'localhost'},
+            socket: {remoteAddress: '127.0.0.1'}
+        };
+        const res = mockJsonResponse();
+
+        assert.equal(await routeStatsRequest(req, res), true);
+        assert.equal(res.status, 200);
+        const body = JSON.parse(res.body);
+        assert.equal(body.totalUsers, 2);
+        assert.equal(body.activeUsers, 2);
+        assert.equal(body.totalApiCalls, 15);
+        assert.equal(body.cacheHitRate, 90);
+        assert.deepEqual(body.allUsers.map(u => u.username), ['alice', 'bob']);
+    } finally {
+        TenantDailyUsage.findAll = originalFindAll;
+        unifiedTenantManager.isEnabled = originalIsEnabled;
+        unifiedTenantManager.registry = originalRegistry;
+    }
+});
+
+test('stats monthly overview and model cache are scoped to the current user tenant', async () => {
+    const originalFindAll = TenantDailyUsage.findAll;
+    const originalIsEnabled = unifiedTenantManager.isEnabled;
+    const originalRegistry = unifiedTenantManager.registry;
+    const usageWheres = [];
+
+    TenantDailyUsage.findAll = async (options = {}) => {
+        if (options.where?.service_type === 'relay') usageWheres.push(options.where);
+        return [];
+    };
+    unifiedTenantManager.isEnabled = () => true;
+    unifiedTenantManager.registry = {
+        tenants: {
+            tenant_1: {id: 1, name: 'Alice', username: 'alice', role: 'admin', created_at: Date.now(), serviceProfiles: []},
+            tenant_2: {id: 2, name: 'Bob', username: 'bob', role: 'admin', created_at: Date.now(), serviceProfiles: []}
+        }
+    };
+
+    try {
+        const overviewReq = {
+            method: 'GET',
+            url: '/stats/api/overview?service=relay&month=2026-06',
+            headers: adminHeaders('alice'),
+            socket: {remoteAddress: '127.0.0.1'}
+        };
+        const overviewRes = mockJsonResponse();
+        assert.equal(await routeStatsRequest(overviewReq, overviewRes), true);
+        assert.equal(overviewRes.status, 200);
+
+        const modelReq = {
+            method: 'GET',
+            url: '/stats/api/model-cache-stats?service=relay&startDate=2026-06-01&endDate=2026-06-30',
+            headers: adminHeaders('alice'),
+            socket: {remoteAddress: '127.0.0.1'}
+        };
+        const modelRes = mockJsonResponse();
+        assert.equal(await routeStatsRequest(modelReq, modelRes), true);
+        assert.equal(modelRes.status, 200);
+
+        assert.ok(usageWheres.length >= 2);
+        assert.ok(usageWheres.every(where => where.tenant_id === 1));
+        assert.ok(usageWheres.some(where => Array.isArray(where.date?.[Op.between])
+            && where.date[Op.between][0] === '2026-06-01'
+            && where.date[Op.between][1] === '2026-06-30'));
     } finally {
         TenantDailyUsage.findAll = originalFindAll;
         unifiedTenantManager.isEnabled = originalIsEnabled;

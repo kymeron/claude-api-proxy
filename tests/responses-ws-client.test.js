@@ -31,17 +31,32 @@ class FakeWebSocket extends EventEmitter {
     }
 }
 
-test('prepareResponsesWebSocketPayload removes fields unsupported by the WS upstream', () => {
+test('prepareResponsesWebSocketPayload removes only transport fields unsupported by the WS upstream', () => {
     const payload = prepareResponsesWebSocketPayload({
         model: 'gpt-5.4',
         stream: true,
+        background: true,
         store: true,
         metadata: {traceId: 't1'},
         text: {format: {type: 'text'}},
+        include: ['reasoning.encrypted_content'],
+        truncation: 'auto',
+        user: 'user-1',
+        generate: false,
         input: 'hello'
     });
 
-    assert.deepEqual(payload, {model: 'gpt-5.4', input: 'hello'});
+    assert.deepEqual(payload, {
+        model: 'gpt-5.4',
+        store: true,
+        metadata: {traceId: 't1'},
+        text: {format: {type: 'text'}},
+        include: ['reasoning.encrypted_content'],
+        truncation: 'auto',
+        user: 'user-1',
+        generate: false,
+        input: 'hello'
+    });
 });
 
 test('sendResponsesWebSocketRequest sanitizes previous response item ids and tracks last response id', async () => {

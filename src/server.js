@@ -348,9 +348,9 @@ export function createServer() {
         }
 
         // Stats 统计页面
-        if (req.url.startsWith('/stats')) {
+        if (new URL(req.url, `http://${req.headers.host}`).pathname.startsWith('/stats/api/')) {
             try {
-                if (!requirePageSession(req, res, false)) return;
+                if (!requirePageSession(req, res, true)) return;
                 const handled = await routeStatsRequest(req, res);
                 if (handled) return;
             } catch (err) {

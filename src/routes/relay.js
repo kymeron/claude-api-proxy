@@ -13,6 +13,9 @@ import {
     createAnthropicMessages,
     createAnthropicCountTokens,
     getUpstreamModels,
+    getProxyAgent,
+    buildResponsesWebSocketHeaders,
+    buildResponsesWebSocketUrl,
     isAnthropicUpstream,
     isResponsesUpstream,
     isResponsesWebSocketUpstream,
@@ -50,6 +53,8 @@ import {
 } from '../transformer/responses-translator.js';
 import {isResponsesWebSocketProtocolError} from '../services/shared/responses-ws-client.js';
 import {handleWSConnection} from '../services/shared/responses-ws-server.js';
+import {shouldUseResponsesWebSocketPassthrough} from '../services/shared/responses-ws-mode.js';
+import {passthroughResponsesWebSocket} from '../services/shared/responses-ws-passthrough.js';
 import {
     createStreamState as createAnthropicEventState,
     translateStreamChunk as chatChunkToAnthropicEvents
@@ -420,6 +425,7 @@ async function handleOpenAIChatCompletions(req, res) {
 
         const tenant = await unifiedTenantManager.getTenant(tenantId);
         const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
+        const relayStatsModel = upstreamManager.resolveModel(openAIPayload.model, upstream.index);
 
         openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
@@ -428,7 +434,7 @@ async function handleOpenAIChatCompletions(req, res) {
         if (isAnthropicUpstream(upstream)) {
             const anthropicPayload = chatRequestToAnthropic({
                 ...openAIPayload,
-                model: upstreamManager.resolveModel(openAIPayload.model, upstream.index)
+                model: relayStatsModel
             });
             const {response} = await callUpstream(upstream, (up) =>
                 createAnthropicMessages(
@@ -460,7 +466,7 @@ async function handleOpenAIChatCompletions(req, res) {
                     finalUsage?.prompt_tokens || 0,
                     finalUsage?.completion_tokens || 0,
                     finalUsage?.prompt_tokens_details?.cached_tokens || 0,
-                    openAIPayload.model
+                    relayStatsModel
                 );
                 res.write('data: [DONE]\n\n');
                 res.end();
@@ -476,9 +482,9 @@ async function handleOpenAIChatCompletions(req, res) {
                 chatResponse.usage?.prompt_tokens || 0,
                 chatResponse.usage?.completion_tokens || 0,
                 cacheHitTokens,
-                openAIPayload.model
+                relayStatsModel
             );
-            sampleRequest(tenantId, 'relay', openAIPayload, parsed, openAIPayload.model).catch(() => {});
+            sampleRequest(tenantId, 'relay', openAIPayload, parsed, relayStatsModel).catch(() => {});
             sendJson(res, 200, chatResponse);
             return;
         }
@@ -486,7 +492,7 @@ async function handleOpenAIChatCompletions(req, res) {
         if (isResponsesWebSocketUpstream(upstream)) {
             const responsesPayload = chatRequestToResponses({
                 ...openAIPayload,
-                model: upstreamManager.resolveModel(openAIPayload.model, upstream.index)
+                model: relayStatsModel
             });
             const wsResult = await createResponsesWebSocket(responsesPayload, upstream, {
                 requestType: 'ChatCompletionsViaResponsesWS',
@@ -522,14 +528,14 @@ async function handleOpenAIChatCompletions(req, res) {
                     throw error;
                 }
 
-                recordResponsesUsage(tenantId, usage, openAIPayload.model);
+                recordResponsesUsage(tenantId, usage, relayStatsModel);
                 res.write('data: [DONE]\n\n');
                 res.end();
                 return;
             }
 
             const completedResponse = await collectResponsesWebSocketResponse(wsResult);
-            recordResponsesUsage(tenantId, completedResponse.usage, openAIPayload.model);
+            recordResponsesUsage(tenantId, completedResponse.usage, relayStatsModel);
             sendJson(res, 200, responsesResponseToChat(completedResponse));
             return;
         }
@@ -537,7 +543,7 @@ async function handleOpenAIChatCompletions(req, res) {
         if (isResponsesUpstream(upstream)) {
             const responsesPayload = chatRequestToResponses({
                 ...openAIPayload,
-                model: upstreamManager.resolveModel(openAIPayload.model, upstream.index)
+                model: relayStatsModel
             });
 
             const conversationKey = extractConversationKey(req, responsesPayload, {tenantId});
@@ -600,7 +606,7 @@ async function handleOpenAIChatCompletions(req, res) {
                                 usage?.input_tokens || 0,
                                 usage?.output_tokens || 0,
                                 usage?.input_tokens_details?.cached_tokens || 0,
-                                openAIPayload.model
+                                relayStatsModel
                             );
                             res.write('data: [DONE]\n\n');
                         }
@@ -643,9 +649,9 @@ async function handleOpenAIChatCompletions(req, res) {
                 parsed.usage?.input_tokens || 0,
                 parsed.usage?.output_tokens || 0,
                 parsed.usage?.input_tokens_details?.cached_tokens || 0,
-                openAIPayload.model
+                relayStatsModel
             );
-            sampleRequest(tenantId, 'relay', openAIPayload, parsed, openAIPayload.model).catch(() => {});
+            sampleRequest(tenantId, 'relay', openAIPayload, parsed, relayStatsModel).catch(() => {});
             sendJson(res, 200, responsesResponseToChat(parsed));
             return;
         }
@@ -667,7 +673,7 @@ async function handleOpenAIChatCompletions(req, res) {
                 'Cache-Control': 'no-cache',
                 Connection: 'keep-alive'
             });
-            _streamOpenAIPassthrough(response, res, tenantId, tenantInfo, openAIPayload.model);
+            _streamOpenAIPassthrough(response, res, tenantId, tenantInfo, relayStatsModel);
         } else {
             const responseBody = await readResponseBody(response.body);
             let parsed;
@@ -684,9 +690,9 @@ async function handleOpenAIChatCompletions(req, res) {
                 parsed.usage?.prompt_tokens || 0,
                 parsed.usage?.completion_tokens || 0,
                 cacheHitTokens,
-                openAIPayload.model
+                relayStatsModel
             );
-            sampleRequest(tenantId, 'relay', openAIPayload, parsed, openAIPayload.model).catch(() => {});
+            sampleRequest(tenantId, 'relay', openAIPayload, parsed, relayStatsModel).catch(() => {});
             sendJson(res, 200, parsed);
         }
     } catch (error) {
@@ -725,6 +731,7 @@ async function handleAnthropicMessages(req, res) {
         const anthropicPayload = sanitizeAnthropicPayload(JSON.parse(body));
         const tenant = await unifiedTenantManager.getTenant(tenantId);
         const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
+        const relayStatsModel = upstreamManager.resolveModel(anthropicPayload.model, upstream.index);
 
         if (isAnthropicUpstream(upstream)) {
             const {response} = await callUpstream(upstream, (up) =>
@@ -806,9 +813,9 @@ async function handleAnthropicMessages(req, res) {
                 parsed.usage?.input_tokens || estimateAnthropicInputTokens(anthropicPayload),
                 parsed.usage?.output_tokens || 0,
                 extractAnthropicCacheHitTokens(parsed.usage),
-                parsed.model || anthropicPayload.model
+                parsed.model || relayStatsModel
             );
-            sampleRequest(tenantId, 'relay', anthropicPayload, parsed, parsed.model || anthropicPayload.model).catch(() => {});
+            sampleRequest(tenantId, 'relay', anthropicPayload, parsed, parsed.model || relayStatsModel).catch(() => {});
             sendJson(res, 200, parsed);
             return;
         }
@@ -849,15 +856,15 @@ async function handleAnthropicMessages(req, res) {
                     throw error;
                 }
 
-                recordResponsesUsage(tenantId, usage, anthropicPayload.model);
+                recordResponsesUsage(tenantId, usage, relayStatsModel);
                 res.end();
                 return;
             }
 
             const completedResponse = await collectResponsesWebSocketResponse(wsResult);
-            recordResponsesUsage(tenantId, completedResponse.usage, anthropicPayload.model);
+            recordResponsesUsage(tenantId, completedResponse.usage, relayStatsModel);
             const chatResponse = responsesResponseToChat(completedResponse);
-            sampleRequest(tenantId, 'relay', anthropicPayload, completedResponse, anthropicPayload.model).catch(() => {});
+            sampleRequest(tenantId, 'relay', anthropicPayload, completedResponse, relayStatsModel).catch(() => {});
             sendJson(res, 200, openAIToAnthropic(chatResponse));
             return;
         }
@@ -891,16 +898,16 @@ async function handleAnthropicMessages(req, res) {
                 });
 
                 const usage = await streamResponsesEventsAsAnthropic(parseResponsesSSEEvents(response.body, req.signal), res, req.signal);
-                recordResponsesUsage(tenantId, usage, anthropicPayload.model);
+                recordResponsesUsage(tenantId, usage, relayStatsModel);
                 res.end();
                 return;
             }
 
             const responseBody = await readResponseBody(response.body);
             const parsed = JSON.parse(responseBody);
-            recordResponsesUsage(tenantId, parsed.usage, anthropicPayload.model);
+            recordResponsesUsage(tenantId, parsed.usage, relayStatsModel);
             const chatResponse = responsesResponseToChat(parsed);
-            sampleRequest(tenantId, 'relay', anthropicPayload, parsed, anthropicPayload.model).catch(() => {});
+            sampleRequest(tenantId, 'relay', anthropicPayload, parsed, relayStatsModel).catch(() => {});
             sendJson(res, 200, openAIToAnthropic(chatResponse));
             return;
         }
@@ -1016,7 +1023,7 @@ async function handleAnthropicMessages(req, res) {
                     partialTextBuffer = '';
                 }
                 state.endMessage(state.finalStopReason);
-                recordUsage(tenantId, streamInputTokens, streamOutputTokens, streamCacheHitTokens, anthropicPayload.model);
+                recordUsage(tenantId, streamInputTokens, streamOutputTokens, streamCacheHitTokens, relayStatsModel);
                 res.end();
             });
 
@@ -1054,8 +1061,8 @@ async function handleAnthropicMessages(req, res) {
             const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
             const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
             const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-            recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, anthropicPayload.model);
-            sampleRequest(tenantId, 'relay', anthropicPayload, aggregated, anthropicPayload.model).catch(() => {});
+            recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, relayStatsModel);
+            sampleRequest(tenantId, 'relay', anthropicPayload, aggregated, relayStatsModel).catch(() => {});
 
             const openAIResponse = {
                 id: aggregated.id || `chatcmpl_${Date.now()}`,
@@ -1174,6 +1181,7 @@ async function handleResponsesAPI(req, res) {
         const {upstream, tenantId, upstreamManager} = authResult;
         const body = await parseBody(req);
         const responsesReq = JSON.parse(body);
+        const relayStatsModel = upstreamManager.resolveModel(responsesReq.model, upstream.index);
 
         if (isAnthropicUpstream(upstream)) {
             const chatReq = responsesRequestToChat(responsesReq);
@@ -1222,7 +1230,7 @@ async function handleResponsesAPI(req, res) {
                     finalUsage?.prompt_tokens || 0,
                     finalUsage?.completion_tokens || 0,
                     finalUsage?.prompt_tokens_details?.cached_tokens || 0,
-                    responsesReq.model
+                    relayStatsModel
                 );
                 res.end();
                 return;
@@ -1236,9 +1244,9 @@ async function handleResponsesAPI(req, res) {
                 chatResponse.usage?.prompt_tokens || 0,
                 chatResponse.usage?.completion_tokens || 0,
                 chatResponse.usage?.prompt_tokens_details?.cached_tokens || 0,
-                responsesReq.model
+                relayStatsModel
             );
-            sampleRequest(tenantId, 'relay', responsesReq, parsed, responsesReq.model).catch(() => {});
+            sampleRequest(tenantId, 'relay', responsesReq, parsed, relayStatsModel).catch(() => {});
             sendJson(res, 200, chatResponseToResponses(chatResponse));
             return;
         }
@@ -1282,13 +1290,13 @@ async function handleResponsesAPI(req, res) {
                     throw error;
                 }
 
-                recordResponsesUsage(tenantId, usage, responsesReq.model);
+            recordResponsesUsage(tenantId, usage, relayStatsModel);
                 res.end();
                 return;
             }
 
             const completedResponse = await collectResponsesWebSocketResponse(wsResult);
-            recordResponsesUsage(tenantId, completedResponse.usage, responsesReq.model);
+            recordResponsesUsage(tenantId, completedResponse.usage, relayStatsModel);
             sendJson(res, 200, completedResponse);
             return;
         }
@@ -1343,13 +1351,13 @@ async function handleResponsesAPI(req, res) {
                 });
 
                 response.body.on('end', () => {
-                    recordUsage(
-                        tenantId,
-                        usage?.input_tokens || 0,
-                        usage?.output_tokens || 0,
-                        usage?.input_tokens_details?.cached_tokens || 0,
-                        responsesReq.model
-                    );
+                            recordUsage(
+                                tenantId,
+                                usage?.input_tokens || 0,
+                                usage?.output_tokens || 0,
+                                usage?.input_tokens_details?.cached_tokens || 0,
+                                relayStatsModel
+                            );
                     res.end();
                 });
 
@@ -1367,7 +1375,7 @@ async function handleResponsesAPI(req, res) {
                 parsed.usage?.input_tokens || 0,
                 parsed.usage?.output_tokens || 0,
                 parsed.usage?.input_tokens_details?.cached_tokens || 0,
-                responsesReq.model
+                relayStatsModel
             );
             sendJson(res, 200, parsed);
             return;
@@ -1461,7 +1469,7 @@ async function handleResponsesAPI(req, res) {
                         res.write(`event: response.completed\ndata: ${JSON.stringify({type: 'response.completed', response: {id: streamState.responseId, object: 'response', created_at: Math.floor(Date.now() / 1000), status: 'completed', model: streamModel || responsesReq.model || 'unknown', output: streamState.output, usage: {input_tokens: streamInputTokens, output_tokens: streamOutputTokens, total_tokens: streamInputTokens + streamOutputTokens}}})}\n\n`);
                     }
                 }
-                recordUsage(tenantId, streamInputTokens, streamOutputTokens, streamCacheHitTokens, responsesReq.model);
+                recordUsage(tenantId, streamInputTokens, streamOutputTokens, streamCacheHitTokens, relayStatsModel);
                 res.end();
             });
 
@@ -1485,8 +1493,8 @@ async function handleResponsesAPI(req, res) {
             const inputTokens = aggregated.usage?.prompt_tokens || 0;
             const outputTokens = aggregated.usage?.completion_tokens || 0;
             const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-            recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, responsesReq.model);
-            sampleRequest(tenantId, 'relay', responsesReq, aggregated, responsesReq.model).catch(() => {});
+            recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, relayStatsModel);
+            sampleRequest(tenantId, 'relay', responsesReq, aggregated, relayStatsModel).catch(() => {});
 
             const chatResponse = {
                 id: aggregated.id || `chatcmpl_${Date.now()}`,
@@ -1536,6 +1544,7 @@ async function handleResponsesCompact(req, res) {
         const {upstream, tenantId, upstreamManager} = authResult;
         const body = await parseBody(req);
         const compactReq = JSON.parse(body);
+        const relayStatsModel = upstreamManager.resolveModel(compactReq.model, upstream.index);
 
         if (isAnthropicUpstream(upstream)) {
             const chatReq = compactRequestToChat(compactReq);
@@ -1570,9 +1579,9 @@ async function handleResponsesCompact(req, res) {
                 chatResponse.usage?.prompt_tokens || 0,
                 chatResponse.usage?.completion_tokens || 0,
                 chatResponse.usage?.prompt_tokens_details?.cached_tokens || 0,
-                compactReq.model
+                relayStatsModel
             );
-            sampleRequest(tenantId, 'relay', compactReq, parsed, compactReq.model).catch(() => {});
+            sampleRequest(tenantId, 'relay', compactReq, parsed, relayStatsModel).catch(() => {});
             sendJson(res, 200, chatResponseToCompact(chatResponse));
             return;
         }
@@ -1599,7 +1608,7 @@ async function handleResponsesCompact(req, res) {
             });
 
             const completedResponse = await collectResponsesWebSocketResponse(wsResult);
-            recordResponsesUsage(tenantId, completedResponse.usage, compactReq.model);
+            recordResponsesUsage(tenantId, completedResponse.usage, relayStatsModel);
             sendJson(res, 200, chatResponseToCompact(responsesResponseToChat(completedResponse)));
             return;
         }
@@ -1634,7 +1643,7 @@ async function handleResponsesCompact(req, res) {
                 parsed.usage?.input_tokens || 0,
                 parsed.usage?.output_tokens || 0,
                 parsed.usage?.input_tokens_details?.cached_tokens || 0,
-                compactReq.model
+                relayStatsModel
             );
             sendJson(res, 200, parsed);
             return;
@@ -1669,8 +1678,8 @@ async function handleResponsesCompact(req, res) {
         const inputTokens = aggregated.usage?.prompt_tokens || 0;
         const outputTokens = aggregated.usage?.completion_tokens || 0;
         const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-        recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, compactReq.model);
-        sampleRequest(tenantId, 'relay', compactReq, aggregated, compactReq.model).catch(() => {});
+        recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, relayStatsModel);
+        sampleRequest(tenantId, 'relay', compactReq, aggregated, relayStatsModel).catch(() => {});
 
         const chatResponse = {
             id: aggregated.id || `chatcmpl_${Date.now()}`,
@@ -1881,13 +1890,29 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
  * @param {import('ws').WebSocket} clientWs - 客户端 WebSocket 连接
  * @param {import('http').IncomingMessage} req - 原始 HTTP 请求（已注入 tenantId）
  */
-export function handleRelayResponsesWS(clientWs, req) {
+export async function handleRelayResponsesWS(clientWs, req) {
+    const tenantId = req.tenantId;
+    const upstreamManager = await unifiedTenantManager.getUpstreamManager(tenantId);
+    const upstream = upstreamManager?.getActiveUpstream();
+
+    if (upstream && shouldUseResponsesWebSocketPassthrough(upstream)) {
+        const url = buildResponsesWebSocketUrl(upstream, 'responses');
+        const headers = buildResponsesWebSocketHeaders(upstream);
+        const agent = getProxyAgent(upstream);
+        logger.info(`[${upstream.name}]: ${url}, protocol: responses_ws, mode: passthrough`);
+        await passthroughResponsesWebSocket(clientWs, {
+            url,
+            headers,
+            agent,
+            rejectUnauthorized: !upstream.skip_tls_verify
+        });
+        return;
+    }
+
     handleWSConnection(clientWs, {
         authenticate: () => true,
         req,
         handleRequest: async function* (payload, authResult, {signal}) {
-            const tenantId = req.tenantId;
-            const upstreamManager = await unifiedTenantManager.getUpstreamManager(tenantId);
             if (!upstreamManager) {
                 throw Object.assign(new Error('Tenant upstream manager not found'), {
                     name: 'ResponsesWebSocketError',
@@ -1895,7 +1920,6 @@ export function handleRelayResponsesWS(clientWs, req) {
                 });
             }
 
-            const upstream = upstreamManager.getActiveUpstream();
             if (!upstream) {
                 throw Object.assign(new Error('未配置可用上游'), {
                     name: 'ResponsesWebSocketError',
@@ -1905,11 +1929,12 @@ export function handleRelayResponsesWS(clientWs, req) {
 
             const tenant = await unifiedTenantManager.getTenant(tenantId);
             const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
+            req.relayResolvedModel = upstreamManager.resolveModel(payload.model, upstream.index);
 
             yield* _relayWSHandleRequest(payload, upstream, upstreamManager, tenantId, tenantMeta, signal, req);
         },
         onUsage: (inputTokens, outputTokens, cacheHitTokens, model) => {
-            recordUsage(req.tenantId, inputTokens, outputTokens, cacheHitTokens, model);
+            recordUsage(req.tenantId, inputTokens, outputTokens, cacheHitTokens, req.relayResolvedModel || model);
         }
     });
 }

@@ -246,7 +246,7 @@ form.addEventListener('submit',async event=>{
         });
         const data=await response.json();
         if(response.ok&&data.success){
-            window.location.replace(data.redirect||'/dashboard#/console/overview');
+            window.location.replace(data.redirect||'/dashboard#/relay');
             return;
         }
         throw new Error(data.error||'登录失败');

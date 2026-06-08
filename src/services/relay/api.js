@@ -99,20 +99,28 @@ export function getProxyAgent(upstream) {
 
 // ==================== Chat Completions ====================
 
-function buildProtocolAwareUrl(upstream, endpoint) {
+function normalizeAnthropicBaseUrl(baseUrl) {
+    const url = new URL(baseUrl);
+    let pathname = url.pathname.replace(/\/+$/, '');
+    pathname = pathname.replace(/\/messages\/count_tokens$/, '');
+    pathname = pathname.replace(/\/messages$/, '');
+    pathname = pathname.replace(/\/models$/, '');
+    if (!/\/v\d+$/i.test(pathname)) {
+        pathname = `${pathname}/v1`;
+    }
+    url.pathname = pathname;
+    return url.toString().replace(/\/+$/, '');
+}
+
+export function buildProtocolAwareUrl(upstream, endpoint) {
     if (!isAnthropicUpstream(upstream)) {
         return buildUrl(upstream.base_url, endpoint);
     }
 
     try {
-        const url = new URL(upstream.base_url);
-        const pathname = url.pathname.replace(/\/+$/, '');
-        const needsV1 = pathname.endsWith('/anthropic') || pathname.endsWith('/messages');
-        const normalizedBaseUrl = needsV1 ? `${upstream.base_url.replace(/\/+$/, '')}/v1` : upstream.base_url;
-        return buildUrl(normalizedBaseUrl, endpoint);
+        return buildUrl(normalizeAnthropicBaseUrl(upstream.base_url), endpoint);
     } catch {
-        const trimmed = upstream.base_url.replace(/\/+$/, '');
-        const normalizedBaseUrl = /\/anthropic$/.test(trimmed) ? `${trimmed}/v1` : trimmed;
+        const normalizedBaseUrl = upstream.base_url.replace(/\/+$/, '');
         return buildUrl(normalizedBaseUrl, endpoint);
     }
 }
@@ -124,6 +132,16 @@ export function normalizeUpstreamProtocol(protocol) {
 
 export function isAnthropicUpstream(upstream) {
     return normalizeUpstreamProtocol(upstream?.protocol) === 'anthropic';
+}
+
+function shouldUseBearerAuthForAnthropic(upstream) {
+    const apiKey = String(upstream?.api_key || '').trim();
+    try {
+        const host = new URL(upstream?.base_url || '').hostname.toLowerCase();
+        return apiKey.startsWith('ark-') || host.includes('volces.com') || host.includes('volcengine.com');
+    } catch {
+        return apiKey.startsWith('ark-');
+    }
 }
 
 export function isResponsesUpstream(upstream) {
@@ -141,9 +159,14 @@ function buildBaseHeaders(upstream, extraHeaders = {}) {
     };
 
     if (isAnthropicUpstream(upstream)) {
-        headers['x-api-key'] = upstream.api_key;
+        if (shouldUseBearerAuthForAnthropic(upstream)) {
+            headers.Authorization = `Bearer ${upstream.api_key}`;
+            delete headers['x-api-key'];
+        } else {
+            headers['x-api-key'] = upstream.api_key;
+            delete headers.Authorization;
+        }
         headers['anthropic-version'] = extraHeaders['anthropic-version'] || DEFAULT_ANTHROPIC_VERSION;
-        delete headers.Authorization;
         return headers;
     }
 
@@ -159,10 +182,29 @@ function applyProxy(upstream, options) {
 }
 
 export function buildResponsesWebSocketUrl(upstream, endpoint = 'responses') {
-    const httpUrl = buildProtocolAwareUrl(upstream, endpoint);
-    if (httpUrl.startsWith('https://')) return `wss://${httpUrl.slice('https://'.length)}`;
-    if (httpUrl.startsWith('http://')) return `ws://${httpUrl.slice('http://'.length)}`;
-    throw new Error(`[${upstream.name}]: Responses WebSocket URL must start with http:// or https://`);
+    const endpointPath = String(endpoint || 'responses').replace(/^\/+/, '');
+    let url;
+    try {
+        url = new URL(upstream.base_url);
+    } catch {
+        throw new Error(`[${upstream.name}]: Responses WebSocket URL must be a valid URL`);
+    }
+
+    if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) {
+        throw new Error(`[${upstream.name}]: Responses WebSocket URL must start with http://, https://, ws://, or wss://`);
+    }
+
+    const normalizedPath = url.pathname.replace(/\/+$/, '');
+    if (!normalizedPath.endsWith(`/${endpointPath}`) && normalizedPath !== `/${endpointPath}`) {
+        url.pathname = `${normalizedPath || ''}/${endpointPath}`.replace(/\/{2,}/g, '/');
+    } else {
+        url.pathname = normalizedPath || `/${endpointPath}`;
+    }
+    url.hash = '';
+
+    if (url.protocol === 'https:') url.protocol = 'wss:';
+    if (url.protocol === 'http:') url.protocol = 'ws:';
+    return url.toString();
 }
 
 export function buildResponsesWebSocketHeaders(upstream, extraHeaders = {}) {

@@ -22,7 +22,7 @@ export function isResponsesWebSocketProtocolError(error) {
 }
 
 export function prepareResponsesWebSocketPayload(payload) {
-    const {stream, background, include, metadata, store, text, truncation, user, ...rest} = payload || {};
+    const {stream, background, ...rest} = payload || {};
     return rest;
 }
 

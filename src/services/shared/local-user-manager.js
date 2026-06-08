@@ -10,6 +10,7 @@ import logger from '../../utils/logger.js';
 import {models} from '../../db/models/index.js';
 import {hashPassword} from './local-auth.js';
 import {unifiedTenantManager} from '../gateway/tenant-manager.js';
+import {getAuthMode} from './auth-mode.js';
 
 const MIN_PASSWORD_LENGTH = 8;
 const USERNAME_REGEX = /^[a-zA-Z0-9._-]{2,32}$/;
@@ -27,6 +28,10 @@ function canManageTarget(actorRole, targetRole) {
 
 async function findLocalUser(username) {
     return models.Tenant.findOne({where: {username, password_hash: {[Op.ne]: null}}});
+}
+
+async function findLdapUser(username) {
+    return models.Tenant.findOne({where: {username, password_hash: null}});
 }
 
 function syncLocalUserCache(username, updates) {
@@ -50,6 +55,27 @@ export async function listLocalUsers(actorRole = ROLE_ADMIN) {
             role: t.role || ROLE_USER,
             createdAt: t.created_at ? Math.floor(new Date(t.created_at).getTime() / 1000) : 0
         }));
+}
+
+export async function listLdapUsers(actorRole = ROLE_ADMIN) {
+    const tenants = await models.Tenant.findAll({
+        where: {password_hash: null},
+        order: [['id', 'ASC']]
+    });
+    return tenants
+        .filter(t => canManageTarget(actorRole, t.role || ROLE_USER))
+        .map(t => ({
+            username: t.username,
+            displayName: t.name,
+            role: t.role || ROLE_USER,
+            source: 'ldap',
+            createdAt: t.created_at ? Math.floor(new Date(t.created_at).getTime() / 1000) : 0
+        }));
+}
+
+export async function listManagedUsers(actorRole = ROLE_ADMIN, authMode = getAuthMode()) {
+    if (authMode === 'ldap') return listLdapUsers(actorRole);
+    return listLocalUsers(actorRole);
 }
 
 export async function createLocalUser(input, actorRole = ROLE_ADMIN) {
@@ -157,6 +183,45 @@ export async function updateLocalUser(username, input = {}, actorRole = ROLE_ADM
     return {ok: true};
 }
 
+export async function updateLdapUser(username, input = {}, actorRole = ROLE_ADMIN) {
+    const target = await findLdapUser(username);
+    if (!target) {
+        return {ok: false, status: 404, error: 'LDAP user not found'};
+    }
+
+    const currentRole = target.role || ROLE_USER;
+    if (!canManageTarget(actorRole, currentRole)) {
+        return {ok: false, status: 403, error: 'Permission denied'};
+    }
+
+    const requestedRole = input.role === undefined || input.role === '' ? currentRole : input.role;
+    if (!MANAGED_ROLES.has(requestedRole)) {
+        return {ok: false, status: 400, error: 'Invalid role'};
+    }
+    if (requestedRole === ROLE_ADMIN && actorRole !== ROLE_SUPERADMIN) {
+        return {ok: false, status: 403, error: 'Only superadmin can grant admin role'};
+    }
+
+    const displayName = String(input.displayName ?? target.name ?? username).trim() || username;
+    const updates = {name: displayName, role: requestedRole};
+    const [count] = await models.Tenant.update(
+        updates,
+        {where: {username, password_hash: null}}
+    );
+    if (count === 0) {
+        return {ok: false, status: 404, error: 'LDAP user not found'};
+    }
+
+    syncLocalUserCache(username, updates);
+    logger.info(`Updated LDAP user '${username}' role=${requestedRole}`);
+    return {ok: true};
+}
+
+export async function updateManagedUser(username, input = {}, actorRole = ROLE_ADMIN, authMode = getAuthMode()) {
+    if (authMode === 'ldap') return updateLdapUser(username, input, actorRole);
+    return updateLocalUser(username, input, actorRole);
+}
+
 export async function deleteLocalUser(username, currentUsername, actorRole = ROLE_ADMIN) {
     if (username === currentUsername) {
         return {ok: false, status: 400, error: '不能删除自己'};
@@ -176,4 +241,30 @@ export async function deleteLocalUser(username, currentUsername, actorRole = ROL
     }
     logger.info(`Deleted local user '${username}'`);
     return {ok: true};
+}
+
+export async function deleteLdapUser(username, currentUsername, actorRole = ROLE_ADMIN) {
+    if (username === currentUsername) {
+        return {ok: false, status: 400, error: 'Cannot delete yourself'};
+    }
+    const target = await findLdapUser(username);
+    if (!target) {
+        return {ok: false, status: 404, error: 'LDAP user not found'};
+    }
+    if (!canManageTarget(actorRole, target.role || ROLE_USER)) {
+        return {ok: false, status: 403, error: 'Permission denied'};
+    }
+    const deleted = await models.Tenant.destroy({
+        where: {username, password_hash: null}
+    });
+    if (!deleted) {
+        return {ok: false, status: 404, error: 'LDAP user not found'};
+    }
+    logger.info(`Deleted LDAP user '${username}'`);
+    return {ok: true};
+}
+
+export async function deleteManagedUser(username, currentUsername, actorRole = ROLE_ADMIN, authMode = getAuthMode()) {
+    if (authMode === 'ldap') return deleteLdapUser(username, currentUsername, actorRole);
+    return deleteLocalUser(username, currentUsername, actorRole);
 }

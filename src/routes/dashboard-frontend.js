@@ -226,6 +226,15 @@ async function relayOperation(req, res, tenantId, subPath) {
         sendJson(res, 200, await manager.testUpstream(Number(index)));
         return true;
     }
+    if (subPath === '/upstreams/test-all' && req.method === 'POST') {
+        const upstreams = manager.listUpstreams();
+        const results = [];
+        for (let index = 0; index < upstreams.length; index++) {
+            results.push({index, name: upstreams[index]?.name || `#${index + 1}`, ...(await manager.testUpstream(index))});
+        }
+        sendJson(res, 200, {results});
+        return true;
+    }
     return false;
 }
 

@@ -31,9 +31,11 @@ export async function initDb() {
     await sequelize.authenticate();
     await ensureTenantCredentialColumns();
     await ensureCopilotCredentialColumns();
+    await ensureTenantUpstreamColumns();
     await sequelize.sync();
     await ensureTenantCredentialColumns();
     await ensureCopilotCredentialColumns();
+    await ensureTenantUpstreamColumns();
 }
 
 async function ensureTenantCredentialColumns() {
@@ -76,6 +78,25 @@ async function ensureCopilotCredentialColumns() {
 
     for (const [name, definition] of Object.entries(definitions)) {
         if (!columns[name]) await queryInterface.addColumn(table, name, definition);
+    }
+}
+
+async function ensureTenantUpstreamColumns() {
+    const queryInterface = sequelize.getQueryInterface();
+    const table = 'tenant_upstreams';
+    let columns;
+    try {
+        columns = await queryInterface.describeTable(table);
+    } catch {
+        return;
+    }
+
+    if (!columns.ws_mode) {
+        await queryInterface.addColumn(table, 'ws_mode', {
+            type: DataTypes.STRING,
+            allowNull: false,
+            defaultValue: 'ctx_pool'
+        });
     }
 }
 

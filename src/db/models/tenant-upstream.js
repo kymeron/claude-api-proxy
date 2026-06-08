@@ -50,6 +50,10 @@ export const TenantUpstream = sequelize.define('tenant_upstreams', {
     protocol: {
         type: DataTypes.STRING
     },
+    ws_mode: {
+        type: DataTypes.STRING,
+        defaultValue: 'ctx_pool'
+    },
     retry_count: {
         type: DataTypes.INTEGER,
         defaultValue: 3

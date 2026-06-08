@@ -100,6 +100,7 @@
             color: var(--text); background: #17263e;
         }
         .btn:hover { transform: translateY(-1px); border-color: rgba(124, 156, 255, .5); }
+        .btn:disabled { opacity: .58; cursor: not-allowed; transform: none; }
         .btn-primary { color: #07111e; border: 0; background: linear-gradient(135deg, var(--brand), var(--brand-2)); font-weight: 800; }
         .btn-danger { color: #ffc1cb; background: rgba(251, 113, 133, .11); border-color: rgba(251, 113, 133, .25); }
         .btn-ghost { background: transparent; }
@@ -126,6 +127,9 @@
         .item.active { border-color: rgba(74, 222, 128, .35); background: rgba(74, 222, 128, .045); }
         .item h3 { margin: 0 0 4px; }
         .item p { margin: 2px 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+        .test-result { margin-top: 6px !important; padding-top: 6px; border-top: 1px solid rgba(148, 163, 184, .12); }
+        .test-result.ok { color: #86efac; }
+        .test-result.bad { color: #fda4af; }
         .empty { padding: 34px 20px; border: 1px dashed rgba(148, 163, 184, .22); border-radius: 14px; text-align: center; color: var(--muted); }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 12px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
@@ -142,6 +146,12 @@
         .modal.show { display: grid; }
         .dialog { width: min(620px, 100%); max-height: 90vh; overflow: auto; border: 1px solid var(--line); border-radius: 20px; padding: 22px; background: #0d192b; box-shadow: var(--shadow); }
         .field { display: grid; gap: 6px; margin: 14px 0; }
+        .upstream-dialog .card-head { margin-bottom: 12px; }
+        .upstream-dialog .grid { column-gap: 14px; row-gap: 8px; }
+        .upstream-dialog .field { margin: 9px 0; }
+        .upstream-dialog .field + .field { margin-top: 10px; }
+        .upstream-dialog .dialog-foot { margin-top: 14px; }
+        .upstream-dialog .model-map { margin-top: 2px; }
         label { color: #a9bad0; font-size: 12px; font-weight: 700; }
         input, select, textarea {
             width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
@@ -172,6 +182,34 @@
         }
         .select-control select:disabled { cursor: not-allowed; opacity: .58; }
         .select-control option { color: #edf4ff; background: #0d192b; }
+        .mode-help { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+        .mode-tip {
+            position: relative; display: inline-flex; align-items: center; gap: 5px;
+            width: fit-content; padding: 4px 8px; border: 1px solid rgba(148, 163, 184, .18);
+            border-radius: 999px; color: #a9bad0; background: rgba(148, 163, 184, .08);
+            font-size: 12px;
+        }
+        .tip-dot {
+            display: inline-grid; place-items: center; width: 16px; height: 16px;
+            border-radius: 50%; color: #dbe6ff; background: rgba(124, 156, 255, .22);
+            font-size: 11px; font-weight: 800; cursor: help;
+        }
+        .mode-tip::after {
+            content: attr(data-tip); position: absolute; right: 0; bottom: calc(100% + 10px);
+            z-index: 30; width: max-content; max-width: 280px; padding: 8px 10px;
+            border-radius: 8px; color: #fff; background: rgba(2, 8, 18, .96);
+            box-shadow: 0 10px 28px rgba(0, 0, 0, .34); line-height: 1.45;
+            white-space: normal; opacity: 0; pointer-events: none;
+            transform: translateY(4px); transition: opacity .14s ease, transform .14s ease;
+        }
+        .mode-tip::before {
+            content: ""; position: absolute; right: 12px; bottom: calc(100% + 4px);
+            z-index: 31; border: 6px solid transparent; border-top-color: rgba(2, 8, 18, .96);
+            opacity: 0; pointer-events: none;
+            transition: opacity .14s ease;
+        }
+        .mode-tip:hover::after, .mode-tip:hover::before,
+        .mode-tip:focus-within::after, .mode-tip:focus-within::before { opacity: 1; transform: translateY(0); }
         .secret-control { position: relative; }
         .secret-control input { padding-right: 74px; }
         .secret-toggle {
@@ -301,8 +339,10 @@
 <body>
 <div class="app">
     <aside class="sidebar">
-        <div class="brand"><div class="logo">C</div><div><strong>Claude API Proxy</strong><span>统一服务控制台</span></div></div>
-        <button class="nav-btn active" id="nav-console" onclick="showConsole()">服务控制台</button>
+        <div class="brand"><div class="logo">C</div><div><strong>Claude API Proxy</strong><span>统一管理面板</span></div></div>
+        <button class="nav-btn active" id="nav-relay" onclick="showConsole('relay')">Relay</button>
+        <button class="nav-btn" id="nav-codebuddy" onclick="showConsole('codebuddy')">CodeBuddy</button>
+        <button class="nav-btn" id="nav-copilot" onclick="showConsole('copilot')">Copilot</button>
         <button class="nav-btn" id="nav-stats" onclick="showStats()">使用统计</button>
         <button class="nav-btn" id="nav-users" style="display:none" onclick="showUsers()">用户管理</button>
         <button class="nav-btn" id="nav-feedback" onclick="showFeedback()">问题反馈</button>
@@ -312,19 +352,19 @@
             <div><h1 id="pageTitle">服务控制台</h1><p id="pageSubtitle">统一管理 API Key、上游和服务凭证</p></div>
             <div class="user"><div class="avatar" id="avatar">U</div><span id="username"></span><button class="btn btn-ghost btn-sm" onclick="logout()">退出</button></div>
         </div>
-        <div class="notice"><div><strong>统一认证已启用</strong> · 一个租户 API Key 可访问该租户已启用的服务端点；各服务凭据和统计彼此隔离。</div><button class="btn btn-sm" onclick="this.parentElement.remove()">知道了</button></div>
         <div id="main"><div class="empty">正在加载控制台...</div></div>
     </main>
 </div>
 
-<div class="modal" id="upstreamModal"><div class="dialog">
+<div class="modal" id="upstreamModal"><div class="dialog upstream-dialog">
     <div class="card-head"><div><h2 id="upstreamTitle">添加 Relay 上游</h2><div class="muted">支持 OpenAI Chat、Responses、Responses WebSocket 与 Anthropic。</div></div><button class="btn btn-ghost" onclick="closeModal('upstreamModal')">关闭</button></div>
     <div class="grid grid-2">
         <div class="field"><label>名称</label><input id="upName" autocomplete="off" placeholder="例如 DeepSeek"></div>
-        <div class="field"><label>协议</label><div class="select-control"><select id="upProtocol"><option value="openai">OpenAI Chat</option><option value="responses">Responses API</option><option value="responses_ws">Responses WebSocket</option><option value="anthropic">Anthropic Messages</option></select></div></div>
+        <div class="field"><label>协议</label><div class="select-control"><select id="upProtocol" onchange="syncUpstreamWsModeVisibility()"><option value="openai">OpenAI Chat</option><option value="responses">Responses API</option><option value="responses_ws">Responses WebSocket</option><option value="anthropic">Anthropic Messages</option></select></div></div>
+        <div class="field" id="upWsModeField" style="display:none"><label>WS mode</label><div class="select-control"><select id="upWsMode"><option value="ctx_pool">ctx_pool</option><option value="passthrough">passthrough</option><option value="off">off</option></select></div><div class="mode-help"><span class="mode-tip" data-tip="推荐默认。代理会复用上游 WebSocket 连接，并尽量接上 previous_response_id，适合 Anthropic/Chat 转 Responses 的链路。">ctx_pool <span class="tip-dot" tabindex="0">?</span></span><span class="mode-tip" data-tip="低延迟直通。客户端和上游都是 Responses WebSocket 时使用，代理少改数据；不适合 Anthropic 客户端入口。">passthrough <span class="tip-dot" tabindex="0">?</span></span></div></div>
     </div>
     <div class="field"><label>Base URL</label><input id="upUrl" autocomplete="off" placeholder="https://api.example.com"></div>
-    <div class="field"><label for="upKey">API Key</label><div class="secret-control"><input id="upKey" type="password" placeholder="sk-..." autocomplete="off" data-lpignore="true" data-1p-ignore><button type="button" class="secret-toggle" id="upKeyToggle" aria-controls="upKey" aria-pressed="false" aria-label="显示 API Key" onclick="toggleApiKeyVisibility()">显示</button></div></div>
+    <div class="field"><label for="upKey">API Key</label><div class="secret-control"><input id="upKey" type="password" placeholder="填写上游密钥" autocomplete="off" data-lpignore="true" data-1p-ignore><button type="button" class="secret-toggle" id="upKeyToggle" aria-controls="upKey" aria-pressed="false" aria-label="显示 API Key" onclick="toggleApiKeyVisibility()">显示</button></div></div>
     <div class="field"><label>代理地址（可选）</label><input id="upProxy" autocomplete="off" placeholder="http://127.0.0.1:7890"></div>
     <label><input id="upTls" type="checkbox" autocomplete="off" style="width:auto"> 跳过 TLS 证书验证</label>
     <div class="field">
@@ -415,11 +455,16 @@
     <div id="feedbackDetailBody" class="feedback-detail-grid"></div>
 </div></div>
 
+<div class="modal" id="modelTrendModal"><div class="dialog">
+    <div class="card-head"><div><h2 id="modelTrendTitle">每日缓存趋势</h2><div class="muted">按当前服务和日期范围展示。</div></div><button class="btn btn-ghost" onclick="closeModal('modelTrendModal')">关闭</button></div>
+    <div id="modelTrendBody" class="empty">正在加载模型趋势...</div>
+</div></div>
+
 <div class="toast" id="toast"></div>
 <script>
-const S={me:null,tenants:[],tenant:null,tab:'overview',statsTab:'relay',statsPage:'users',adminStats:null,adminStatsSearch:'',adminStatsPageNo:1,adminStatsPageSize:20,adminStatsSort:'apiCalls',adminStatsSortDir:'desc',adminStatsStartDate:'',adminStatsEndDate:'',adminModelStartDate:'',adminModelEndDate:'',adminModelPageNo:1,adminTrendPageNo:1,adminCoachPageNo:1,adminTrendWorkdayOnly:true,adminModelCache:[],adminSelectedCoach:null,upstreams:[],credentials:[],currentCredential:0,codebuddyOptions:null,codebuddyCustomSiteLabels:{},editingUpstream:null,oauthState:null,oauthTimer:null,passwordUser:null,editingUser:null,copilotCredentials:[],editingCopilot:null,copilotAuthId:null,copilotDeviceCode:null,copilotAuthTimer:null,feedbackItems:[],feedbackPage:1,feedbackPageSize:10,feedbackTotal:0};
-const HASH_ROUTES=['#/console/overview','#/console/relay','#/console/codebuddy','#/console/copilot','#/stats/relay/users','#/stats/relay/model-cache','#/stats/relay/trend','#/stats/relay/coach','#/stats/codebuddy/users','#/stats/codebuddy/model-cache','#/stats/codebuddy/trend','#/stats/codebuddy/coach','#/stats/copilot/users','#/stats/copilot/model-cache','#/stats/copilot/trend','#/stats/copilot/coach'];
-const ADMIN_STATS_TABS=[['users','用户排行'],['model-cache','模型分析'],['trend','用户趋势'],['coach','使用建议']];
+const S={me:null,tenants:[],tenant:null,tab:'relay',statsTab:'relay',statsPage:'monthly',adminStats:null,adminStatsSearch:'',adminStatsPageNo:1,adminStatsPageSize:20,adminStatsSort:'apiCalls',adminStatsSortDir:'desc',adminStatsMonth:'',adminStatsStartDate:'',adminStatsEndDate:'',adminModelStartDate:'',adminModelEndDate:'',adminModelPageNo:1,adminTrendPageNo:1,adminCoachPageNo:1,adminTrendWorkdayOnly:true,adminModelCache:[],adminSelectedCoach:null,upstreams:[],credentials:[],currentCredential:0,codebuddyOptions:null,codebuddyCustomSiteLabels:{},editingUpstream:null,oauthState:null,oauthTimer:null,passwordUser:null,editingUser:null,copilotCredentials:[],editingCopilot:null,copilotAuthId:null,copilotDeviceCode:null,copilotAuthTimer:null,feedbackItems:[],feedbackPage:1,feedbackPageSize:10,feedbackTotal:0,relayTestResults:{},relayTesting:false};
+const HASH_ROUTES=['#/relay','#/codebuddy','#/copilot','#/stats/relay/monthly','#/stats/relay/model-cache','#/stats/codebuddy/monthly','#/stats/codebuddy/model-cache','#/stats/copilot/monthly','#/stats/copilot/model-cache'];
+const ADMIN_STATS_TABS=[['monthly','月度统计'],['model-cache','模型分析']];
 const ADMIN_STATS_SERVICES=[['relay','Relay'],['codebuddy','CodeBuddy'],['copilot','Copilot']];
 const STATS_DAILY_TREND_API='/stats/api/daily-trend';
 // Legacy service stats tab marker kept for template compatibility: class="tab ${S.statsTab===type?'active':''}"
@@ -460,22 +505,22 @@ function syncHashRoute(view,detail,options={}){
 }
 function syncStatsHash(page,options={}){
     const service=ADMIN_STATS_SERVICES.some(([id])=>id===S.statsTab)?S.statsTab:'relay';
-    const safePage=statsTabsForRole().some(([id])=>id===page)?page:'users';
+    const safePage=statsTabsForRole().some(([id])=>id===page)?page:'monthly';
     const hash=`#/stats/${service}/${safePage}`;
     if(location.hash===hash)return;
     if(options.replace){location.replace(hash);return;}
     location.hash=hash;
 }
 function parseHashRoute(){
-    const raw=(location.hash||'#/console/overview').replace(/^#\/?/,'');
+    const raw=(location.hash||'#/relay').replace(/^#\/?/,'');
     const parts=raw.split('/').filter(Boolean);
-    const view=parts[0]||'console';
+    const view=parts[0]||'relay';
     if(view==='stats'){
         const service=ADMIN_STATS_SERVICES.some(([id])=>id===parts[1])?parts[1]:S.statsTab;
         const detail=ADMIN_STATS_SERVICES.some(([id])=>id===parts[1])?parts[2]:parts[1];
         return {view,service:service||'relay',detail:detail||'users'};
     }
-    return {view,detail:parts[1]||'overview'};
+    return {view,detail:parts[1]};
 }
 function routeFromHash(){
     if(!S.me||!S.tenant)return;
@@ -483,8 +528,8 @@ function routeFromHash(){
     const route=parseHashRoute();
     if(route.view==='stats'){S.statsTab=ADMIN_STATS_SERVICES.some(([id])=>id===route.service)?route.service:'relay';return showStats(route.detail||'users',{skipHash:true});}
     if(route.view==='feedback')return showFeedback({skipHash:true});
-    if(route.view==='users')return S.me.isAdmin?showUsers({skipHash:true}):showConsole('overview',{skipHash:true});
-    return showConsole(['relay','codebuddy','copilot','overview'].includes(route.detail)?route.detail:'overview',{skipHash:true});
+    if(route.view==='users')return S.me.isAdmin?showUsers({skipHash:true}):showConsole('relay',{skipHash:true});
+    return showConsole(['relay','codebuddy','copilot'].includes(route.view)?route.view:'relay',{skipHash:true});
 }
 window.addEventListener('hashchange',routeFromHash);
 async function init(){
@@ -495,70 +540,76 @@ async function init(){
         document.getElementById('newRoleAdminOption').hidden=S.me.role!=='superadmin';
         document.getElementById('editRoleAdminOption').hidden=S.me.role!=='superadmin';
         await loadMyTenant({deferRoute:true});
-        if(!location.hash||!location.hash.startsWith('#/'))syncHashRoute('console','overview',{replace:true});
+        if(!location.hash||!location.hash.startsWith('#/'))syncHashRoute('relay',null,{replace:true});
         routeFromHash();
     }catch(e){document.getElementById('main').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
 }
 async function logout(){try{await api('/logout',{method:'POST'});}finally{location.href='/login';}}
 function setNav(active){
-    ['console','feedback','stats','users'].forEach(id=>document.getElementById('nav-'+id)?.classList.toggle('active',id===active));
+    ['relay','codebuddy','copilot','feedback','stats','users'].forEach(id=>document.getElementById('nav-'+id)?.classList.toggle('active',id===active));
 }
 async function loadMyTenant(){
     const options=arguments[0]||{};
     try{
-        const data=await api('/dashboard/my-tenant');S.tenant=data.tenant;S.tab='overview';
-        setNav('console');
-        document.getElementById('pageTitle').textContent='服务控制台';
-        document.getElementById('pageSubtitle').textContent='@'+(S.tenant.username||S.me.username||'-')+' · 当前用户配置';
+        const data=await api('/dashboard/my-tenant');S.tenant=data.tenant;S.tab='relay';
+        setNav(S.tab||'relay');
+        document.getElementById('pageTitle').textContent='Relay';
+        document.getElementById('pageSubtitle').textContent='@'+(S.tenant.username||S.me.username||'-');
         if(!options.deferRoute)renderTenant();
     }catch(e){toast(e.message,'error');}
 }
-function showConsole(){const tab=arguments[0]||S.tab||'overview';const options=arguments[1]||{};if(S.tenant){if(!options.skipHash)syncHashRoute('console',tab);setNav('console');document.getElementById('pageTitle').textContent='服务控制台';document.getElementById('pageSubtitle').textContent='@'+(S.tenant.username||S.me.username||'-')+' · 当前用户配置';switchTab(tab,{skipHash:true});}}
-function switchTab(tab){const options=arguments[1]||{};S.tab=tab;if(['relay','codebuddy','copilot','overview'].includes(tab)&&!options.skipHash)syncHashRoute('console',tab);renderTenant();if(tab==='relay')loadRelay();if(tab==='codebuddy')loadCodebuddy();if(tab==='copilot')loadCopilot();if(['relay','codebuddy','copilot'].includes(tab))loadServiceStats(tab);}
+function showConsole(){let tab=arguments[0]||S.tab||'relay';const options=arguments[1]||{};if(!['relay','codebuddy','copilot'].includes(tab))tab='relay';if(S.tenant){if(!options.skipHash)syncHashRoute(tab);setNav(tab);const consoleTitle={relay:'Relay',codebuddy:'CodeBuddy',copilot:'Copilot'}[tab]||'服务管理';document.getElementById('pageTitle').textContent=consoleTitle;document.getElementById('pageSubtitle').textContent='@'+(S.tenant.username||S.me.username||'-');switchTab(tab,{skipHash:true});}}
+function switchTab(tab){const options=arguments[1]||{};if(!['relay','codebuddy','copilot'].includes(tab))tab='relay';S.tab=tab;if(['relay','codebuddy','copilot'].includes(tab)){setNav(tab);if(!options.skipHash)syncHashRoute(tab);}renderTenant();if(tab==='relay')loadRelay();if(tab==='codebuddy')loadCodebuddy();if(tab==='copilot')loadCopilot();}
 function renderTenant(){
     const t=S.tenant;if(!t)return;
-    const tabs=[['overview','概览'],...enabledServices().map(([type,label])=>[type,label])];
-    if(!tabs.some(([id])=>id===S.tab))S.tab='overview';
-    document.getElementById('main').innerHTML=`<div class="tabs">${tabs.map(([id,label])=>`<button class="tab ${S.tab===id?'active':''}" onclick="switchTab('${id}')">${label}</button>`).join('')}</div><div id="tabBody"></div>`;
-    if(S.tab==='overview')renderOverview();else if(S.tab==='relay')renderRelay();else if(S.tab==='codebuddy')renderCodebuddy();else if(S.tab==='copilot')renderCopilot();
+    if(!['relay','codebuddy','copilot'].includes(S.tab))S.tab='relay';
+    document.getElementById('main').innerHTML='<div id="tabBody"></div>';
+    if(S.tab==='relay')renderRelay();else if(S.tab==='codebuddy')renderCodebuddy();else if(S.tab==='copilot')renderCopilot();
 }
 function serviceCard(type,title,desc,color){
     const p=profile(S.tenant,type);return `<div class="card service" style="--glow:${color}"><span class="badge service-status ${p.enabled?'on':'off'}">${p.enabled?'已启用':'已停用'}</span><div class="card-head"><div><h2>${title}</h2><p class="muted">${desc}</p></div></div><div class="actions"><span class="muted">${fmt(p.total_api_calls)} 次调用</span><span class="muted">输入 ${fmt(p.total_input_tokens)} / 输出 ${fmt(p.total_output_tokens)}</span></div></div>`;
 }
-function renderOverview(){
-    const t=S.tenant;const ps=t.serviceProfiles||[];const total=k=>ps.reduce((n,p)=>n+Number(p[k]||0),0);
-    document.getElementById('tabBody').innerHTML=`
-    <div class="grid grid-4">
-        <div class="card"><div class="muted">总调用</div><div class="metric">${fmt(total('total_api_calls'))}</div></div>
-        <div class="card"><div class="muted">输入 Token</div><div class="metric">${fmt(total('total_input_tokens'))}</div></div>
-        <div class="card"><div class="muted">输出 Token</div><div class="metric">${fmt(total('total_output_tokens'))}</div></div>
-        <div class="card"><div class="muted">缓存命中</div><div class="metric">${fmt(total('total_cache_hit_tokens'))}</div></div>
-    </div>
-    <div class="card" style="margin-top:16px"><div class="card-head"><div><h2>统一 API Key</h2><div class="muted">同一个 Key 可访问已启用的 Relay、CodeBuddy 和 Copilot 端点。</div></div><button class="btn btn-danger btn-sm" onclick="regenerateKey()">重新生成</button></div>
+function renderApiKeyCard(){
+    const t=S.tenant;
+    return `<div class="card" style="margin-top:16px"><div class="card-head"><div><h2>统一 API Key</h2><div class="muted">同一个 Key 可访问已启用的 Relay、CodeBuddy 和 Copilot 端点。</div></div><button class="btn btn-danger btn-sm" onclick="regenerateKey()">重新生成</button></div>
         <div class="key-box"><code id="apiKey">${esc(t.api_key_plain||t.api_key_prefix||'不可用')}</code><button class="btn btn-sm" onclick="copyKey()">复制</button></div>
-    </div>
-    <div class="grid grid-3" style="margin-top:16px">
-        ${enabledServices().map(([type,title,desc,color])=>serviceCard(type,title,desc,color)).join('')||'<div class="empty">当前没有已启用的服务端点，请联系管理员开启 Relay、CodeBuddy 或 Copilot。</div>'}
     </div>`;
 }
 async function copyKey(){try{await navigator.clipboard.writeText(S.tenant.api_key_plain||'');toast('API Key 已复制');}catch{toast('浏览器不允许复制，请手动选择','error');}}
-async function regenerateKey(){if(!confirm('重新生成后，旧 API Key 会立即失效。确认继续？'))return;try{const d=await api(`/dashboard/tenants/${S.tenant.id}/regenerate-key`,{method:'POST'});S.tenant.api_key_plain=d.api_key;S.tenant.api_key_prefix=d.api_key_prefix;renderOverview();toast('API Key 已重新生成');}catch(e){toast(e.message,'error');}}
-function renderRelay(){document.getElementById('tabBody').innerHTML=`<div class="content-with-anchor">${renderAnchorNav([['section-relay-list','上游配置列表'],['section-guide','使用指南'],['section-monthly-stats','月度使用统计'],['section-custom-stats','自定义统计面板']])}<div id="section-relay-list" class="card"><div class="card-head"><div><h2>Relay 上游</h2><div class="muted">请求仅发送到当前活跃上游，可手动切换使用的配置。</div></div><button class="btn btn-primary" onclick="openUpstream()">添加上游</button></div><div class="list" id="relayList"><div class="empty">正在加载...</div></div></div>${serviceInsights('relay')}</div>`;}
-async function loadRelay(){try{const d=await api(`/dashboard/tenants/${S.tenant.id}/upstreams`);S.upstreams=d.upstreams||[];renderRelayList();}catch(e){document.getElementById('relayList').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}}
+async function regenerateKey(){if(!confirm('重新生成后，旧 API Key 会立即失效。确认继续？'))return;try{const d=await api(`/dashboard/tenants/${S.tenant.id}/regenerate-key`,{method:'POST'});S.tenant.api_key_plain=d.api_key;S.tenant.api_key_prefix=d.api_key_prefix;switchTab(S.tab||'relay',{skipHash:true});toast('API Key 已重新生成');}catch(e){toast(e.message,'error');}}
+function mapTestResults(results,key='index'){const out={};(results||[]).forEach(r=>{const id=r?.[key]??r?.index;if(id!==undefined&&id!==null)out[id]=r;});return out;}
+function testResultBadge(result){if(!result)return '';return `<span class="badge ${result.success?'on':'off'}">${result.success?'测试通过':'测试失败'}</span>`;}
+function renderTestResultMessage(result){if(!result)return '';const message=result.message||result.error||'';return message?`<p class="test-result ${result.success?'ok':'bad'}">${esc(message)}</p>`:'';}
+function showBatchTestToast(results){const ok=(results||[]).filter(r=>r.success).length;toast(`批量测试完成：${ok}/${(results||[]).length} 可用`,ok===(results||[]).length?'success':'error');}
+function renderRelay(){document.getElementById('tabBody').innerHTML=`<div class="content-with-anchor">${renderAnchorNav([['section-relay-list','上游配置列表'],['section-guide','使用指南'],['section-custom-stats','自定义统计面板']])}<div id="section-relay-list" class="card"><div class="card-head"><div><h2>Relay 上游</h2><div class="muted">请求仅发送到当前活跃上游，可手动切换使用的配置。</div></div><div class="actions"><button class="btn" id="relayBatchTestBtn" ${S.relayTesting?'disabled':''} onclick="testAllUpstreams()">${S.relayTesting?'测试中...':'批量测试'}</button><button class="btn btn-primary" onclick="openUpstream()">添加上游</button></div></div><div class="list" id="relayList"><div class="empty">正在加载...</div></div></div>${serviceInsights('relay')}</div>`;}
+async function loadRelay(){try{const d=await api(`/dashboard/tenants/${S.tenant.id}/upstreams`);S.upstreams=d.upstreams||[];S.relayTestResults={};renderRelayList();}catch(e){document.getElementById('relayList').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}}
 function renderRelayList(){
     const el=document.getElementById('relayList');if(!el)return;
     if(!S.upstreams.length){el.innerHTML='<div class="empty">还没有上游。添加第一个上游后，Relay 即可开始转发请求。</div>';return;}
-    el.innerHTML=S.upstreams.map((u,i)=>`<div class="item ${u.is_active?'active':''}"><div><h3>${esc(u.name||'未命名')} ${u.is_active?'<span class="badge on">活跃</span>':''}</h3><p>${esc(u.base_url)} · ${esc(u.protocol||'openai')}</p><p>${u.enabled?'已启用':'已停用'} · Key ${esc(u.api_key_preview||'未配置')}${u.proxy?' · 代理 '+esc(u.proxy):''}</p></div><div class="actions">
+    el.innerHTML=S.upstreams.map((u,i)=>{const result=S.relayTestResults[i];const protocol=esc(u.protocol||'openai');const wsMode=u.protocol==='responses_ws'?` · WS ${esc(u.ws_mode||'ctx_pool')}`:'';return `<div class="item ${u.is_active?'active':''}"><div><h3>${esc(u.name||'未命名')} ${u.is_active?'<span class="badge on">活跃</span>':''} ${testResultBadge(result)}</h3><p>${esc(u.base_url)} · ${protocol}${wsMode}</p><p>${u.enabled?'已启用':'已停用'} · Key ${esc(u.api_key_preview||'未配置')}${u.proxy?' · 代理 '+esc(u.proxy):''}</p>${renderTestResultMessage(result)}</div><div class="actions">
         ${!u.is_active&&u.enabled?`<button class="btn btn-sm" onclick="setActive(${i})">设为活跃</button>`:''}
-        <button class="btn btn-sm" onclick="testUpstream(${i})">测试</button><button class="btn btn-sm" onclick="openUpstream(${i})">编辑</button>
+        <button class="btn btn-sm" onclick="openUpstream(${i})">编辑</button>
+        <button class="btn btn-sm" onclick="cloneUpstream(${i})">复制</button><button class="btn btn-sm" ${i===0?'disabled':''} onclick="moveUpstream(${i},'up')">上移</button>
+        <button class="btn btn-sm" ${i===S.upstreams.length-1?'disabled':''} onclick="moveUpstream(${i},'down')">下移</button><button class="btn btn-danger btn-sm" onclick="deleteUpstream(${i})">删除</button>
+    </div></div>`;}).join('');
+    return;
+    if(!S.upstreams.length){el.innerHTML='<div class="empty">还没有上游。添加第一个上游后，Relay 即可开始转发请求。</div>';return;}
+    el.innerHTML=S.upstreams.map((u,i)=>`<div class="item ${u.is_active?'active':''}"><div><h3>${esc(u.name||'未命名')} ${u.is_active?'<span class="badge on">活跃</span>':''}</h3><p>${esc(u.base_url)} · ${esc(u.protocol||'openai')} · WS ${esc(u.ws_mode||'ctx_pool')}</p><p>${u.enabled?'已启用':'已停用'} · Key ${esc(u.api_key_preview||'未配置')}${u.proxy?' · 代理 '+esc(u.proxy):''}</p></div><div class="actions">
+        ${!u.is_active&&u.enabled?`<button class="btn btn-sm" onclick="setActive(${i})">设为活跃</button>`:''}
+        <button class="btn btn-sm" onclick="openUpstream(${i})">编辑</button>
         <button class="btn btn-sm" onclick="cloneUpstream(${i})">复制</button><button class="btn btn-sm" ${i===0?'disabled':''} onclick="moveUpstream(${i},'up')">上移</button>
         <button class="btn btn-sm" ${i===S.upstreams.length-1?'disabled':''} onclick="moveUpstream(${i},'down')">下移</button><button class="btn btn-danger btn-sm" onclick="deleteUpstream(${i})">删除</button>
     </div></div>`).join('');
 }
 function openUpstream(index=null){
     S.editingUpstream=index;const u=index===null?{}:S.upstreams[index];document.getElementById('upstreamTitle').textContent=index===null?'添加 Relay 上游':'编辑 Relay 上游';
-    upName.value=u.name||'';upProtocol.value=u.protocol||'openai';upUrl.value=u.base_url||'';upKey.value=u.api_key_full||'';upProxy.value=u.proxy||'';upTls.checked=u.skip_tls_verify===true;setApiKeyVisibility(false);
-    fillModelMappings(u.model_map||{});document.getElementById('upstreamModal').classList.add('show');
+    upName.value=u.name||'';upProtocol.value=u.protocol||'openai';upWsMode.value=u.ws_mode||'ctx_pool';upUrl.value=u.base_url||'';upKey.value=u.api_key_full||'';upProxy.value=u.proxy||'';upTls.checked=u.skip_tls_verify===true;setApiKeyVisibility(false);
+    syncUpstreamWsModeVisibility();fillModelMappings(u.model_map||{});document.getElementById('upstreamModal').classList.add('show');
+}
+function syncUpstreamWsModeVisibility(){
+    const show=upProtocol.value==='responses_ws';
+    upWsModeField.style.display=show?'grid':'none';
+    if(!show)upWsMode.value='ctx_pool';
 }
 function setApiKeyVisibility(visible){
     upKey.type=visible?'text':'password';upKeyToggle.textContent=visible?'隐藏':'显示';
@@ -590,20 +641,20 @@ function readModelMappings(){
 }
 async function saveUpstream(){
     let modelMap;try{modelMap=readModelMappings();}catch(e){return toast(e.message,'error');}
-    const body={name:upName.value.trim(),protocol:upProtocol.value,base_url:upUrl.value.trim(),api_key:upKey.value.trim(),proxy:upProxy.value.trim(),skip_tls_verify:upTls.checked,model_map:modelMap,enabled:S.editingUpstream===null?true:S.upstreams[S.editingUpstream].enabled};
+    const body={name:upName.value.trim(),protocol:upProtocol.value,ws_mode:upProtocol.value==='responses_ws'?upWsMode.value:'ctx_pool',base_url:upUrl.value.trim(),api_key:upKey.value.trim(),proxy:upProxy.value.trim(),skip_tls_verify:upTls.checked,model_map:modelMap,enabled:S.editingUpstream===null?true:S.upstreams[S.editingUpstream].enabled};
     if(!body.base_url)return toast('请填写 Base URL','error');
     try{const suffix=S.editingUpstream===null?'':`/${S.editingUpstream}`;await api(`/dashboard/tenants/${S.tenant.id}/upstreams${suffix}`,{method:S.editingUpstream===null?'POST':'PUT',body:JSON.stringify(body)});closeModal('upstreamModal');await loadRelay();toast('上游配置已保存');}catch(e){toast(e.message,'error');}
 }
 async function setActive(i){try{await api(`/dashboard/tenants/${S.tenant.id}/upstreams/set-active`,{method:'POST',body:JSON.stringify({index:i})});await loadRelay();toast('活跃上游已切换');}catch(e){toast(e.message,'error');}}
-async function testUpstream(i){toast('正在测试连接...');try{const d=await api(`/dashboard/tenants/${S.tenant.id}/upstreams/test`,{method:'POST',body:JSON.stringify({index:i})});toast(d.message,d.success?'success':'error');}catch(e){toast(e.message,'error');}}
 async function cloneUpstream(i){try{await api(`/dashboard/tenants/${S.tenant.id}/upstreams/${i}/clone`,{method:'POST'});await loadRelay();toast('已复制上游');}catch(e){toast(e.message,'error');}}
 async function moveUpstream(i,direction){try{await api(`/dashboard/tenants/${S.tenant.id}/upstreams/move-${direction}`,{method:'POST',body:JSON.stringify({index:i})});await loadRelay();}catch(e){toast(e.message,'error');}}
 async function deleteUpstream(i){if(!confirm('确认删除这个上游？'))return;try{await api(`/dashboard/tenants/${S.tenant.id}/upstreams/${i}`,{method:'DELETE'});await loadRelay();toast('上游已删除');}catch(e){toast(e.message,'error');}}
-function renderCodebuddy(){document.getElementById('tabBody').innerHTML=`<div class="content-with-anchor">${renderAnchorNav([['section-codebuddy-list','\u51ed\u8bc1\u914d\u7f6e\u5217\u8868'],['section-codebuddy-models','\u53ef\u7528\u6a21\u578b'],['section-guide','\u4f7f\u7528\u6307\u5357'],['section-monthly-stats','\u6708\u5ea6\u4f7f\u7528\u7edf\u8ba1'],['section-custom-stats','\u81ea\u5b9a\u4e49\u7edf\u8ba1\u9762\u677f']])}<div id="section-codebuddy-list" class="card"><div class="card-head"><div><h2>CodeBuddy \u51ed\u8bc1</h2><div class="muted">\u53ef\u6dfb\u52a0\u591a\u4e2a\u8d26\u53f7\uff0c\u5e76\u624b\u52a8\u6307\u5b9a\u5f53\u524d\u6d3b\u8dc3\u51ed\u8bc1\u3002</div></div><button class="btn btn-primary" onclick="openOAuth()">\u6dfb\u52a0\u51ed\u8bc1</button></div><div class="list" id="credentialList"><div class="empty">\u6b63\u5728\u52a0\u8f7d...</div></div></div><div id="section-codebuddy-models" class="card" style="margin-top:16px"><div class="card-head"><div><h2>CodeBuddy \u53ef\u7528\u6a21\u578b</h2><div class="muted">\u4ece\u670d\u52a1\u7aef\u914d\u7f6e\u52a8\u6001\u8bfb\u53d6\uff0c\u5305\u62ec\u81ea\u5b9a\u4e49\u4e0a\u6e38\u7684\u6a21\u578b\u8986\u76d6\u3002</div></div></div><div id="codebuddyModelGuide" class="empty">\u6b63\u5728\u52a0\u8f7d...</div></div>${serviceInsights('codebuddy')}</div>`;renderCodebuddyModelGuide();}
+function renderCodebuddy(){document.getElementById('tabBody').innerHTML=`<div class="content-with-anchor">${renderAnchorNav([['section-codebuddy-list','\u51ed\u8bc1\u914d\u7f6e\u5217\u8868'],['section-codebuddy-models','\u53ef\u7528\u6a21\u578b'],['section-guide','\u4f7f\u7528\u6307\u5357'],['section-custom-stats','\u81ea\u5b9a\u4e49\u7edf\u8ba1\u9762\u677f']])}<div id="section-codebuddy-list" class="card"><div class="card-head"><div><h2>CodeBuddy \u51ed\u8bc1</h2><div class="muted">\u53ef\u6dfb\u52a0\u591a\u4e2a\u8d26\u53f7\uff0c\u5e76\u624b\u52a8\u6307\u5b9a\u5f53\u524d\u6d3b\u8dc3\u51ed\u8bc1\u3002</div></div><button class="btn btn-primary" onclick="openOAuth()">\u6dfb\u52a0\u51ed\u8bc1</button></div><div class="list" id="credentialList"><div class="empty">\u6b63\u5728\u52a0\u8f7d...</div></div></div>${serviceInsights('codebuddy')}</div>`;renderCodebuddyModelGuide();}
 async function loadCodebuddy(){try{const [d]=await Promise.all([api(`/dashboard/tenants/${S.tenant.id}/codebuddy/credentials`),loadCodebuddyOptions()]);S.credentials=d.credentials||[];S.currentCredential=d.currentIndex||0;renderCredentialList();}catch(e){document.getElementById('credentialList').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}}
 async function loadCodebuddyOptions(){const d=await api('/dashboard/codebuddy/options');S.codebuddyOptions=d.options||[];S.codebuddyCustomSiteLabels=d.customSiteLabels||{};renderCodebuddyModelGuide();return d;}
 function codebuddyOptionLabel(o){return o.label||(o.personal?'\u4e2a\u4eba\u7ad9':S.codebuddyCustomSiteLabels[o.host]||'\u81ea\u5b9a\u4e49\u7ad9');}
 function renderCodebuddyOption(o){return `<option value="${esc(o.url)}">${esc(o.host)} (${esc(codebuddyOptionLabel(o))})</option>`;}
+function renderCodebuddyModelCard(){return `<div id="section-codebuddy-models" class="card" style="margin-top:16px"><div class="card-head"><div><h2>CodeBuddy \u53ef\u7528\u6a21\u578b</h2><div class="muted">\u4ece\u670d\u52a1\u7aef\u914d\u7f6e\u52a8\u6001\u8bfb\u53d6\uff0c\u5305\u62ec\u81ea\u5b9a\u4e49\u4e0a\u6e38\u7684\u6a21\u578b\u8986\u76d6\u3002</div></div></div><div id="codebuddyModelGuide" class="empty">\u6b63\u5728\u52a0\u8f7d...</div></div>`;}
 function renderCodebuddyModelGuide(){
     const el=document.getElementById('codebuddyModelGuide');if(!el)return;
     const options=S.codebuddyOptions||[];
@@ -622,7 +673,7 @@ async function startOAuth(){try{const d=await api(`/dashboard/tenants/${S.tenant
 async function pollOAuth(){if(!S.oauthState)return;try{const d=await api(`/dashboard/tenants/${S.tenant.id}/codebuddy/auth/poll`,{method:'POST',body:JSON.stringify({auth_state:S.oauthState})});if(d.status==='success'){closeOAuth();await loadCodebuddy();toast('CodeBuddy 凭证添加成功');}else if(d.status==='error'){closeOAuth();toast(d.message||'授权失败','error');}}catch(e){closeOAuth();toast(e.message,'error');}}
 function closeOAuth(){clearInterval(S.oauthTimer);S.oauthTimer=null;S.oauthState=null;closeModal('oauthModal');}
 function renderCopilot(){
-    document.getElementById('tabBody').innerHTML=`<div class="content-with-anchor">${renderAnchorNav([['section-copilot-list','凭证配置列表'],['section-guide','使用指南'],['section-monthly-stats','月度使用统计'],['section-custom-stats','自定义统计面板']])}<div id="section-copilot-list" class="card"><div class="card-head"><div><h2>GitHub Copilot 凭据</h2><div class="muted">每个租户独立授权，API 请求只会使用当前租户已启用的凭据。</div></div><div class="actions"><span class="badge ${profile(S.tenant,'copilot').enabled?'on':'off'}">${profile(S.tenant,'copilot').enabled?'服务已启用':'服务已停用'}</span><button class="btn btn-primary" onclick="openCopilotCredential()">新增凭据</button></div></div><div class="list" id="copilotCredentialList"><div class="empty">正在加载...</div></div></div>${serviceInsights('copilot')}</div>`;
+    document.getElementById('tabBody').innerHTML=`<div class="content-with-anchor">${renderAnchorNav([['section-copilot-list','凭证配置列表'],['section-guide','使用指南'],['section-custom-stats','自定义统计面板']])}<div id="section-copilot-list" class="card"><div class="card-head"><div><h2>GitHub Copilot 凭据</h2><div class="muted">每个租户独立授权，API 请求只会使用当前租户已启用的凭据。</div></div><div class="actions"><span class="badge ${profile(S.tenant,'copilot').enabled?'on':'off'}">${profile(S.tenant,'copilot').enabled?'服务已启用':'服务已停用'}</span><button class="btn btn-primary" onclick="openCopilotCredential()">新增凭据</button></div></div><div class="list" id="copilotCredentialList"><div class="empty">正在加载...</div></div></div>${serviceInsights('copilot')}</div>`;
 }
 function scrollToSection(id){document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});}
 function renderAnchorNav(items){return `<nav class="anchor-nav">${items.map(([id,label])=>`<button type="button" onclick="scrollToSection(${jsArg(id)})">${label}</button>`).join('')}</nav>`;}
@@ -636,7 +687,7 @@ function serviceInsights(type){
     const guideConfig=`{\n  "env": {\n    "ANTHROPIC_AUTH_TOKEN": "${key}",\n    "ANTHROPIC_BASE_URL": "${base}/${type}/anthropic",\n    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "${defaults.haiku}",\n    "ANTHROPIC_DEFAULT_SONNET_MODEL": "${defaults.sonnet}",\n    "ANTHROPIC_DEFAULT_OPUS_MODEL": "${defaults.opus}"\n  }\n}`;
     const firstStep={relay:['添加上游','先添加至少一个上游，填写 Base URL、API Key 和协议；模型名默认原样透传，必要时再配置映射。'],codebuddy:['添加凭证','点击“添加凭证”选择上游 CodeBuddy 服务地址，开始 OAuth2 认证流程，完成后凭证会保存到当前用户。'],copilot:['完成 GitHub 认证','新增 Copilot 凭据后点击“连接 GitHub”，使用设备码完成 GitHub OAuth 授权，获取 Copilot Token。']}[type];
     const customMetricCards=`<div class="stats-grid stats-grid-${type==='codebuddy'?'6':'5'}"><div class="stat-item"><div class="stat-value" id="${type}CustomApiCalls">${fmt(p.total_api_calls)}</div><div class="stat-label">API 调用次数</div></div><div class="stat-item"><div class="stat-value" id="${type}CustomInputTokens">${fmt(p.total_input_tokens)}</div><div class="stat-label">输入 Tokens</div></div><div class="stat-item"><div class="stat-value" id="${type}CustomOutputTokens">${fmt(p.total_output_tokens)}</div><div class="stat-label">输出 Tokens</div></div><div class="stat-item"><div class="stat-value" id="${type}CustomCacheTokens">${fmt(p.total_cache_hit_tokens)}</div><div class="stat-label">缓存命中 Tokens</div></div><div class="stat-item"><div class="stat-value" id="${type}CustomCacheRate">${pct(p.total_cache_hit_tokens,p.total_input_tokens)}%</div><div class="stat-label">缓存命中率</div></div>${type==='codebuddy'?`<div class="stat-item"><div class="stat-value" id="${type}CustomCredit">${Number(p.total_credit||0).toFixed(2)}</div><div class="stat-label">CodeBuddy 积分</div></div>`:''}</div>`;
-    return `<div id="section-guide" class="card" style="margin-top:16px"><div class="card-head"><div><h2>使用指南</h2><div class="muted">按原页面方式配置客户端，API Key 使用当前用户的统一 Key。</div></div></div><div class="guide-steps"><div class="guide-step"><div class="guide-step-num">1</div><div><div class="guide-step-title">${firstStep[0]}</div><div class="guide-step-desc">${firstStep[1]}</div></div></div><div class="guide-step"><div class="guide-step-num">2</div><div><div class="guide-step-title">兼容 Anthropic 接口协议工具</div><div class="guide-step-desc">如 Claude Code、Claude Desktop，编辑 <code>~/.claude/settings.json</code>。推荐使用 <code>ANTHROPIC_AUTH_TOKEN</code>，也兼容 <code>ANTHROPIC_API_KEY</code>；模型名会原样透传给上游，包括 <code>sonnet[1m]</code>、<code>opus[1m]</code>、<code>deepseek-v4-pro[1m]</code>。</div><div class="guide-code-block"><button class="btn btn-sm guide-copy-btn" onclick="copyGuideConfig('${type}')">复制</button><pre id="${type}GuideConfig">${esc(guideConfig)}</pre></div></div></div><div class="guide-step"><div class="guide-step-num">3</div><div><div class="guide-step-title">兼容 OpenAI 接口协议工具</div><div class="guide-step-desc">如 Cursor、Continue、Cline，将 Base URL 设置为：</div><div class="guide-code-block"><button class="btn btn-sm guide-copy-btn" onclick="copyGuideOpenAIUrl('${type}')">复制</button><pre id="${type}GuideOpenAIUrl">${base}/${type}/v1</pre></div><div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key</div></div></div><div class="guide-step"><div class="guide-step-num">4</div><div><div class="guide-step-title">兼容 OpenAI Responses API 工具</div><div class="guide-step-desc">如 Cherry Studio，将 Base URL 设置为：</div><div class="guide-code-block"><button class="btn btn-sm guide-copy-btn" onclick="copyGuideResponsesUrl('${type}')">复制</button><pre id="${type}GuideResponsesUrl">${base}/${type}/v1</pre></div><div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key，需在工具中选择 <code>Responses API</code> 模式</div></div></div></div></div><div id="section-monthly-stats" class="card" style="margin-top:16px"><div class="card-head"><div><h2>月度使用统计</h2><div class="muted">按日期汇总 API 请求次数、Tokens 使用量、缓存命中率${type==='codebuddy'?' 和 CodeBuddy 积分':''}。</div></div><div class="actions"><button class="btn btn-sm" onclick="loadServiceStats('${type}')">刷新</button><input id="${type}StatsMonth" type="month" autocomplete="off" style="width:auto" value="${new Date().toISOString().slice(0,7)}" onchange="loadServiceStats('${type}')"></div></div><div id="${type}StatsBody" class="empty">正在加载...</div></div><div id="section-custom-stats" class="card" style="margin-top:16px"><div class="card-head"><div><h2>自定义统计</h2><div class="muted">从上次重置起累计，仅影响 ${type}，适合测试上游缓存与成本。</div></div><div class="actions"><button class="btn btn-sm" onclick="refreshServiceStats('${type}')">刷新</button><button class="btn btn-danger btn-sm" onclick="resetServiceStats('${type}')">重置</button></div></div>${customMetricCards}</div>`;
+    return `${renderApiKeyCard()}${type==='codebuddy'?renderCodebuddyModelCard():''}<div id="section-guide" class="card" style="margin-top:16px"><div class="card-head"><div><h2>使用指南</h2><div class="muted">按原页面方式配置客户端，API Key 使用当前用户的统一 Key。</div></div></div><div class="guide-steps"><div class="guide-step"><div class="guide-step-num">1</div><div><div class="guide-step-title">${firstStep[0]}</div><div class="guide-step-desc">${firstStep[1]}</div></div></div><div class="guide-step"><div class="guide-step-num">2</div><div><div class="guide-step-title">兼容 Anthropic 接口协议工具</div><div class="guide-step-desc">如 Claude Code、Claude Desktop，编辑 <code>~/.claude/settings.json</code>。推荐使用 <code>ANTHROPIC_AUTH_TOKEN</code>，也兼容 <code>ANTHROPIC_API_KEY</code>；模型名会原样透传给上游，包括 <code>sonnet[1m]</code>、<code>opus[1m]</code>、<code>deepseek-v4-pro[1m]</code>。</div><div class="guide-code-block"><button class="btn btn-sm guide-copy-btn" onclick="copyGuideConfig('${type}')">复制</button><pre id="${type}GuideConfig">${esc(guideConfig)}</pre></div></div></div><div class="guide-step"><div class="guide-step-num">3</div><div><div class="guide-step-title">兼容 OpenAI 接口协议工具</div><div class="guide-step-desc">如 Cursor、Continue、Cline，将 Base URL 设置为：</div><div class="guide-code-block"><button class="btn btn-sm guide-copy-btn" onclick="copyGuideOpenAIUrl('${type}')">复制</button><pre id="${type}GuideOpenAIUrl">${base}/${type}/v1</pre></div><div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key</div></div></div><div class="guide-step"><div class="guide-step-num">4</div><div><div class="guide-step-title">兼容 OpenAI Responses API 工具</div><div class="guide-step-desc">如 Cherry Studio，将 Base URL 设置为：</div><div class="guide-code-block"><button class="btn btn-sm guide-copy-btn" onclick="copyGuideResponsesUrl('${type}')">复制</button><pre id="${type}GuideResponsesUrl">${base}/${type}/v1</pre></div><div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key，需在工具中选择 <code>Responses API</code> 模式</div></div></div></div></div><div id="section-custom-stats" class="card" style="margin-top:16px"><div class="card-head"><div><h2>自定义统计</h2><div class="muted">从上次重置起累计，仅影响 ${type}，适合测试上游缓存与成本。</div></div><div class="actions"><button class="btn btn-sm" onclick="refreshServiceStats('${type}')">刷新</button><button class="btn btn-danger btn-sm" onclick="resetServiceStats('${type}')">重置</button></div></div>${customMetricCards}</div>`;
 }
 function aggregateDaily(rows){
     const map=new Map();
@@ -688,7 +739,7 @@ async function refreshServiceStats(type){
         toast('自定义统计已刷新');
     }catch(e){toast(e.message,'error');}
 }
-async function resetServiceStats(type){if(!confirm(`确认重置 ${type} 的自定义累计统计？月度历史不会删除。`))return;try{const d=await api(`/dashboard/tenants/${S.tenant.id}/stats/reset`,{method:'POST',body:JSON.stringify({service:type})});S.tenant=d.tenant;renderTenant();if(type==='relay')loadRelay();if(type==='codebuddy')loadCodebuddy();if(type==='copilot')loadCopilot();loadServiceStats(type);toast('自定义统计已重置');}catch(e){toast(e.message,'error');}}
+async function resetServiceStats(type){if(!confirm(`确认重置 ${type} 的自定义累计统计？月度历史不会删除。`))return;try{const d=await api(`/dashboard/tenants/${S.tenant.id}/stats/reset`,{method:'POST',body:JSON.stringify({service:type})});S.tenant=d.tenant;renderTenant();if(type==='relay')loadRelay();if(type==='codebuddy')loadCodebuddy();if(type==='copilot')loadCopilot();toast('自定义统计已重置');}catch(e){toast(e.message,'error');}}
 function copyGuideConfig(type){copyTextFromElement(type+'GuideConfig');}
 function copyGuideOpenAIUrl(type){copyTextFromElement(type+'GuideOpenAIUrl');}
 function copyGuideResponsesUrl(type){copyTextFromElement(type+'GuideResponsesUrl');}
@@ -734,7 +785,7 @@ function adminChartBase(){return {backgroundColor:'transparent',tooltip:{trigger
 window.addEventListener('resize',()=>Object.values(adminStatsCharts).forEach(chart=>chart?.resize?.()));
 async function openAdminStatsUser(username){const target=document.getElementById('adminStatsDetail');if(!target)return;target.innerHTML='<div class="empty">正在加载用户详情...</div>';try{const d=await api('/stats/api/user-detail?service='+statsServiceParam()+'&username='+encodeURIComponent(username));target.innerHTML=`<div class="card"><div class="card-head"><div><h3>${esc(username)} 详情</h3><div class="muted">按日期和模型汇总的使用记录</div></div></div>${formatAdminDetail(d)}</div>`;}catch(e){target.innerHTML=`<div class="empty">${esc(e.message)}</div>`;}}
 function formatAdminDetail(d){const rows=d.dailyUsage||d.rows||d.usage||[];if(Array.isArray(rows)&&rows.length)return `<div class="table-wrap"><table><thead><tr><th>日期</th><th>模型</th><th>调用</th><th>输入</th><th>输出</th><th>缓存</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.date||'-')}</td><td>${esc(r.model||'-')}</td><td>${fmt(r.apiCalls||r.api_calls)}</td><td>${fmt(r.inputTokens||r.input_tokens)}</td><td>${fmt(r.outputTokens||r.output_tokens)}</td><td>${fmt(r.cacheHitTokens||r.input_cache_hit)}</td></tr>`).join('')}</tbody></table></div>`;return `<pre style="white-space:pre-wrap;overflow:auto">${esc(JSON.stringify(d,null,2))}</pre>`;}
-async function openAdminModelCacheDaily(model){const target=document.getElementById('adminModelDaily');if(!target)return;target.innerHTML='<div class="empty">正在加载模型趋势...</div>';const rows=await api('/stats/api/model-cache-daily?'+statsModelParams()+'&model='+encodeURIComponent(model));target.innerHTML=`<div class="card"><h3>${esc(model)} 每日缓存趋势</h3><div id="adminModelDailyChart" class="chart"></div></div>`;setAdminChart('adminModelDailyChart',{...adminChartBase(),xAxis:{type:'category',data:rows.map(r=>r.date),axisLabel:{color:'#8ea1ba'}},series:[{name:'调用',type:'bar',data:rows.map(r=>r.apiCalls||0),itemStyle:{color:'#7c9cff'}},{name:'命中率',type:'line',smooth:true,data:rows.map(r=>r.cacheHitRate||0),itemStyle:{color:'#53d7c4'}}]});}
+async function openAdminModelCacheDaily(model){modelTrendTitle.textContent=`${model} 每日缓存趋势`;modelTrendBody.className='empty';modelTrendBody.innerHTML='正在加载模型趋势...';document.getElementById('modelTrendModal').classList.add('show');const rows=await api('/stats/api/model-cache-daily?'+statsModelParams()+'&model='+encodeURIComponent(model));modelTrendBody.className='';modelTrendBody.innerHTML='<div id="adminModelDailyChart" class="chart"></div>';setAdminChart('adminModelDailyChart',{...adminChartBase(),xAxis:{type:'category',data:rows.map(r=>r.date),axisLabel:{color:'#8ea1ba'}},series:[{name:'调用',type:'bar',data:rows.map(r=>r.apiCalls||0),itemStyle:{color:'#7c9cff'}},{name:'命中率',type:'line',smooth:true,data:rows.map(r=>r.cacheHitRate||0),itemStyle:{color:'#53d7c4'}}]});}
 async function openAdminDailyUsers(date){const target=document.getElementById('adminDailyUsers');if(!target)return;target.innerHTML='<div class="empty">正在加载每日用户...</div>';const d=await api('/stats/api/daily-users?service='+statsServiceParam()+'&date='+encodeURIComponent(date));const rows=[...(d.newUsers||[]),...(d.activeUsers||[])];target.innerHTML=`<div class="card"><h3>${esc(date)} 用户</h3><div class="table-wrap"><table><thead><tr><th>类型</th><th>用户</th><th>名称</th></tr></thead><tbody>${rows.length?rows.map((u,i)=>`<tr><td>${i<(d.newUsers||[]).length?'新增':'活跃'}</td><td>${esc(u.username||'-')}</td><td>${esc(u.name||'-')}</td></tr>`).join(''):'<tr><td colspan="3" class="muted">暂无用户</td></tr>'}</tbody></table></div></div>`;}
 async function loadCoachData(force=false){if(!S.adminCoachUsers||force)S.adminCoachUsers=await api('/stats/api/key-personnel?service='+statsServiceParam());return S.adminCoachUsers;}
 async function toggleCoachUser(username,isKeyPersonnel){await api('/stats/api/key-personnel',{method:'POST',body:JSON.stringify({username,isKeyPersonnel})});S.adminCoachUsers=null;toast('重点人员已更新');renderAdminStatsCoach(true);}
@@ -742,22 +793,36 @@ async function selectCoachUser(username){S.adminSelectedCoach=username;const pan
 async function triggerCoachUser(username){await api('/stats/api/coach-trigger?service='+statsServiceParam(),{method:'POST',body:JSON.stringify({username})});toast('分析任务已触发');selectCoachUser(username);}
 async function triggerAllAnalysis(){await api('/stats/api/coach-trigger?service='+statsServiceParam(),{method:'POST',body:JSON.stringify({})});toast('批量分析已触发');renderAdminStatsCoach(true);}
 function defaultStatsDate(){const d=new Date();const y=d.getFullYear();const m=String(d.getMonth()+1).padStart(2,'0');const day=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${day}`;}
-function ensureStatsDates(){const today=defaultStatsDate();S.adminStatsStartDate=S.adminStatsStartDate||today;S.adminStatsEndDate=S.adminStatsEndDate||today;S.adminModelStartDate=S.adminModelStartDate||today;S.adminModelEndDate=S.adminModelEndDate||today;}
+function defaultStatsMonth(){return defaultStatsDate().slice(0,7);}
+function statsMonthRange(month){const value=/^\d{4}-\d{2}$/.test(month||'')?month:defaultStatsMonth();const [year,monthNo]=value.split('-').map(Number);const lastDay=new Date(year,monthNo,0).getDate();return {month:value,startDate:value+'-01',endDate:value+'-'+String(lastDay).padStart(2,'0')};}
+function ensureStatsDates(){const today=defaultStatsDate();S.adminStatsMonth=S.adminStatsMonth||defaultStatsMonth();S.adminStatsStartDate=S.adminStatsStartDate||today;S.adminStatsEndDate=S.adminStatsEndDate||today;S.adminModelStartDate=S.adminModelStartDate||today;S.adminModelEndDate=S.adminModelEndDate||today;}
 function adminStatsService(){return ADMIN_STATS_SERVICES.some(([id])=>id===S.statsTab)?S.statsTab:'relay';}
 function statsServiceParam(){return encodeURIComponent(adminStatsService());}
-function statsOverviewParams(){ensureStatsDates();const p=new URLSearchParams();p.set('service',adminStatsService());if(S.adminStatsStartDate)p.set('startDate',S.adminStatsStartDate);if(S.adminStatsEndDate)p.set('endDate',S.adminStatsEndDate);return p.toString();}
+function statsOverviewParams(){ensureStatsDates();const p=new URLSearchParams();const range=statsMonthRange(S.adminStatsMonth);S.adminStatsMonth=range.month;p.set('service',adminStatsService());p.set('month',S.adminStatsMonth);p.set('startDate',range.startDate);p.set('endDate',range.endDate);return p.toString();}
 function statsModelParams(){ensureStatsDates();const p=new URLSearchParams();p.set('service',adminStatsService());if(S.adminModelStartDate)p.set('startDate',S.adminModelStartDate);if(S.adminModelEndDate)p.set('endDate',S.adminModelEndDate);return p.toString();}
-function renderStatsServiceTabs(){return `<div class="tabs">${ADMIN_STATS_SERVICES.map(([id,label])=>`<button class="tab ${adminStatsService()===id?'active':''}" onclick="switchAdminStatsService('${id}')">${label}</button>`).join('')}</div>`;}
-async function switchAdminStatsService(type){if(!ADMIN_STATS_SERVICES.some(([id])=>id===type))type='relay';S.statsTab=type;S.adminStats=null;S.adminModelCache=[];S.adminCoachUsers=null;S.adminSelectedCoach=null;S.adminStatsPageNo=1;S.adminModelPageNo=1;S.adminTrendPageNo=1;S.adminCoachPageNo=1;syncStatsHash(S.statsPage||'users');showStats(S.statsPage||'users',{skipHash:true});}
 async function ensureAdminStats(force=false){ensureStatsDates();if(!S.adminStats||force)S.adminStats=await api('/stats/api/overview?'+statsOverviewParams());return S.adminStats;}
-function renderStatsSummaryCards(d){const s=d||{};return `<div class="stats-grid stats-grid-4" id="adminStatsSummaryCards"><div class="stat-item"><div class="stat-value">${fmt(s.totalUsers)}</div><div class="stat-label">总用户数</div></div><div class="stat-item"><div class="stat-value">${fmt(s.activeUsers)}</div><div class="stat-label">活跃用户数</div></div><div class="stat-item"><div class="stat-value">${s.cacheHitRate||0}%</div><div class="stat-label">缓存命中率</div></div><div class="stat-item"><div class="stat-value">${Number(s.totalCredit||0).toFixed(2)}</div><div class="stat-label">积分消耗</div></div></div>`;}
-function statsTabsForRole(){return ADMIN_STATS_TABS.filter(([id])=>id!=='coach'||S.me?.isAdmin);}
-function showStats(){ensureStatsDates();const requested=arguments[0]||S.statsPage||'users';const options=arguments[1]||{};const page=statsTabsForRole().some(([id])=>id===requested)?requested:'users';S.statsPage=page;if(requested!==page)syncStatsHash(page,{replace:true});else if(!options.skipHash)syncStatsHash(page);setNav('stats');document.getElementById('pageTitle').textContent='使用统计';document.getElementById('pageSubtitle').textContent=S.me?.isAdmin?'用户、模型、趋势和使用建议':'用户排行、模型分析和用户趋势';document.getElementById('main').innerHTML=`<div class="card"><div class="card-head"><div><h2>使用统计</h2><div class="muted">默认按当天查看，避免累计历史数据掩盖近期优化效果。</div></div><button class="btn btn-sm" onclick="refreshAdminStats()">刷新</button></div>${renderStatsServiceTabs()}<div id="adminStatsSummary">${renderStatsSummaryCards(S.adminStats)}</div>${renderStatsTabs()}<div id="adminStatsBody" class="empty">正在加载...</div></div>`;loadStatsPage();}
+function statsTabsForRole(){return ADMIN_STATS_TABS;}
+function showStats(){
+    ensureStatsDates();
+    const requested=arguments[0]||S.statsPage||'monthly';
+    const options=arguments[1]||{};
+    const page=statsTabsForRole().some(([id])=>id===requested)?requested:'monthly';
+    S.statsPage=page;
+    if(requested!==page)syncStatsHash(page,{replace:true});else if(!options.skipHash)syncStatsHash(page);
+    setNav('stats');
+    document.getElementById('pageTitle').textContent='使用统计';
+    document.getElementById('pageSubtitle').textContent='';
+    document.getElementById('main').innerHTML=`<div class="card">${renderStatsServiceTabs()}${renderStatsTabs()}<div id="adminStatsBody" class="empty">正在加载...</div></div>`;
+    loadStatsPage();
+}
 function renderStatsTabs(){return `<div class="tabs">${statsTabsForRole().map(([id,label])=>`<button class="tab ${S.statsPage===id?'active':''}" onclick="switchStatsPage('${id}')">${label}</button>`).join('')}</div>`;}
-function switchStatsPage(tab){S.statsPage=statsTabsForRole().some(([id])=>id===tab)?tab:'users';syncStatsHash(S.statsPage);showStats(S.statsPage,{skipHash:true});}
-function switchStatsTab(type){switchStatsPage(type);}
+function switchStatsPage(tab){S.statsPage=statsTabsForRole().some(([id])=>id===tab)?tab:'monthly';syncStatsHash(S.statsPage);showStats(S.statsPage,{skipHash:true});}
+function renderStatsServiceTabs(){return `<div class="tabs">${ADMIN_STATS_SERVICES.map(([type,label])=>`<button class="tab ${S.statsTab===type?'active':''}" onclick="switchAdminStatsService('${type}')">${label}</button>`).join('')}</div>`;}
+function switchAdminStatsService(type){if(!ADMIN_STATS_SERVICES.some(([id])=>id===type))return;S.statsTab=type;S.adminStats=null;S.adminModelCache=[];S.adminModelPageNo=1;syncStatsHash(S.statsPage);showStats(S.statsPage,{skipHash:true});}
+function switchStatsTab(type){switchAdminStatsService(type);}
 async function refreshAdminStats(){S.adminStats=null;S.adminModelCache=[];await loadStatsPage(true);}
-async function loadStatsPage(force=false){const body=document.getElementById('adminStatsBody');if(!body)return;destroyAdminStatsCharts();body.className='empty';body.textContent='正在加载...';try{const summary=await ensureAdminStats(force);const summaryEl=document.getElementById('adminStatsSummary');if(summaryEl)summaryEl.innerHTML=renderStatsSummaryCards(summary);if(S.statsPage==='model-cache')return await renderAdminStatsModelCache(force);if(S.statsPage==='trend')return await renderAdminStatsTrend(force);if(S.statsPage==='coach')return await renderAdminStatsCoach(force);return await renderAdminStatsUsers(force);}catch(e){body.className='empty';body.textContent=e.message;}}
+async function loadStatsPage(force=false){const body=document.getElementById('adminStatsBody');if(!body)return;destroyAdminStatsCharts();body.className='empty';body.textContent='正在加载...';try{await ensureAdminStats(force);if(S.statsPage==='monthly')return await renderAdminStatsMonthly(force);if(S.statsPage==='model-cache')return await renderAdminStatsModelCache(force);if(S.statsPage==='trend')return await renderAdminStatsTrend(force);if(S.statsPage==='coach')return await renderAdminStatsCoach(force);return await renderAdminStatsMonthly(force);}catch(e){body.className='empty';body.textContent=e.message;}}
+async function renderAdminStatsMonthly(force=false){const d=await ensureAdminStats(force);const rows=d.monthlyTrend||[];adminStatsBody.className='';adminStatsBody.innerHTML=`<div class="panel-toolbar"><div></div><div class="actions"><input type="month" id="adminStatsMonth" autocomplete="off" style="width:auto" value="${esc(S.adminStatsMonth)}"><button class="btn btn-primary" onclick="applyAdminStatsMonth()">查询</button></div></div><div class="grid grid-2"><div class="card"><h3>月度 API 调用</h3><div id="adminMonthlyCallsChart" class="chart"></div></div><div class="card"><h3>月度 Tokens</h3><div id="adminMonthlyTokensChart" class="chart"></div></div></div><div class="table-wrap stats-panel"><table><thead><tr><th>月份</th><th>API调用</th><th>输入Tokens</th><th>输出Tokens</th><th>总Tokens</th></tr></thead><tbody>${rows.length?rows.map(r=>`<tr><td>${esc(r.month)}</td><td>${fmt(r.apiCalls)}</td><td>${fmt(r.inputTokens)}</td><td>${fmt(r.outputTokens)}</td><td>${fmt(r.totalTokens)}</td></tr>`).join(''):'<tr><td colspan="5" class="muted">暂无月度统计</td></tr>'}</tbody></table></div>`;setAdminChart('adminMonthlyCallsChart',{...adminChartBase(),xAxis:{type:'category',data:rows.map(r=>r.month),axisLabel:{color:'#8ea1ba'}},series:[{name:'API调用',type:'bar',data:rows.map(r=>r.apiCalls||0),itemStyle:{color:'#7c9cff'}}]});setAdminChart('adminMonthlyTokensChart',{...adminChartBase(),xAxis:{type:'category',data:rows.map(r=>r.month),axisLabel:{color:'#8ea1ba'}},series:[{name:'总Tokens',type:'line',smooth:true,data:rows.map(r=>r.totalTokens||0),itemStyle:{color:'#53d7c4'}}]});}
 function sortedAdminUsers(rows){const q=(S.adminStatsSearch||'').toLowerCase();const filtered=rows.filter(u=>!q||String(u.username||'').toLowerCase().includes(q)||String(u.name||'').toLowerCase().includes(q));const dir=S.adminStatsSortDir==='asc'?1:-1;const key=S.adminStatsSort;return filtered.sort((a,b)=>{const av=a[key]??'',bv=b[key]??'';return (typeof av==='number'||typeof bv==='number'?Number(av)-Number(bv):String(av).localeCompare(String(bv)))*dir;});}
 function adminUserSortHeader(key,label){return `<button class="btn btn-ghost btn-sm" onclick="sortAdminStatsUsers('${key}')">${label}${S.adminStatsSort===key?(S.adminStatsSortDir==='asc'?' ↑':' ↓'):''}</button>`;}
 function statsPagination(total,page,size,handler,label='条'){const totalPages=Math.max(1,Math.ceil(total/size));const safePage=Math.min(totalPages,Math.max(1,Number(page)||1));return `<div class="feedback-pagination"><span>共 ${total} ${label}</span><div class="pager"><button class="pager-btn" ${safePage<=1?'disabled':''} onclick="${handler}(${safePage-1})">上一页</button><span class="pager-current">${safePage}</span><button class="pager-btn" ${safePage>=totalPages?'disabled':''} onclick="${handler}(${safePage+1})">下一页</button><span class="muted">/ ${totalPages}</span></div></div>`;}
@@ -766,6 +831,7 @@ function searchAdminStatsUsers(){S.adminStatsSearch=document.getElementById('adm
 function clearAdminStatsUserSearch(){S.adminStatsSearch='';S.adminStatsPageNo=1;renderAdminStatsUsers();}
 function updateAdminStatsSearch(value){S.adminStatsSearch=value;S.adminStatsPageNo=1;renderAdminStatsUsers();}
 async function applyAdminUserDateRange(){S.adminStatsStartDate=adminUserStartDate.value||defaultStatsDate();S.adminStatsEndDate=adminUserEndDate.value||S.adminStatsStartDate;S.adminStatsPageNo=1;S.adminStats=null;await loadStatsPage(true);}
+async function applyAdminStatsMonth(){const range=statsMonthRange(document.getElementById('adminStatsMonth')?.value||S.adminStatsMonth);S.adminStatsMonth=range.month;S.adminStats=null;await loadStatsPage(true);}
 function sortAdminStatsUsers(key){if(S.adminStatsSort===key)S.adminStatsSortDir=S.adminStatsSortDir==='asc'?'desc':'asc';else{S.adminStatsSort=key;S.adminStatsSortDir='desc';}renderAdminStatsUsers();}
 function changeAdminStatsPage(page){S.adminStatsPageNo=Math.max(1,Number(page)||1);renderAdminStatsUsers();}
 async function renderAdminStatsModelCache(force=false){if(!S.adminModelCache.length||force)S.adminModelCache=await api('/stats/api/model-cache-stats?'+statsModelParams());const rows=S.adminModelCache||[];const totalPages=Math.max(1,Math.ceil(rows.length/S.adminStatsPageSize));if(S.adminModelPageNo>totalPages)S.adminModelPageNo=totalPages;const start=(S.adminModelPageNo-1)*S.adminStatsPageSize;const pageRows=rows.slice(start,start+S.adminStatsPageSize);adminStatsBody.className='';adminStatsBody.innerHTML=`<div class="stats-toolbar stats-toolbar-nowrap"><div class="actions"><input id="adminModelStartDate" type="date" autocomplete="off" value="${esc(S.adminModelStartDate)}"><input id="adminModelEndDate" type="date" autocomplete="off" value="${esc(S.adminModelEndDate)}"><button class="btn btn-primary" onclick="applyAdminModelDateRange()">查询</button></div><div class="muted">按日期范围观察模型缓存命中率，默认当天。</div></div><div class="grid grid-2"><div class="card"><h3>缓存命中率</h3><div id="adminModelCacheChart" class="chart"></div></div><div class="card"><h3>积分消耗</h3><div id="adminModelCreditChart" class="chart"></div></div></div><div class="table-wrap stats-panel"><table><thead><tr><th>模型</th><th>API调用</th><th>输入Tokens(命中缓存)</th><th>输入Tokens(未命中缓存)</th><th>输出Tokens</th><th>总Tokens</th><th>缓存命中率</th><th>积分</th><th>操作</th></tr></thead><tbody>${pageRows.length?pageRows.map(m=>`<tr><td>${esc(m.model)}</td><td>${fmt(m.apiCalls)}</td><td>${fmt(m.inputHitTokens||m.cacheHitTokens)}</td><td>${fmt(m.inputMissTokens)}</td><td>${fmt(m.outputTokens)}</td><td>${fmt(m.totalTokens)}</td><td>${m.cacheHitRate||0}%</td><td>${Number(m.credit||0).toFixed(2)}</td><td><button class="btn btn-sm" onclick="openAdminModelCacheDaily(${jsArg(m.model)})">趋势</button></td></tr>`).join(''):'<tr><td colspan="9" class="muted">暂无模型统计</td></tr>'}</tbody></table></div>${statsPagination(rows.length,S.adminModelPageNo,S.adminStatsPageSize,'changeAdminModelPage')}<div id="adminModelDaily" class="stats-panel"></div>`;setAdminChart('adminModelCacheChart',{...adminChartBase(),xAxis:{type:'category',data:rows.map(m=>m.model),axisLabel:{color:'#8ea1ba',rotate:35}},series:[{name:'缓存命中率',type:'bar',data:rows.map(m=>m.cacheHitRate||0),itemStyle:{color:'#53d7c4'}}]});setAdminChart('adminModelCreditChart',{...adminChartBase(),xAxis:{type:'category',data:rows.map(m=>m.model),axisLabel:{color:'#8ea1ba',rotate:35}},series:[{name:'积分',type:'bar',data:rows.map(m=>Number(m.credit||0).toFixed(2)),itemStyle:{color:'#f59e0b'}}]});}
@@ -837,8 +903,9 @@ async function showUsers(){
     setNav('users');document.getElementById('pageTitle').textContent='用户管理';document.getElementById('pageSubtitle').textContent='管理本地登录账号与用户端点';
     const serviceLabels={relay:'Relay',codebuddy:'CodeBuddy',copilot:'Copilot'};
     const serviceToggles=u=>u.tenant?Object.entries(serviceLabels).map(([type,label])=>{const p=profile(u.tenant,type);return `<label class="actions" style="gap:6px;margin-right:10px"><input class="toggle user-service-toggle" type="checkbox" autocomplete="off" ${p.enabled?'checked':''} onchange="toggleUserService(${u.tenant.id},'${type}',this.checked)"><span>${label}</span></label>`;}).join(''):'<span class="muted">未绑定配置</span>';
-    try{const d=await api('/dashboard/users');document.getElementById('main').innerHTML=`<div class="card"><div class="card-head"><div><h2>本地用户</h2><div class="muted">超级管理员账号不会出现在列表中；超级管理员可创建管理员和普通用户，管理员只管理普通用户。</div></div><button class="btn btn-primary" onclick="document.getElementById('userModal').classList.add('show')">创建用户</button></div><div class="table-wrap"><table><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>服务端点</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${(d.users||[]).map(u=>{const canManage=S.me.role==='superadmin'||u.role!=='admin';return `<tr><td>${esc(u.username)}</td><td>${esc(u.displayName||'-')}</td><td>${esc(u.role)}</td><td><div class="actions">${serviceToggles(u)}</div></td><td>${u.createdAt?new Date(u.createdAt*1000).toLocaleString():'-'}</td><td><div class="actions">${canManage?`<button class="btn btn-sm" onclick="openUserEdit(${jsArg(u.username)},${jsArg(u.displayName||'')},${jsArg(u.role||'user')})">编辑</button><button class="btn btn-sm" onclick="openPassword(${jsArg(u.username)})">重置密码</button><button class="btn btn-danger btn-sm" onclick="deleteUser(${jsArg(u.username)})">删除</button>`:'-'}</div></td></tr>`;}).join('')}</tbody></table></div></div>`;}catch(e){toast(e.message,'error');}
+    try{const d=await api('/dashboard/users');const isLdap=d.authMode==='ldap';const canCreate=d.capabilities?.canCreate!==false;const canResetPassword=d.capabilities?.canResetPassword!==false;const createButton=canCreate?'<button class="btn btn-primary" onclick="openCreateUser()">创建用户</button>':'';document.getElementById('main').innerHTML=`<div class="card"><div class="card-head"><div><h2>${isLdap?'LDAP 用户':'本地用户'}</h2><div class="muted">${isLdap?'LDAP 模式下展示已登录过的 LDAP 用户，可编辑角色和显示名，也可删除用户记录。':'超级管理员账号不会出现在列表中；超级管理员可创建管理员和普通用户，管理员只管理普通用户。'}</div></div>${createButton}</div><div class="table-wrap"><table><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>服务端点</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${(d.users||[]).map(u=>{const canManage=S.me.role==='superadmin'||u.role!=='admin';return `<tr><td>${esc(u.username)}</td><td>${esc(u.displayName||'-')}</td><td>${esc(u.role)}</td><td><div class="actions">${serviceToggles(u)}</div></td><td>${u.createdAt?new Date(u.createdAt*1000).toLocaleString():'-'}</td><td><div class="actions">${canManage?`<button class="btn btn-sm" onclick="openUserEdit(${jsArg(u.username)},${jsArg(u.displayName||'')},${jsArg(u.role||'user')})">编辑</button>${canResetPassword?`<button class="btn btn-sm" onclick="openPassword(${jsArg(u.username)})">重置密码</button>`:''}<button class="btn btn-danger btn-sm" onclick="deleteUser(${jsArg(u.username)})">删除</button>`:'-'}</div></td></tr>`;}).join('')}</tbody></table></div></div>`;}catch(e){toast(e.message,'error');}
 }
+function openCreateUser(){document.getElementById('userModal').classList.add('show');}
 async function toggleUserService(tenantId,type,enabled){try{await api(`/dashboard/tenants/${tenantId}/services/${type}`,{method:'PUT',body:JSON.stringify({enabled})});await showUsers();if(S.tenant?.id===tenantId)await loadMyTenant();toast(`${type} 已${enabled?'启用':'停用'}`);}catch(e){toast(e.message,'error');await showUsers();}}
 async function createUser(){try{await api('/dashboard/users',{method:'POST',body:JSON.stringify({username:newUsername.value.trim(),displayName:newDisplayName.value.trim(),password:newPassword.value,role:newRole.value})});closeModal('userModal');newUsername.value=newDisplayName.value=newPassword.value='';newRole.value='user';await loadMyTenant();await showUsers();toast('用户已创建');}catch(e){toast(e.message,'error');}}
 function openUserEdit(username,displayName,role){S.editingUser=username;editUserName.textContent='账号：'+username;editDisplayName.value=displayName||'';editRole.value=role||'user';editRole.disabled=S.me.role!=='superadmin';editRoleAdminOption.hidden=S.me.role!=='superadmin';document.getElementById('editUserModal').classList.add('show');}
@@ -847,15 +914,17 @@ function openPassword(username){S.passwordUser=username;passwordTarget.textConte
 async function resetUserPassword(){try{await api(`/dashboard/users/${encodeURIComponent(S.passwordUser)}/password`,{method:'PUT',body:JSON.stringify({password:resetPassword.value})});closeModal('passwordModal');toast('密码已重置');}catch(e){toast(e.message,'error');}}
 async function deleteUser(username){if(!confirm(`确认删除用户 ${username}？关联配置数据也会被删除。`))return;try{await api(`/dashboard/users/${encodeURIComponent(username)}`,{method:'DELETE'});await loadMyTenant();await showUsers();toast('用户已删除');}catch(e){toast(e.message,'error');}}
 function closeModal(id){document.getElementById(id).classList.remove('show');}
+function setRelayTesting(loading){S.relayTesting=!!loading;const btn=document.getElementById('relayBatchTestBtn');if(btn){btn.disabled=S.relayTesting;btn.textContent=S.relayTesting?'测试中...':'批量测试';}}
+async function testAllUpstreams(){if(S.relayTesting)return;setRelayTesting(true);toast('正在批量测试连接...');try{const d=await api(`/dashboard/tenants/${S.tenant.id}/upstreams/test-all`,{method:'POST'});const results=d.results||[];S.relayTestResults=mapTestResults(results,'index');renderRelayList();showBatchTestToast(results);}catch(e){toast(e.message,'error');}finally{setRelayTesting(false);}}
 Object.assign(window,{
     showConsole,showFeedback,showStats,showUsers,routeFromHash,syncHashRoute,syncStatsHash,scrollToSection,logout,switchTab,copyKey,regenerateKey,
-    openUpstream,saveUpstream,setActive,testUpstream,cloneUpstream,moveUpstream,deleteUpstream,toggleApiKeyVisibility,
+    openUpstream,saveUpstream,setActive,testAllUpstreams,cloneUpstream,moveUpstream,deleteUpstream,toggleApiKeyVisibility,
     openOAuth,startOAuth,closeOAuth,credentialAction,moveCodebuddyCredential,resetServiceStats,refreshServiceStats,loadServiceStats,
     copyGuideConfig,copyGuideOpenAIUrl,copyGuideResponsesUrl,copyTextFromElement,
     openCopilotCredential,saveCopilotCredential,setCopilotActive,toggleCopilotCredential,deleteCopilotCredential,
     startCopilotAuth,closeCopilotAuth,clearCopilotAuth,refreshCopilot,moveCopilotCredential,
-    renderStatsTabs,switchStatsTab,switchStatsPage,loadStatsPage,refreshAdminStats,renderStatsSummaryCards,renderAdminStatsUsers,renderAdminStatsModelCache,renderAdminStatsTrend,renderAdminStatsCoach,searchAdminStatsUsers,clearAdminStatsUserSearch,applyAdminUserDateRange,applyAdminModelDateRange,setAdminUserTrendFilter,filterCoachUsers,showCoachSamples,exportCoachAssessment,updateAdminStatsSearch,sortAdminStatsUsers,changeAdminStatsPage,changeAdminModelPage,changeAdminTrendPage,changeAdminCoachPage,openAdminStatsUser,queryAdminModelCache,openAdminModelCacheDaily,openAdminDailyUsers,loadCoachData,toggleCoachUser,selectCoachUser,triggerCoachUser,triggerAllAnalysis,submitInlineFeedback,loadInlineFeedback,resetFeedbackSearch,renderFeedbackPagination,changeFeedbackPage,changeFeedbackPageSize,jumpFeedbackPage,inlineFeedbackStatus,inlineFeedbackDelete,
-    openInlineFeedbackSubmit,openFeedbackDetail,openFeedback,submitFeedback,toggleUserService,createUser,openUserEdit,saveUserEdit,openPassword,resetUserPassword,deleteUser,closeModal
+    renderStatsTabs,renderStatsServiceTabs,switchStatsTab,switchStatsPage,switchAdminStatsService,loadStatsPage,refreshAdminStats,renderAdminStatsMonthly,renderAdminStatsUsers,renderAdminStatsModelCache,renderAdminStatsTrend,renderAdminStatsCoach,searchAdminStatsUsers,clearAdminStatsUserSearch,applyAdminStatsMonth,applyAdminUserDateRange,applyAdminModelDateRange,setAdminUserTrendFilter,filterCoachUsers,showCoachSamples,exportCoachAssessment,updateAdminStatsSearch,sortAdminStatsUsers,changeAdminStatsPage,changeAdminModelPage,changeAdminTrendPage,changeAdminCoachPage,openAdminStatsUser,queryAdminModelCache,openAdminModelCacheDaily,openAdminDailyUsers,loadCoachData,toggleCoachUser,selectCoachUser,triggerCoachUser,triggerAllAnalysis,submitInlineFeedback,loadInlineFeedback,resetFeedbackSearch,renderFeedbackPagination,changeFeedbackPage,changeFeedbackPageSize,jumpFeedbackPage,inlineFeedbackStatus,inlineFeedbackDelete,
+    openInlineFeedbackSubmit,openFeedbackDetail,openFeedback,submitFeedback,toggleUserService,openCreateUser,createUser,openUserEdit,saveUserEdit,openPassword,resetUserPassword,deleteUser,closeModal
 });
 init();
 </script>
