@@ -223,6 +223,12 @@ async function requestJson(url, upstream, {method = 'POST', headers = {}, body, 
         timeout
     };
 
+    // skip_tls_verify 需要同时传给底层 http-client，否则 request() 会独立计算
+    // rejectUnauthorized=true，覆盖 agent 里的设置
+    if (upstream.skip_tls_verify === true) {
+        options.rejectUnauthorized = false;
+    }
+
     if (body !== undefined) {
         options.body = body;
     }
