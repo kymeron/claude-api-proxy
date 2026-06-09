@@ -70,14 +70,12 @@ export async function* sendResponsesWebSocketRequest(socketOrConnection, payload
     const messageQueue = [];
     let streamDone = false;
     let streamError = null;
+    let responseCompleted = false;
+    let closeCode = null;
+    let closeReason = '';
 
     if (Array.isArray(payload.input)) {
-        const beforeTypes = payload.input.map((item) => item?.type || item?.role || 'unknown');
         payload = {...payload, input: sanitizeResponsesInput(payload.input)};
-        const afterTypes = payload.input.map((item) => item?.type || item?.role || 'unknown');
-        if (beforeTypes.join(',') !== afterTypes.join(',')) {
-            logger.info(`Responses WS: sanitized input types [${beforeTypes}] -> [${afterTypes}]`);
-        }
     }
 
     const explicitPreviousResponseId =
@@ -148,7 +146,10 @@ export async function* sendResponsesWebSocketRequest(socketOrConnection, payload
         }
     };
 
-    const onClose = () => {
+    const onClose = (code, reason) => {
+        closeCode = code;
+        closeReason = reason ? reason.toString('utf8') : '';
+        logger.info(`Responses WS: upstream closed (code=${code}, reason=${closeReason || '(empty)'}, responseCompleted=${responseCompleted})`);
         streamDone = true;
         if (resolveMessage) {
             const resolve = resolveMessage;
@@ -170,7 +171,10 @@ export async function* sendResponsesWebSocketRequest(socketOrConnection, payload
             if (messageQueue.length > 0) {
                 const message = messageQueue.shift();
                 yield {type: message.type, data: message};
-                if (message.type === 'response.completed') break;
+                if (message.type === 'response.completed') {
+                    responseCompleted = true;
+                    break;
+                }
                 continue;
             }
             if (streamDone) break;
@@ -181,6 +185,18 @@ export async function* sendResponsesWebSocketRequest(socketOrConnection, payload
             if (streamError) throw streamError;
         }
         if (streamError) throw streamError;
+        // 上游在 response.completed 之前关闭了连接 — 必须抛出错误，
+        // 否则客户端（如 codex）会收到 "stream closed before response.completed"
+        if (!responseCompleted) {
+            const detail = closeCode ? ` (code=${closeCode}${closeReason ? ', reason=' + closeReason : ''})` : '';
+            throw new ResponsesWebSocketError({
+                type: 'error',
+                error: {
+                    message: `stream closed before response.completed${detail}`,
+                    code: 'stream_disconnected'
+                }
+            });
+        }
     } finally {
         socket.off('message', onMessage);
         socket.off('error', onError);

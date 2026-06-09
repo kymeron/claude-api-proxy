@@ -40,7 +40,7 @@ function getPool(key) {
 function startIdleTimer(connection) {
     if (connection.idleTimer) clearTimeout(connection.idleTimer);
     connection.idleTimer = setTimeout(() => {
-        removeConnection(connection);
+        removeConnection(connection, 'idle_timeout');
     }, IDLE_TIMEOUT);
 }
 
@@ -67,17 +67,21 @@ function bindConnectionContext(connection, contextKey, preserveResponseId = fals
     }
 }
 
-function removeConnection(connection) {
+function removeConnection(connection, reason = 'unknown') {
     stopIdleTimer(connection);
-    try {
-        connection.ws.close();
-    } catch {}
+    const state = connection.ws.readyState;
+    if (state === 1) {
+        try {
+            connection.ws.close();
+        } catch {}
+    }
     const pool = pools.get(connection.poolKey);
     if (pool) {
         const index = pool.indexOf(connection);
         if (index !== -1) pool.splice(index, 1);
         if (pool.length === 0) pools.delete(connection.poolKey);
     }
+    logger.info(`Responses WS pool: removed connection (reason=${reason}, busy=${connection.busy}, state=${state}, context=${connection.contextKey || 'none'}, lastResp=${connection.lastResponseId || 'none'})`);
 }
 
 export async function acquire({
@@ -146,15 +150,15 @@ export async function acquire({
     bindConnectionContext(connection, normalizedContextKey, false);
     pool.push(connection);
 
-    ws.on('close', () => removeConnection(connection));
+    ws.on('close', () => removeConnection(connection, 'upstream_close'));
     ws.on('error', (error) => {
         logger.warn(`Responses WS pool: connection error: ${error.message}`);
-        removeConnection(connection);
+        removeConnection(connection, 'connection_error');
     });
 
     while (pool.length > MAX_PER_KEY) {
         const oldest = pool.find((item) => !item.busy);
-        if (oldest) removeConnection(oldest);
+        if (oldest) removeConnection(oldest, 'eviction');
         else break;
     }
 
@@ -163,7 +167,7 @@ export async function acquire({
 
 export function release(connection) {
     if (connection.ws.readyState !== 1) {
-        removeConnection(connection);
+        removeConnection(connection, 'release_not_open');
         return;
     }
     connection.busy = false;
@@ -172,7 +176,7 @@ export function release(connection) {
 }
 
 export function discard(connection) {
-    removeConnection(connection);
+    removeConnection(connection, 'discard');
 }
 
 export function shutdown() {
@@ -198,9 +202,8 @@ export function discardByPoolKey(poolKey) {
     // 复制数组避免遍历时修改
     const connections = [...pool];
     for (const connection of connections) {
-        removeConnection(connection);
+        removeConnection(connection, 'discard_by_pool_key');
     }
-    pools.delete(poolKey);
     logger.info(`Responses WS pool: discarded ${connections.length} connections for poolKey=${poolKey}`);
 }
 

@@ -1810,7 +1810,9 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
 
     // Responses HTTP 上游：透传 SSE → WS 事件
     if (isResponsesUpstream(upstream)) {
-        const responsesPayload = {...payload, model: resolvedModel};
+        // stream: WS 客户端不发 stream 字段，但 HTTP 上游需要 stream=true 才返回 SSE
+        // store: 火山引擎需要 store=true 才存储 response，否则 previous_response_id 找不到
+        const responsesPayload = {...payload, model: resolvedModel, stream: true, store: true};
         const {response} = await callUpstream(upstream, (up) =>
             createResponses(responsesPayload, up, {
                 requestType: 'ResponsesWS',

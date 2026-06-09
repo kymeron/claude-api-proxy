@@ -51,24 +51,25 @@ export function responsesRequestToChat(responsesReq) {
     }
 
     // tools: Responses 扁平格式 → Chat 嵌套格式
+    // 仅保留 function 类型，其他类型（web_search、code_interpreter 等）
+    // 非 OpenAI 原生 Chat Completions 接口不支持，透传会导致上游 400
     if (Array.isArray(responsesReq.tools) && responsesReq.tools.length > 0) {
-        chatReq.tools = responsesReq.tools.map((tool) => {
-            if (tool.type === 'function') {
-                return responsesFunctionToolToChat(tool);
-            }
-            // 其他类型（web_search 等）直接透传
-            return tool;
-        });
+        const functionTools = responsesReq.tools
+            .filter((tool) => tool.type === 'function')
+            .map((tool) => responsesFunctionToolToChat(tool));
+        if (functionTools.length > 0) {
+            chatReq.tools = functionTools;
+        }
     }
 
-    // tool_choice
-    if (responsesReq.tool_choice) {
-        chatReq.tool_choice = convertToolChoice(responsesReq.tool_choice);
-    }
-
-    // parallel_tool_calls
-    if (responsesReq.parallel_tool_calls !== undefined) {
-        chatReq.parallel_tool_calls = responsesReq.parallel_tool_calls;
+    // tool_choice / parallel_tool_calls 仅在有 function tools 时发送
+    if (chatReq.tools) {
+        if (responsesReq.tool_choice) {
+            chatReq.tool_choice = convertToolChoice(responsesReq.tool_choice);
+        }
+        if (responsesReq.parallel_tool_calls !== undefined) {
+            chatReq.parallel_tool_calls = responsesReq.parallel_tool_calls;
+        }
     }
 
     // previous_response_id 保留在扩展字段中（不影响 Chat Completions）
@@ -82,8 +83,10 @@ export function responsesRequestToChat(responsesReq) {
     }
 
     // text.format → response_format
+    // 火山引擎等上游不支持 response_format（json_schema/json_object 均会 400），直接移除
+    // 如果上游支持 response_format，可按需调整此处
     if (responsesReq.text?.format) {
-        chatReq.response_format = responsesReq.text.format;
+        // 不设置 chatReq.response_format，火山引擎等上游不支持
     }
 
     return chatReq;
@@ -194,20 +197,22 @@ export function chatRequestToResponses(chatReq) {
 function convertInputItem(item) {
     if (!item || typeof item !== 'object') return null;
 
-    // {role: "user/assistant", content: ...} — 消息格式
+    // {role: "user/assistant/developer", content: ...} — 消息格式
+    // developer (OpenAI Responses API 系统指令角色) → system (Chat Completions)
     if (item.role) {
+        const mappedRole = item.role === 'developer' ? 'system' : item.role;
         if (typeof item.content === 'string') {
-            return {role: item.role, content: item.content};
+            return {role: mappedRole, content: item.content};
         }
         if (Array.isArray(item.content)) {
             // 转换 content parts
             const parts = item.content.map(convertContentPart).filter(Boolean);
             if (parts.length === 1 && parts[0].type === 'text') {
-                return {role: item.role, content: parts[0].text};
+                return {role: mappedRole, content: parts[0].text};
             }
-            return {role: item.role, content: parts};
+            return {role: mappedRole, content: parts};
         }
-        return {role: item.role, content: item.content || ''};
+        return {role: mappedRole, content: item.content || ''};
     }
 
     // {type: "function_call", ...} — 工具调用
@@ -592,7 +597,9 @@ export function createChatCompletionsStreamState() {
         toolCalls: new Map(),
         nextToolIndex: 0,
         sawToolCall: false,
-        completed: false
+        completed: false,
+        // reasoning
+        reasoningOpen: false
     };
 }
 
@@ -703,6 +710,11 @@ export function responsesEventToChatChunks(eventName, eventData, state) {
         return chunks;
     }
 
+    if (eventName === 'response.output_item.added' && eventData.item?.type === 'reasoning') {
+        state.reasoningOpen = true;
+        return chunks;
+    }
+
     if (eventName === 'response.output_item.added' && eventData.item?.type === 'function_call') {
         const item = eventData.item;
         const toolIndex = state.nextToolIndex++;
@@ -715,6 +727,25 @@ export function responsesEventToChatChunks(eventName, eventData, state) {
             emittedArgs: '',
             finalArgs: typeof item.arguments === 'string' ? item.arguments : ''
         });
+        return chunks;
+    }
+
+    if (eventName === 'response.reasoning_summary_text.delta') {
+        ensureAssistantRole();
+        chunks.push(buildChunk({reasoning_content: eventData.delta || ''}));
+        return chunks;
+    }
+
+    if (eventName === 'response.reasoning_summary_part.added') {
+        return chunks;
+    }
+
+    if (eventName === 'response.reasoning_summary_part.done') {
+        return chunks;
+    }
+
+    if (eventName === 'response.output_item.done' && eventData.item?.type === 'reasoning') {
+        state.reasoningOpen = false;
         return chunks;
     }
 
@@ -1254,17 +1285,19 @@ export function sanitizeResponsesInput(input) {
         if (!item || typeof item !== 'object') return item;
 
         // 已是 EasyInputMessage 格式（有 role 但无 type），直接净化 content
+        // developer (OpenAI 系统指令角色) → 上游通用 system
         if (item.role && !item.type) {
             return {
-                role: item.role,
+                role: item.role === 'developer' ? 'system' : item.role,
                 content: sanitizeContentParts(item.content)
             };
         }
 
         // message 类型（上一轮响应的 output message item）
         if (item.type === 'message') {
+            const role = item.role || 'assistant';
             return {
-                role: item.role || 'assistant',
+                role: role === 'developer' ? 'system' : role,
                 content: sanitizeContentParts(item.content)
             };
         }

@@ -167,7 +167,8 @@ export class UpstreamManager {
     /**
      * 解析请求模型名到该上游实际使用的模型名
      * 1. model_map 精确匹配
-     * 2. 以上都不匹配则透传原始模型名
+     * 2. 模式匹配兜底（model_auto 不为 false 时生效）
+     * 3. 以上都不匹配则透传原始模型名
      */
     resolveModel(requestedModel, upstreamIndex) {
         if (upstreamIndex < 0 || upstreamIndex >= this.upstreams.length) return requestedModel;
@@ -181,7 +182,21 @@ export class UpstreamManager {
             }
         }
 
-        // 2. 透传
+        // 2. 模式匹配兜底：将国外模型名自动映射到国内厂商可识别的模型
+        if (upstream.model_auto !== false) {
+            const lower = requestedModel.toLowerCase();
+            if (lower.startsWith('gpt-')) {
+                return lower.includes('mini') ? 'deepseek-v4-flash' : 'deepseek-v4';
+            }
+            if (lower.includes('codex')) {
+                return 'deepseek-v4-flash';
+            }
+            if (lower.startsWith('glm-')) {
+                return 'deepseek-v4-flash';
+            }
+        }
+
+        // 3. 透传
         return requestedModel;
     }
 

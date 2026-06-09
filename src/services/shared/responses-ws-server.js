@@ -37,10 +37,10 @@ export function handleWSConnection(clientWs, options) {
     // 鉴权
     const authResult = authenticate(req);
     if (!authResult) {
-        clientWs.send(JSON.stringify({
+        safeClientSend(clientWs, {
             type: 'error',
             error: {message: 'Authentication failed', code: 'unauthorized'}
-        }));
+        });
         setTimeout(() => {
             try { clientWs.close(4001, 'Authentication failed'); } catch {}
         }, 100);
@@ -55,19 +55,19 @@ export function handleWSConnection(clientWs, options) {
             message = JSON.parse(raw.toString('utf8'));
         } catch (e) {
             logger.warn('WS server: Failed to parse client message:', e.message);
-            clientWs.send(JSON.stringify({
+            safeClientSend(clientWs, {
                 type: 'error',
                 error: {message: 'Invalid JSON message', code: 'invalid_request'}
-            }));
+            });
             return;
         }
 
         if (message.type === 'response.create') {
             if (isProcessing) {
-                clientWs.send(JSON.stringify({
+                safeClientSend(clientWs, {
                     type: 'error',
                     error: {message: 'A response is already being processed', code: 'conflict'}
-                }));
+                });
                 return;
             }
             await _processRequest(clientWs, message, authResult, handleRequest, {
@@ -128,6 +128,16 @@ export function bindAsyncIterableContext(eventStream, runInContext) {
     };
 }
 
+function safeClientSend(ws, data) {
+    if (ws?.readyState !== 1) return false;
+    try {
+        ws.send(typeof data === 'string' ? data : JSON.stringify(data));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 /**
  * 处理单个 response.create 请求
  */
@@ -149,6 +159,7 @@ async function _processRequest(clientWs, message, authResult, handleRequest, ctx
     let outputTokens = 0;
     let cacheHitTokens = 0;
     let model = 'unknown';
+    let responseCompleted = false;
 
     try {
         const invoke = () => handleRequest(payload, authResult, {signal: abortController.signal});
@@ -165,10 +176,10 @@ async function _processRequest(clientWs, message, authResult, handleRequest, ctx
         }
 
         if (!eventStream || typeof eventStream[Symbol.asyncIterator] !== 'function') {
-            clientWs.send(JSON.stringify({
+            safeClientSend(clientWs, {
                 type: 'error',
                 error: {message: 'Internal error: invalid event stream', code: 'server_error'}
-            }));
+            });
             return;
         }
 
@@ -187,25 +198,43 @@ async function _processRequest(clientWs, message, authResult, handleRequest, ctx
             }
 
             // 发送事件给客户端
-            clientWs.send(JSON.stringify(event.data || event));
+            if (!safeClientSend(clientWs, event.data || event)) {
+                logger.warn('WS server: failed to send event to client (connection closed)');
+                break;
+            }
 
-            if (event.type === 'response.completed') break;
+            if (event.type === 'response.completed') {
+                responseCompleted = true;
+                break;
+            }
+        }
+
+        // 事件流在没有 response.completed 的情况下结束 — 通知客户端
+        if (!responseCompleted && !ctx.isClosed() && !abortController.signal.aborted) {
+            logger.warn('WS server: event stream ended without response.completed, sending error to client');
+            safeClientSend(clientWs, {
+                type: 'error',
+                error: {
+                    message: 'stream closed before response.completed',
+                    code: 'server_error'
+                }
+            });
         }
     } catch (err) {
         if (!ctx.isClosed()) {
-            const errorEvent = {
-                type: 'error',
-                error: {
-                    message: err.message || 'Request failed',
-                    code: err.code || 'server_error'
-                }
-            };
-
             // 如果是 ResponsesWebSocketError，透传上游错误事件
             if (err.name === 'ResponsesWebSocketError' && err.event) {
-                clientWs.send(JSON.stringify(err.event));
+                logger.warn(`WS server: upstream error: ${err.message}`);
+                safeClientSend(clientWs, err.event);
             } else {
-                clientWs.send(JSON.stringify(errorEvent));
+                logger.warn(`WS server: request error: ${err.message}`);
+                safeClientSend(clientWs, {
+                    type: 'error',
+                    error: {
+                        message: err.message || 'Request failed',
+                        code: err.code || 'server_error'
+                    }
+                });
             }
         }
     } finally {

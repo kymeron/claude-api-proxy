@@ -921,7 +921,49 @@ async function resetUserPassword(){try{await api(`/dashboard/users/${encodeURICo
 async function deleteUser(username){if(!confirm(`确认删除用户 ${username}？关联配置数据也会被删除。`))return;try{await api(`/dashboard/users/${encodeURIComponent(username)}`,{method:'DELETE'});await loadMyTenant();await showUsers();toast('用户已删除');}catch(e){toast(e.message,'error');}}
 function closeModal(id){document.getElementById(id).classList.remove('show');}
 function setRelayTesting(loading){S.relayTesting=!!loading;const btn=document.getElementById('relayBatchTestBtn');if(btn){btn.disabled=S.relayTesting;btn.textContent=S.relayTesting?'测试中...':'批量测试';}}
-async function testAllUpstreams(){if(S.relayTesting)return;setRelayTesting(true);toast('正在批量测试连接...');try{const d=await api(`/dashboard/tenants/${S.tenant.id}/upstreams/test-all`,{method:'POST'});const results=d.results||[];S.relayTestResults=mapTestResults(results,'index');renderRelayList();showBatchTestToast(results);}catch(e){toast(e.message,'error');}finally{setRelayTesting(false);}}
+async function testAllUpstreams(){
+  if(S.relayTesting)return;
+  setRelayTesting(true);
+  S.relayTestResults={};
+  renderRelayList();
+  const upstreams=S.upstreams||[];
+  const total=upstreams.length;
+  if(!total){setRelayTesting(false);return;}
+  let done=0,ok=0;
+  toast('正在批量测试连接...');
+  try{
+    const resp=await fetch(`/dashboard/tenants/${S.tenant.id}/upstreams/test-all`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'}});
+    const reader=resp.body.getReader();
+    const decoder=new TextDecoder();
+    let buf='';
+    while(true){
+      const{value,done:ended}=await reader.read();
+      if(ended)break;
+      buf+=decoder.decode(value,{stream:true});
+      const lines=buf.split('\n');
+      buf=lines.pop();
+      let ev=null;
+      for(const line of lines){
+        if(line.startsWith('event: '))ev=line.slice(7);
+        else if(line.startsWith('data: ')&&ev){
+          try{
+            const r=JSON.parse(line.slice(6));
+            if(ev==='result'){
+              S.relayTestResults[r.index]=r;
+              done++;if(r.success)ok++;
+              renderRelayList();
+            }else if(ev==='done'){
+              const arr=Object.values(S.relayTestResults);
+              showBatchTestToast(arr);
+            }
+          }catch{}
+          ev=null;
+        }
+      }
+    }
+  }catch(e){toast(e.message,'error');}
+  finally{setRelayTesting(false);}
+}
 Object.assign(window,{
     showConsole,showFeedback,showStats,showUsers,routeFromHash,syncHashRoute,syncStatsHash,scrollToSection,logout,switchTab,copyKey,regenerateKey,
     openUpstream,saveUpstream,setActive,testAllUpstreams,cloneUpstream,moveUpstream,deleteUpstream,toggleApiKeyVisibility,

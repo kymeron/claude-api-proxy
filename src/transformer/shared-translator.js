@@ -957,6 +957,17 @@ export function normalizeResponsesPayload(payload, meta = {}) {
             });
     }
 
+    // 清理上游不兼容的参数
+    // text.format：火山引擎等不支持 response_format（json_schema/json_object 均不支持），直接移除
+    if (ordered.text?.format) {
+        const {format, ...rest} = ordered.text;
+        if (Object.keys(rest).length > 0) {
+            ordered.text = rest;
+        } else {
+            delete ordered.text;
+        }
+    }
+
     return ordered;
 }
 

@@ -228,11 +228,30 @@ async function relayOperation(req, res, tenantId, subPath) {
     }
     if (subPath === '/upstreams/test-all' && req.method === 'POST') {
         const upstreams = manager.listUpstreams();
-        const results = [];
-        for (let index = 0; index < upstreams.length; index++) {
-            results.push({index, name: upstreams[index]?.name || `#${index + 1}`, ...(await manager.testUpstream(index))});
-        }
-        sendJson(res, 200, {results});
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+        });
+        const write = (event, data) => {
+            res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+        const total = upstreams.length;
+        let done = 0;
+        const tasks = upstreams.map((upstream, index) =>
+            manager.testUpstream(index).then(result => {
+                done++;
+                const entry = {index, name: upstream?.name || `#${index + 1}`, ...result};
+                write('result', entry);
+                if (done === total) write('done', {total});
+            }).catch(err => {
+                done++;
+                const entry = {index, name: upstream?.name || `#${index + 1}`, success: false, message: err.message};
+                write('result', entry);
+                if (done === total) write('done', {total});
+            })
+        );
+        Promise.all(tasks).finally(() => res.end());
         return true;
     }
     return false;

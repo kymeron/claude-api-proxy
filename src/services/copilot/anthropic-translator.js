@@ -358,6 +358,14 @@ export function translateStreamChunk(openAIChunk, state) {
     if (effectiveContent) {
         // 切换块前先关闭 thinking 或 tool_use
         if (state.contentBlockOpen && state.currentBlockType !== 'text') {
+            // thinking 块关闭前必须发送 signature_delta，与 ClaudeStreamState 保持一致
+            if (state.currentBlockType === 'thinking') {
+                events.push({
+                    type: 'content_block_delta',
+                    index: state.contentBlockIndex,
+                    delta: {type: 'signature_delta', signature: Date.now().toString()}
+                });
+            }
             events.push({type: 'content_block_stop', index: state.contentBlockIndex});
             state.contentBlockIndex++;
             state.contentBlockOpen = false;
@@ -465,6 +473,14 @@ export function translateStreamChunk(openAIChunk, state) {
     // 处理完成
     if (choice.finish_reason) {
         if (state.contentBlockOpen) {
+            // thinking 块关闭前必须发送 signature_delta，与 ClaudeStreamState 保持一致
+            if (state.currentBlockType === 'thinking') {
+                events.push({
+                    type: 'content_block_delta',
+                    index: state.contentBlockIndex,
+                    delta: {type: 'signature_delta', signature: Date.now().toString()}
+                });
+            }
             events.push({
                 type: 'content_block_stop',
                 index: state.contentBlockIndex
