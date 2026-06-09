@@ -54,7 +54,7 @@ export class UpstreamManager {
                 where: {tenant_id: this.tenantId},
                 order: [['id', 'ASC']]
             });
-            this.upstreams = rows.map(row => row.get({plain: true}));
+            this.upstreams = rows.map((row) => row.get({plain: true}));
         } catch (error) {
             logger.error(`Relay: 加载上游配置失败: ${error.message}`);
             this.upstreams = [];
@@ -306,21 +306,22 @@ export class UpstreamManager {
             await models.TenantUpstream.destroy({where: {tenant_id: this.tenantId}});
             const rows = [];
             for (const u of this.upstreams) {
-                rows.push(await models.TenantUpstream.create({
-                    tenant_id: this.tenantId,
-                    name: u.name,
-                    base_url: u.base_url,
-                    api_key: u.api_key,
-                    proxy: u.proxy,
-                    models: u.models,
-                    model_map: u.model_map,
-                    model_auto: u.model_auto,
-                    protocol: u.protocol,
-                    ws_mode: normalizeResponsesWebSocketMode(u.ws_mode),
-                    enabled: u.enabled
-                }));
+                rows.push(
+                    await models.TenantUpstream.create({
+                        tenant_id: this.tenantId,
+                        name: u.name,
+                        base_url: u.base_url,
+                        api_key: u.api_key,
+                        proxy: u.proxy,
+                        models: u.models,
+                        model_map: u.model_map,
+                        model_auto: u.model_auto,
+                        protocol: u.protocol,
+                        ws_mode: normalizeResponsesWebSocketMode(u.ws_mode),
+                        enabled: u.enabled
+                    }));
             }
-            this.upstreams = rows.map(row => row.get({plain: true}));
+            this.upstreams = rows.map((row) => row.get({plain: true}));
         } catch (error) {
             logger.error(`Relay: 重建上游顺序失败: ${error.message}`);
         }

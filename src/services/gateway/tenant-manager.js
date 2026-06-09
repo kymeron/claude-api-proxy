@@ -271,13 +271,16 @@ class UnifiedTenantManager {
 
     async listCodebuddyCredentials(tenantId) {
         const manager = await this.getCodebuddyCredentialManager(tenantId);
-        if (!manager) return [];
-        return manager.credentials.map((credential, index) => ({
-            id: credential.id,
-            index,
-            enabled: !manager.disabledIndexes.includes(index),
-            ...credential.data
-        }));
+        if (!manager) return {credentials: [], activeIndex: -1};
+        return {
+            credentials: manager.credentials.map((credential, index) => ({
+                id: credential.id,
+                index,
+                enabled: !manager.disabledIndexes.includes(index),
+                ...credential.data
+            })),
+            activeIndex: manager.currentIndex
+        };
     }
 
     async refreshCodebuddyCredentials(tenantId) {

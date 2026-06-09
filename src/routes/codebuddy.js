@@ -184,11 +184,11 @@ async function authenticateAndGetCredential(req) {
 
     // Get the codebuddy credential manager for this tenant
     // This uses the existing TokenManager logic via tenant-manager
-    const credentials = await unifiedTenantManager.listCodebuddyCredentials
+    const {credentials, activeIndex} = await unifiedTenantManager.listCodebuddyCredentials
         ? await unifiedTenantManager.listCodebuddyCredentials(tenantId)
-        : [];
+        : {credentials: [], activeIndex: -1};
 
-    const credential = resolveCredential(req.headers, credentials);
+    const credential = resolveCredential(req.headers, credentials, activeIndex);
 
     if (!credential) {
         return {error: {status: 503, message: 'No available credentials for tenant'}};
@@ -1110,7 +1110,7 @@ export function handleCodebuddyResponsesWS(clientWs, req) {
         handleRequest: async function* (payload, authResult, {signal}) {
             const tenantId = req.tenantId;
             const credential = await unifiedTenantManager.listCodebuddyCredentials(tenantId)
-                .then(creds => resolveCredential(req.headers, creds));
+                .then(({credentials, activeIndex}) => resolveCredential(req.headers, credentials, activeIndex));
             if (!credential) {
                 throw Object.assign(new Error('No available credentials for tenant'), {
                     name: 'ResponsesWebSocketError',

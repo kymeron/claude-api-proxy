@@ -36,18 +36,26 @@ export function authenticateApiKey(headers, tenantManager) {
 
 /**
  * 根据 x-credential-id 请求头获取指定凭证
- * 未指定时返回第一个 enabled 凭证
+ * 未指定时优先返回活跃凭证（activeIndex 对应的），
+ * 若活跃凭证不可用则回退到第一个 enabled 凭证
  * @param {Object} headers
  * @param {Array<{id: number, enabled: boolean}>} credentials
+ * @param {number} [activeIndex] - 当前活跃凭证在 credentials 数组中的索引
  * @returns {Object|null}
  */
-export function resolveCredential(headers, credentials) {
+export function resolveCredential(headers, credentials, activeIndex) {
     if (!credentials || credentials.length === 0) return null;
 
     const specifiedId = headers['x-credential-id'];
     if (specifiedId) {
         const id = parseInt(specifiedId, 10);
         return credentials.find(c => c.id === id && c.enabled !== false) || null;
+    }
+
+    // 优先使用活跃凭证索引
+    if (typeof activeIndex === 'number' && activeIndex >= 0 && activeIndex < credentials.length) {
+        const active = credentials[activeIndex];
+        if (active && active.enabled !== false) return active;
     }
 
     return credentials.find(c => c.enabled !== false) || null;
