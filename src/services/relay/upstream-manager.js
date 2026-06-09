@@ -369,8 +369,8 @@ export class UpstreamManager {
                 response = await createAnthropicMessages(
                     {
                         model,
-                        max_tokens: 1,
-                        stream: false,
+                        max_tokens: 16,
+                        stream: true,
                         messages: [{role: 'user', content: 'hi'}]
                     },
                     upstream,
@@ -382,8 +382,8 @@ export class UpstreamManager {
                     {
                         model,
                         input: 'hi',
-                        max_output_tokens: 1,
-                        stream: false
+                        max_output_tokens: 16,
+                        stream: true,
                     },
                     upstream
                 );
@@ -392,8 +392,8 @@ export class UpstreamManager {
                     {
                         model,
                         messages: [{role: 'user', content: 'hi'}],
-                        max_tokens: 1,
-                        stream: false
+                        max_tokens: 16,
+                        stream: true,
                     },
                     upstream
                 );
