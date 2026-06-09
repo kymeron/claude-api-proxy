@@ -396,7 +396,7 @@ class UnifiedTenantManager {
         await TenantServiceProfile.bulkCreate([
             {tenant_id: tenant.id, service_type: 'relay', enabled: true},
             {tenant_id: tenant.id, service_type: 'codebuddy', enabled: true},
-            {tenant_id: tenant.id, service_type: 'copilot', enabled: false}
+            {tenant_id: tenant.id, service_type: 'copilot', enabled: role === 'superadmin'}
         ]);
 
         // Reload cache
