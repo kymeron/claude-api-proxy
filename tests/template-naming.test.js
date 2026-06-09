@@ -40,11 +40,15 @@ test('unified admin console includes all service management surfaces', () => {
     assert.match(frontendRoute, /session\.role === 'superadmin' \? tenants : tenants\.filter/);
     assert.doesNotMatch(frontendRoute, /isAdmin \? tenants : tenants\.filter/);
     assert.match(codebuddyRoute, /\/v2\/plugin\/auth\/state/);
+    assert.match(codebuddyRoute, /\/codebuddy\/auth\/save/);
     assert.match(codebuddyRoute, /logout_uri/);
     assert.match(adminUsersRoute, /updateManagedUser/);
     assert.match(adminUsersRoute, /method === 'PUT'/);
     assert.match(adminHtml, /Relay/);
     assert.match(adminHtml, /CodeBuddy/);
+    assert.match(adminHtml, /useBrowserCodebuddyAuth/);
+    assert.match(adminHtml, /pollCodebuddyOAuth/);
+    assert.match(adminHtml, /\/codebuddy\/auth\/save/);
     assert.match(adminHtml, /showUsers/);
     const sidebarNav = adminHtml.match(/<aside class="sidebar">[\s\S]*?<\/aside>/)?.[0] || '';
     const codebuddyNavIndex = sidebarNav.indexOf('id="nav-codebuddy"');

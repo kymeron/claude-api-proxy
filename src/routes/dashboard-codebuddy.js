@@ -83,6 +83,46 @@ function decodeJwtPayload(token) {
     }
 }
 
+async function saveCodebuddyCredential(tenantId, baseUrl, tokenData, accountInfo = {}) {
+    const accessToken = tokenData.accessToken || tokenData.access_token;
+    if (!accessToken) {
+        throw new Error('CodeBuddy token response does not include accessToken');
+    }
+
+    const payload = decodeJwtPayload(accessToken);
+    const userId = payload.email || payload.preferred_username || payload.sub || 'unknown';
+    const manager = await unifiedTenantManager.getCodebuddyCredentialManager(tenantId);
+    if (!manager) return null;
+
+    const saved = await manager.addCredentialWithData({
+        bearer_token: accessToken,
+        refresh_token: tokenData.refreshToken || tokenData.refresh_token,
+        token_type: tokenData.tokenType || tokenData.token_type || 'Bearer',
+        user_id: userId,
+        user_info: {
+            sub: payload.sub,
+            email: payload.email,
+            preferred_username: payload.preferred_username,
+            name: payload.name
+        },
+        base_url: baseUrl,
+        enterprise_id: accountInfo.enterpriseId || '',
+        enterprise_name: accountInfo.enterpriseName || '',
+        department_info: accountInfo.departmentFullName || '',
+        domain: tokenData.domain,
+        scope: tokenData.scope,
+        expires_in: tokenData.expiresIn || tokenData.expires_in,
+        created_at: Math.floor(Date.now() / 1000)
+    });
+
+    if (saved) {
+        await unifiedTenantManager.refreshCodebuddyCredentials(tenantId);
+        broadcast('codebuddy:credential:change', {tenantId});
+    }
+
+    return saved;
+}
+
 async function startAuth(req, res, tenantId) {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const baseUrl = getCodebuddyBaseUrl(url.searchParams.get('base_url'));
@@ -198,6 +238,21 @@ async function pollAuth(req, res, tenantId) {
     });
 }
 
+async function saveBrowserAuth(req, res, tenantId) {
+    const {base_url: rawBaseUrl, token_data: tokenData, account_info: accountInfo = {}} = await readRequestBody(req);
+    const baseUrl = getCodebuddyBaseUrl(rawBaseUrl);
+    const host = new URL(baseUrl).host;
+    if (BLOCKED_DOMAINS.includes(host)) {
+        return sendJson(res, 400, {status: 'error', message: `Domain ${host} is blocked`});
+    }
+
+    const saved = await saveCodebuddyCredential(tenantId, baseUrl, tokenData || {}, accountInfo || {});
+    return sendJson(res, saved ? 200 : 500, {
+        status: saved ? 'success' : 'error',
+        message: saved ? 'CodeBuddy credential saved' : 'CodeBuddy credential save failed'
+    });
+}
+
 export function getCodebuddyAdminOptions() {
     const defaults = [getCodebuddyBaseUrl()];
     return [...new Set([...defaults, ...getExtraBaseUrls()])].map(url => ({
@@ -268,6 +323,10 @@ export async function handleCodebuddyAdminRoute(req, res, tenantId, subPath) {
         }
         if (subPath === '/codebuddy/auth/poll' && method === 'POST') {
             await pollAuth(req, res, tenantId);
+            return true;
+        }
+        if (subPath === '/codebuddy/auth/save' && method === 'POST') {
+            await saveBrowserAuth(req, res, tenantId);
             return true;
         }
         return false;
