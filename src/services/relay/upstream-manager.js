@@ -19,6 +19,38 @@ import {normalizeResponsesWebSocketMode} from '../shared/responses-ws-mode.js';
 import logger from '../../utils/logger.js';
 import {models} from '../../db/models/index.js';
 
+function configuredModelId(model) {
+    if (typeof model === 'string') return model;
+    if (model && typeof model === 'object' && typeof model.id === 'string') return model.id;
+    return '';
+}
+
+function collectConfiguredModelIds(upstream) {
+    const models = Array.isArray(upstream.models) ? upstream.models.map(configuredModelId) : [];
+    const mappedModels =
+        upstream.model_map && typeof upstream.model_map === 'object'
+            ? Object.values(upstream.model_map).map(configuredModelId)
+            : [];
+    return [...models, ...mappedModels].filter(Boolean);
+}
+
+function pickConfiguredModel(upstream, preferredModels) {
+    const configured = collectConfiguredModelIds(upstream);
+    const configuredByLower = new Map(configured.map((model) => [model.toLowerCase(), model]));
+
+    for (const preferred of preferredModels) {
+        const exact = configuredByLower.get(preferred);
+        if (exact) return exact;
+    }
+
+    for (const preferred of preferredModels) {
+        const bracketAlias = configured.find((model) => model.toLowerCase().startsWith(`${preferred}[`));
+        if (bracketAlias) return bracketAlias;
+    }
+
+    return null;
+}
+
 export class UpstreamManager {
     constructor(options = {}) {
         this.tenantId = options.tenantId;
@@ -183,16 +215,21 @@ export class UpstreamManager {
         }
 
         // 2. 模式匹配兜底：将国外模型名自动映射到国内厂商可识别的模型
-        if (upstream.model_auto !== false) {
+        if (upstream.model_auto !== false && typeof requestedModel === 'string') {
             const lower = requestedModel.toLowerCase();
             if (lower.startsWith('gpt-')) {
-                return lower.includes('mini') ? 'deepseek-v4-flash' : 'deepseek-v4';
+                const preferredModels = lower.includes('mini')
+                    ? ['deepseek-v4-flash', 'deepseek-v4-pro', 'kimi-k2.6']
+                    : ['deepseek-v4-pro', 'kimi-k2.6', 'deepseek-v4-flash'];
+                return pickConfiguredModel(upstream, preferredModels) || preferredModels[0];
             }
             if (lower.includes('codex')) {
-                return 'deepseek-v4-flash';
+                const preferredModels = ['deepseek-v4-flash', 'deepseek-v4-pro', 'kimi-k2.6'];
+                return pickConfiguredModel(upstream, preferredModels) || preferredModels[0];
             }
             if (lower.startsWith('glm-')) {
-                return 'deepseek-v4-flash';
+                const preferredModels = ['deepseek-v4-flash', 'deepseek-v4-pro', 'kimi-k2.6'];
+                return pickConfiguredModel(upstream, preferredModels) || preferredModels[0];
             }
         }
 
@@ -319,7 +356,8 @@ export class UpstreamManager {
                         protocol: u.protocol,
                         ws_mode: normalizeResponsesWebSocketMode(u.ws_mode),
                         enabled: u.enabled
-                    }));
+                    })
+                );
             }
             this.upstreams = rows.map((row) => row.get({plain: true}));
         } catch (error) {
@@ -384,7 +422,7 @@ export class UpstreamManager {
                         model,
                         input: 'hi',
                         max_output_tokens: 16,
-                        stream: true,
+                        stream: true
                     },
                     upstream
                 );
@@ -394,13 +432,16 @@ export class UpstreamManager {
                         model,
                         messages: [{role: 'user', content: 'hi'}],
                         max_tokens: 16,
-                        stream: true,
+                        stream: true
                     },
                     upstream
                 );
             }
             if (response.status >= 200 && response.status < 300) {
-                return {success: true, message: `连接成功 (protocol: ${upstream.protocol || 'openai'}, model: ${model})`};
+                return {
+                    success: true,
+                    message: `连接成功 (protocol: ${upstream.protocol || 'openai'}, model: ${model})`
+                };
             }
             return {success: false, message: `HTTP ${response.status}`};
         } catch (err) {
