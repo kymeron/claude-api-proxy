@@ -9,9 +9,12 @@ import {
     getUpstreamModels,
     createChatCompletions,
     createResponses,
+    createResponsesWebSocket,
     createAnthropicMessages,
     isAnthropicUpstream,
     isResponsesUpstream,
+    isResponsesWebSocketUpstream,
+    discardResponsesWebSocketConnection,
     buildResponsesWebSocketUrl
 } from './api.js';
 import {discardByPoolKey, connectionPoolKey} from '../shared/responses-ws-pool.js';
@@ -373,6 +376,29 @@ export class UpstreamManager {
                     {},
                     {'anthropic-version': '2023-06-01'}
                 );
+            } else if (isResponsesWebSocketUpstream(upstream)) {
+                let conn;
+                try {
+                    const result = await createResponsesWebSocket(
+                        {
+                            model,
+                            input: 'hi',
+                            max_output_tokens: 16
+                        },
+                        upstream
+                    );
+                    conn = result.conn;
+                    // Consume the stream until response.completed to verify the connection works
+                    for await (const event of result.eventStream) {
+                        if (event.type === 'response.completed') break;
+                    }
+                    return {
+                        success: true,
+                        message: `连接成功 (protocol: ${upstream.protocol || 'responses_ws'}, model: ${model})`
+                    };
+                } finally {
+                    if (conn) discardResponsesWebSocketConnection(conn);
+                }
             } else if (isResponsesUpstream(upstream)) {
                 response = await createResponses(
                     {
