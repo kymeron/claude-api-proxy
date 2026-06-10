@@ -19,38 +19,6 @@ import {normalizeResponsesWebSocketMode} from '../shared/responses-ws-mode.js';
 import logger from '../../utils/logger.js';
 import {models} from '../../db/models/index.js';
 
-function configuredModelId(model) {
-    if (typeof model === 'string') return model;
-    if (model && typeof model === 'object' && typeof model.id === 'string') return model.id;
-    return '';
-}
-
-function collectConfiguredModelIds(upstream) {
-    const models = Array.isArray(upstream.models) ? upstream.models.map(configuredModelId) : [];
-    const mappedModels =
-        upstream.model_map && typeof upstream.model_map === 'object'
-            ? Object.values(upstream.model_map).map(configuredModelId)
-            : [];
-    return [...models, ...mappedModels].filter(Boolean);
-}
-
-function pickConfiguredModel(upstream, preferredModels) {
-    const configured = collectConfiguredModelIds(upstream);
-    const configuredByLower = new Map(configured.map((model) => [model.toLowerCase(), model]));
-
-    for (const preferred of preferredModels) {
-        const exact = configuredByLower.get(preferred);
-        if (exact) return exact;
-    }
-
-    for (const preferred of preferredModels) {
-        const bracketAlias = configured.find((model) => model.toLowerCase().startsWith(`${preferred}[`));
-        if (bracketAlias) return bracketAlias;
-    }
-
-    return null;
-}
-
 export class UpstreamManager {
     constructor(options = {}) {
         this.tenantId = options.tenantId;
@@ -217,19 +185,8 @@ export class UpstreamManager {
         // 2. 模式匹配兜底：将国外模型名自动映射到国内厂商可识别的模型
         if (upstream.model_auto !== false && typeof requestedModel === 'string') {
             const lower = requestedModel.toLowerCase();
-            if (lower.startsWith('gpt-')) {
-                const preferredModels = lower.includes('mini')
-                    ? ['deepseek-v4-flash', 'deepseek-v4-pro', 'kimi-k2.6']
-                    : ['deepseek-v4-pro', 'kimi-k2.6', 'deepseek-v4-flash'];
-                return pickConfiguredModel(upstream, preferredModels) || preferredModels[0];
-            }
-            if (lower.includes('codex')) {
-                const preferredModels = ['deepseek-v4-flash', 'deepseek-v4-pro', 'kimi-k2.6'];
-                return pickConfiguredModel(upstream, preferredModels) || preferredModels[0];
-            }
-            if (lower.startsWith('glm-')) {
-                const preferredModels = ['deepseek-v4-flash', 'deepseek-v4-pro', 'kimi-k2.6'];
-                return pickConfiguredModel(upstream, preferredModels) || preferredModels[0];
+            if (lower.startsWith('gpt-') || lower.includes('mini')) {
+                return 'deepseek-v4-flash';
             }
         }
 

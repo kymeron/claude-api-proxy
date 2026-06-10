@@ -30,27 +30,3 @@ test('model names pass through unchanged before upstream requests', () => {
         assert.equal(relayAnthropicToOpenAI(request(model)).model, model);
     }
 });
-
-test('relay auto model fallback uses an advertised non-bare DeepSeek model for gpt requests', () => {
-    const manager = new UpstreamManager({tenantId: 1});
-    manager.upstreams = [{
-        index: 0,
-        model_auto: true,
-        model_map: {},
-        models: ['deepseek-v4-pro']
-    }];
-
-    assert.equal(manager.resolveModel('gpt-5', 0), 'deepseek-v4-pro');
-});
-
-test('relay auto model fallback no longer defaults gpt requests to bare deepseek-v4', () => {
-    const manager = new UpstreamManager({tenantId: 1});
-    manager.upstreams = [{
-        index: 0,
-        model_auto: true,
-        model_map: {},
-        models: []
-    }];
-
-    assert.equal(manager.resolveModel('gpt-5', 0), 'deepseek-v4-pro');
-});
