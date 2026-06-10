@@ -22,7 +22,7 @@ import {
 } from '../transformer/responses-translator.js';
 import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
 import {resolveCredential} from '../services/gateway/gateway-auth.js';
-import {BLOCKED_DOMAINS, getCodebuddyBaseUrl} from '../services/codebuddy/config.js';
+import {BLOCKED_DOMAINS, getCodebuddyBaseUrl, isPersonalHost} from '../services/codebuddy/config.js';
 import {handleWSConnection} from '../services/shared/responses-ws-server.js';
 import logger from '../utils/logger.js';
 import {isNetworkError} from '../utils/http-client.js';
@@ -717,6 +717,14 @@ async function handleResponsesAPI(req, res) {
             return;
         }
 
+        // 检测企业版凭证缺失企业信息
+        if (!authResult.credential.enterprise_id) {
+            const host = new URL(getCodebuddyBaseUrl(authResult.credential.base_url)).host;
+            if (!isPersonalHost(host)) {
+                logger.warn(`[CodeBuddy Responses API]: 凭证 ${authResult.credential.user_id} 缺少 enterprise_id，上游 ${host} 可能触发配额错误`);
+            }
+        }
+
         const body = await parseBody(req);
         const responsesReq = JSON.parse(body);
 
@@ -1116,6 +1124,14 @@ export function handleCodebuddyResponsesWS(clientWs, req) {
                     name: 'ResponsesWebSocketError',
                     event: {type: 'error', error: {message: 'No available credentials for tenant', code: 'no_credentials'}}
                 });
+            }
+
+            // 检测企业版凭证缺失企业信息
+            if (!credential.enterprise_id) {
+                const host = new URL(getCodebuddyBaseUrl(credential.base_url)).host;
+                if (!isPersonalHost(host)) {
+                    logger.warn(`[CodeBuddy WS]: 凭证 ${credential.user_id} 缺少 enterprise_id，上游 ${host} 可能触发配额错误`);
+                }
             }
 
             // Responses → Chat Completions

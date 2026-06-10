@@ -114,9 +114,25 @@ export async function createChatCompletions(payload, options = {}) {
     const bearerToken = credential.bearer_token;
     const userId = credential.user_id;
     const baseUrl = getCodebuddyBaseUrl(credential.base_url);
-    const enterpriseId = credential.enterprise_id;
+    let enterpriseId = credential.enterprise_id;
     const departmentInfo = credential.department_info;
     const domain = credential.domain;
+
+    // 兜底：enterprise_id 为空时，从 JWT bearer token 的 realm_access.roles 中提取
+    // roles 格式如 ["ent-member:dahuatech", "ent-plugin-enabled:dahuatech", ...]
+    const upstreamHost = new URL(baseUrl).host;
+    if (!enterpriseId && !isPersonalHost(upstreamHost)) {
+        try {
+            const jwtPayload = JSON.parse(Buffer.from(bearerToken.split('.')[1], 'base64url').toString());
+            const entMemberRole = jwtPayload?.realm_access?.roles?.find(r => r.startsWith('ent-member:'));
+            if (entMemberRole) {
+                enterpriseId = entMemberRole.split(':')[1];
+                logger.info(`[CodeBuddy]: 从 JWT token 兜底提取企业标识: ${enterpriseId}, credential: ${userId}`);
+            }
+        } catch (e) {
+            logger.warn(`[CodeBuddy]: 从 JWT token 提取企业标识失败: ${e.message}`);
+        }
+    }
 
     // 生成会话 ID（使用优化后的函数）
     const conversationId = options.conversationId || generateUUID();

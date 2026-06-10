@@ -94,6 +94,18 @@ async function saveCodebuddyCredential(tenantId, baseUrl, tokenData, accountInfo
     const manager = await unifiedTenantManager.getCodebuddyCredentialManager(tenantId);
     if (!manager) return null;
 
+    // 兜底：accountInfo 中没有 enterpriseId 时，从 JWT 的 realm_access.roles 提取
+    const host = new URL(getCodebuddyBaseUrl(baseUrl)).host;
+    if (!accountInfo.enterpriseId && !isPersonalHost(host)) {
+        try {
+            const entMemberRole = payload?.realm_access?.roles?.find(r => r.startsWith('ent-member:'));
+            if (entMemberRole) {
+                accountInfo.enterpriseId = entMemberRole.split(':')[1];
+                logger.info(`[CodeBuddy]: 从 JWT 兜底提取企业标识: ${accountInfo.enterpriseId}`);
+            }
+        } catch {}
+    }
+
     const saved = await manager.addCredentialWithData({
         bearer_token: accessToken,
         refresh_token: tokenData.refreshToken || tokenData.refresh_token,
@@ -200,6 +212,17 @@ async function pollAuth(req, res, tenantId) {
             }
         } catch (error) {
             logger.warn(`CodeBuddy account info request failed: ${error.message}`);
+        }
+
+        // 兜底：accountInfo 中没有 enterpriseId 时，从 JWT 的 realm_access.roles 提取
+        if (!accountInfo.enterpriseId) {
+            try {
+                const entMemberRole = payload?.realm_access?.roles?.find(r => r.startsWith('ent-member:'));
+                if (entMemberRole) {
+                    accountInfo.enterpriseId = entMemberRole.split(':')[1];
+                    logger.info(`[CodeBuddy OAuth]: 从 JWT 兜底提取企业标识: ${accountInfo.enterpriseId}`);
+                }
+            } catch {}
         }
     }
 
