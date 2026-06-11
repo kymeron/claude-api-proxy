@@ -238,7 +238,7 @@ async function handleOpenAIChatCompletions(req, res) {
         }
 
         // 注入行为规则（统一在路由层注入一次）
-        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
+        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages, openAIPayload.model);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         openAIPayload.messages = stripDynamicReminders(openAIPayload.messages);
 
@@ -430,7 +430,7 @@ async function handleAnthropicMessages(req, res) {
         }
 
         // 注入行为规则（translateMessages 不再内部注入，统一在路由层注入一次）
-        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
+        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages, openAIPayload.model);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         openAIPayload.messages = stripDynamicReminders(openAIPayload.messages);
 
@@ -798,7 +798,7 @@ async function handleResponsesAPI(req, res) {
             chatReq.model = mapModelName(chatReq.model);
         }
 
-        chatReq.messages = injectBehaviorRules(chatReq.messages);
+        chatReq.messages = injectBehaviorRules(chatReq.messages, chatReq.model);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         chatReq.messages = stripDynamicReminders(chatReq.messages);
 
@@ -1030,7 +1030,7 @@ async function handleResponsesCompact(req, res) {
             chatReq.model = mapModelName(chatReq.model);
         }
 
-        chatReq.messages = injectBehaviorRules(chatReq.messages);
+        chatReq.messages = injectBehaviorRules(chatReq.messages, chatReq.model);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         chatReq.messages = stripDynamicReminders(chatReq.messages);
 
@@ -1294,7 +1294,7 @@ export function handleCodebuddyResponsesWS(clientWs, req) {
             // Responses → Chat Completions
             const chatReq = responsesRequestToChat(payload);
             if (chatReq.model) chatReq.model = mapModelName(chatReq.model);
-            chatReq.messages = injectBehaviorRules(chatReq.messages);
+            chatReq.messages = injectBehaviorRules(chatReq.messages, chatReq.model);
             chatReq.messages = stripDynamicReminders(chatReq.messages);
             chatReq.stream = true;
 

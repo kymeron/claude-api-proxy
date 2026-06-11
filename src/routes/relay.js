@@ -427,7 +427,7 @@ async function handleOpenAIChatCompletions(req, res) {
         const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
         const relayStatsModel = upstreamManager.resolveModel(openAIPayload.model, upstream.index);
 
-        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
+        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages, relayStatsModel);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         openAIPayload.messages = stripDynamicReminders(openAIPayload.messages);
 
@@ -821,8 +821,8 @@ async function handleAnthropicMessages(req, res) {
         }
 
         // 转换为 OpenAI 格式
-        const openAIPayload = anthropicToOpenAI(anthropicPayload);
-        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages);
+        const openAIPayload = anthropicToOpenAI(anthropicPayload, relayStatsModel);
+        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages, relayStatsModel);
         openAIPayload.messages = stripDynamicReminders(openAIPayload.messages);
 
         if (isResponsesWebSocketUpstream(upstream)) {
@@ -1185,7 +1185,7 @@ async function handleResponsesAPI(req, res) {
 
         if (isAnthropicUpstream(upstream)) {
             const chatReq = responsesRequestToChat(responsesReq);
-            chatReq.messages = injectBehaviorRules(chatReq.messages);
+            chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
             chatReq.messages = stripDynamicReminders(chatReq.messages);
             chatReq.stream = responsesReq.stream;
             const anthropicPayload = chatRequestToAnthropic({
@@ -1383,7 +1383,7 @@ async function handleResponsesAPI(req, res) {
 
         // Responses → Chat Completions
         const chatReq = responsesRequestToChat(responsesReq);
-        chatReq.messages = injectBehaviorRules(chatReq.messages);
+        chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         chatReq.messages = stripDynamicReminders(chatReq.messages);
 
@@ -1548,7 +1548,7 @@ async function handleResponsesCompact(req, res) {
 
         if (isAnthropicUpstream(upstream)) {
             const chatReq = compactRequestToChat(compactReq);
-            chatReq.messages = injectBehaviorRules(chatReq.messages);
+            chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
             chatReq.messages = stripDynamicReminders(chatReq.messages);
             const anthropicPayload = chatRequestToAnthropic({
                 ...chatReq,
@@ -1588,7 +1588,7 @@ async function handleResponsesCompact(req, res) {
 
         if (isResponsesWebSocketUpstream(upstream)) {
             const chatReq = compactRequestToChat(compactReq);
-            chatReq.messages = injectBehaviorRules(chatReq.messages);
+            chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
             // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
             chatReq.messages = stripDynamicReminders(chatReq.messages);
             const responsesPayload = chatRequestToResponses({
@@ -1650,7 +1650,7 @@ async function handleResponsesCompact(req, res) {
         }
 
         const chatReq = compactRequestToChat(compactReq);
-        chatReq.messages = injectBehaviorRules(chatReq.messages);
+        chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         chatReq.messages = stripDynamicReminders(chatReq.messages);
 
@@ -1734,7 +1734,7 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
 
     if (isAnthropicUpstream(upstream)) {
         const chatReq = responsesRequestToChat({...payload, model: resolvedModel, stream: true});
-        chatReq.messages = injectBehaviorRules(chatReq.messages);
+        chatReq.messages = injectBehaviorRules(chatReq.messages, resolvedModel);
         chatReq.messages = stripDynamicReminders(chatReq.messages);
         chatReq.stream = true;
         const anthropicPayload = chatRequestToAnthropic({
@@ -1842,7 +1842,7 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
 
     // OpenAI Chat 上游：Chat → Responses 事件转换
     const chatReq = responsesRequestToChat({...payload, model: resolvedModel});
-    chatReq.messages = injectBehaviorRules(chatReq.messages);
+    chatReq.messages = injectBehaviorRules(chatReq.messages, resolvedModel);
     chatReq.messages = stripDynamicReminders(chatReq.messages);
     chatReq.stream = true;
 

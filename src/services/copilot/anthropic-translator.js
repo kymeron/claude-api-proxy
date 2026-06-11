@@ -11,10 +11,11 @@ import {responsesEventToChatChunks} from '../../transformer/responses-translator
 /**
  * 转换 Anthropic 请求到 OpenAI 格式
  */
-export function anthropicToOpenAI(anthropicPayload) {
+export function anthropicToOpenAI(anthropicPayload, modelId) {
+    const resolvedModel = modelId || translateModelName(anthropicPayload.model);
     const openAIPayload = {
-        model: translateModelName(anthropicPayload.model),
-        messages: translateMessages(anthropicPayload.messages, anthropicPayload.system),
+        model: resolvedModel,
+        messages: translateMessages(anthropicPayload.messages, anthropicPayload.system, resolvedModel),
         max_tokens: anthropicPayload.max_tokens,
         temperature: anthropicPayload.temperature,
         top_p: anthropicPayload.top_p,
@@ -108,7 +109,7 @@ function translateModelName(model) {
 /**
  * 转换消息列表
  */
-function translateMessages(anthropicMessages, system) {
+function translateMessages(anthropicMessages, system, modelId) {
     const messages = [];
 
     // 处理 system message（不注入行为规则，最后统一注入）
@@ -131,7 +132,7 @@ function translateMessages(anthropicMessages, system) {
 
     // 处理其他消息
     if (!Array.isArray(anthropicMessages)) {
-        return injectBehaviorRules(messages);
+        return injectBehaviorRules(messages, modelId);
     }
 
     for (const message of anthropicMessages) {
@@ -142,7 +143,7 @@ function translateMessages(anthropicMessages, system) {
         }
     }
 
-    return injectBehaviorRules(messages);
+    return injectBehaviorRules(messages, modelId);
 }
 
 /**

@@ -6,7 +6,7 @@
 
 import {randomBytes, createHash} from 'crypto';
 import logger from '../utils/logger.js';
-import {getBehaviorRules} from '../config/system-prompts.js';
+import {getBehaviorRulesForModel} from '../config/model-prompt-router.js';
 
 /**
  * 从 OpenAI 格式 usage 中提取缓存命中 token 数
@@ -322,10 +322,11 @@ export function prependToolThinkingHint(content) {
  *    messages 最后一条 user 消息尾部，避免动态内容破坏 system 前缀一致性
  * 2. 检测客户端 system 是否已包含代理行为规则，避免重复注入
  * @param {Array} messages - OpenAI 格式的 messages 数组
+ * @param {string} [modelId] - 真实模型ID（resolveModel/mapModelName 后的值），用于匹配厂商提示词
  * @returns {Array} 注入后的 messages 数组
  */
-export function injectBehaviorRules(messages) {
-    const behaviorRules = getBehaviorRules();
+export function injectBehaviorRules(messages, modelId) {
+    const behaviorRules = getBehaviorRulesForModel(modelId);
     const result = [];
 
     const systemIndex = messages.findIndex((m) => m.role === 'system');
@@ -335,7 +336,10 @@ export function injectBehaviorRules(messages) {
         const systemStr =
             typeof originalSystem === 'string' ? originalSystem : originalSystem.map((p) => p.text ?? '').join('\n');
         // 客户端 system 已包含代理行为规则时跳过注入，避免重复
-        const alreadyHasRules = systemStr.includes('<reasoning-rules>');
+        // 覆盖所有提示词文件的根标签：通用<reasoning-rules>、DeepSeek/GLM/Kimi<identity>、MiniMax<cognition>
+        const alreadyHasRules = systemStr.includes('<reasoning-rules>')
+            || systemStr.includes('<cognition>')
+            || systemStr.includes('<identity>');
         // 剥离动态行（如 x-anthropic-billing-header），保持 system 前缀稳定
         // 动态行直接丢弃：它们的值每次请求都变（如 cch=xxx 哈希），
         // 即使追加到 user 消息尾部也会污染 messages 前缀导致缓存 miss
