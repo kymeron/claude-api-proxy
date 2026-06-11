@@ -1281,7 +1281,7 @@ export function chatResponseToCompact(chatRes) {
 export function sanitizeResponsesInput(input) {
     if (!Array.isArray(input)) return input;
 
-    return input.map(item => {
+    const result = input.map(item => {
         if (!item || typeof item !== 'object') return item;
 
         // 已是 EasyInputMessage 格式（有 role 但无 type），直接净化 content
@@ -1342,6 +1342,18 @@ export function sanitizeResponsesInput(input) {
 
         return item;
     });
+
+    // 火山引擎 Responses API 要求：partial 只能用于 input 数组的最后一条消息
+    // 当最后一条消息是 assistant 时，必须设 partial=true（续写模式）
+    // 中间的 assistant 消息不能带 partial 字段
+    if (result.length > 0) {
+        const lastItem = result[result.length - 1];
+        if (lastItem?.role === 'assistant' && lastItem.partial === undefined) {
+            lastItem.partial = true;
+        }
+    }
+
+    return result;
 }
 
 /**

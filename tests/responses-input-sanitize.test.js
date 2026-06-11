@@ -29,7 +29,8 @@ test('sanitizeResponsesInput removes previous response text part references from
                     type: 'output_text',
                     text: 'previous assistant text'
                 }
-            ]
+            ],
+            partial: true
         }
     ]);
 });

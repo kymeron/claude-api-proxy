@@ -968,6 +968,36 @@ export function normalizeResponsesPayload(payload, meta = {}) {
         }
     }
 
+    // reasoning：火山引擎 Responses API 的 reasoning.effort 仅部分模型支持
+    // （doubao-seed-2-0-lite-260428、doubao-seed-2-0-pro-260215、doubao-seed-1-8-251228、doubao-seed-1-6-251015 等）
+    // codingplan 等模型不支持 reasoning 参数会报 400，需要转为 thinking 参数控制深度思考
+    // 映射规则参考字节文档：
+    //   reasoning.effort = "high"/"medium"/"low" → thinking: {type: "enabled"}
+    //   reasoning.effort = "minimal" 或无 effort → thinking: {type: "disabled"}
+    //   已有 thinking 字段时不覆盖（用户可能已显式设置）
+    if (ordered.reasoning) {
+        const effort = ordered.reasoning.effort;
+        delete ordered.reasoning;
+        if (!ordered.thinking) {
+            if (effort && effort !== 'minimal') {
+                ordered.thinking = {type: 'enabled'};
+            } else {
+                ordered.thinking = {type: 'disabled'};
+            }
+        }
+    }
+
+    // input 中 assistant 消息添加 partial 字段
+    // 火山引擎 Responses API：partial 只能用在 input 最后一条消息上，且必须为 true
+    // 中间的 assistant 消息不能带 partial 字段，否则报 400
+    // 只有当 input 最后一条是 assistant 消息时，才给它加 partial: true
+    if (Array.isArray(ordered.input) && ordered.input.length > 0) {
+        const lastItem = ordered.input[ordered.input.length - 1];
+        if (lastItem?.role === 'assistant' && lastItem.partial === undefined) {
+            lastItem.partial = true;
+        }
+    }
+
     return ordered;
 }
 
