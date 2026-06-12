@@ -608,7 +608,7 @@ function renderRelayList(){
     if(!S.upstreams.length){el.innerHTML='<div class="empty">还没有上游。添加第一个上游后，Relay 即可开始转发请求。</div>';return;}
     el.innerHTML=S.upstreams.map((u,i)=>{const result=S.relayTestResults[i];const protocol=esc(u.protocol||'openai');const wsMode=u.protocol==='responses_ws'?` · WS ${esc(u.ws_mode||'ctx_pool')}`:'';return `<div class="item ${u.is_active?'active':''}"><div><h3>${esc(u.name||'未命名')} ${u.is_active?'<span class="badge on">活跃</span>':''} ${testResultBadge(result)}</h3><p>${esc(u.base_url)} · ${protocol}${wsMode}</p><p>${u.enabled?'已启用':'已停用'} · Key ${esc(u.api_key_preview||'未配置')}${u.proxy?' · 代理 '+esc(u.proxy):''}</p>${renderTestResultMessage(result)}</div><div class="actions">
         ${!u.is_active&&u.enabled?`<button class="btn btn-sm" onclick="setActive(${i})">设为活跃</button>`:''}
-        <button class="btn btn-sm" ${S.relayTesting||S.relaySingleTesting===i?'disabled':''} onclick="testUpstream(${i})">${S.relaySingleTesting===i?'测试中...':'测试'}</button>
+        <button class="btn btn-sm" ${(S.relayTesting&&S.relayTestResults[i]?.pending)||S.relaySingleTesting===i?'disabled':''} onclick="testUpstream(${i})">${(S.relayTesting&&S.relayTestResults[i]?.pending)||S.relaySingleTesting===i?'测试中...':'测试'}</button>
         <button class="btn btn-sm" onclick="openUpstream(${i})">编辑</button>
         <button class="btn btn-sm" onclick="cloneUpstream(${i})">复制</button><button class="btn btn-sm" ${i===0?'disabled':''} onclick="moveUpstream(${i},'up')">上移</button>
         <button class="btn btn-sm" ${i===S.upstreams.length-1?'disabled':''} onclick="moveUpstream(${i},'down')">下移</button><button class="btn btn-danger btn-sm" onclick="deleteUpstream(${i})">删除</button>
@@ -947,10 +947,11 @@ async function testAllUpstreams(){
   if(S.relayTesting)return;
   setRelayTesting(true);
   S.relayTestResults={};
-  renderRelayList();
   const upstreams=S.upstreams||[];
   const total=upstreams.length;
   if(!total){setRelayTesting(false);return;}
+  for(let i=0;i<total;i++)S.relayTestResults[i]={index:i,name:upstreams[i]?.name||`#${i+1}`,pending:true,message:'正在测试连接...'};
+  renderRelayList();
   let done=0,ok=0;
   toast('正在批量测试连接...');
   try{

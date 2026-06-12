@@ -1075,7 +1075,12 @@ async function handleAnthropicMessages(req, res) {
         }
     } catch (error) {
         logger.error(`Relay: Failed to handle Anthropic messages${tenantInfo ? `, ${tenantInfo}` : ''}:`, error);
-        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
+        if (!res.headersSent) {
+            sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
+        } else {
+            // 流式响应已开始，无法再写 headers，直接结束响应
+            try { res.end(); } catch {}
+        }
     }
 }
 

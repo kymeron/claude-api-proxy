@@ -91,6 +91,7 @@ function parseBody(req) {
  * @param {any} data - 响应数据
  */
 function sendJson(res, status, data) {
+    if (res.headersSent) return;
     res.writeHead(status, {'Content-Type': 'application/json'});
     res.end(JSON.stringify(data));
 }
@@ -102,6 +103,10 @@ function sendJson(res, status, data) {
  * @param {string} message - 错误消息
  */
 function sendError(res, status, message) {
+    if (res.headersSent) {
+        try { res.end(); } catch {}
+        return;
+    }
     res.writeHead(status, {'Content-Type': 'text/plain'});
     res.end(message);
 }

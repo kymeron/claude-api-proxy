@@ -428,7 +428,8 @@ export class UpstreamManager {
                             input: 'hi',
                             max_output_tokens: 16
                         },
-                        upstream
+                        upstream,
+                        {rejectUnauthorized: !upstream.skip_tls_verify}
                     );
                     conn = result.conn;
                     await waitForResponsesWebSocketCompleted(result.eventStream, this.testTimeoutMs, () => {
