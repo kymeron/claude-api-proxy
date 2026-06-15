@@ -6,6 +6,7 @@ import {
     responsesEventToResponsesEvents
 } from '../src/transformer/responses-translator.js';
 import {bindAsyncIterableContext} from '../src/services/shared/responses-ws-server.js';
+import {RelayStateMissingError} from '../src/services/relay/conversation-state.js';
 
 test('responsesEventToResponsesEvents adds ordinary Responses scaffold before text deltas', () => {
     const chatState = createChatCompletionsStreamState();
@@ -133,4 +134,11 @@ test('bindAsyncIterableContext re-enters request context for every iterator step
     }
 
     assert.deepEqual(calls, ['context', 'generator', 'consumer', 'context']);
+});
+
+test('RelayStateMissingError exposes state_missing code for Responses WS errors', () => {
+    const error = new RelayStateMissingError('resp_missing');
+
+    assert.equal(error.code, 'state_missing');
+    assert.equal(error.previousResponseId, 'resp_missing');
 });

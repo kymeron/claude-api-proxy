@@ -107,6 +107,7 @@ Relay 客户端入口支持 Anthropic Messages、OpenAI Chat Completions、OpenA
 - `ctx_pool` 是默认模式，会复用上游 WebSocket 连接，并尽量接上 `previous_response_id`。
 - `passthrough` 适合客户端和上游都是 Responses WebSocket 的低延迟直通场景。
 - Responses input 会去掉历史 output item/part id 引用，并在最后一条 assistant input 上保留 `partial: true`，用于兼容火山引擎等 Responses 上游的续写要求。
+- Relay 会维护短期内存会话状态，用于 Responses/Responses WebSocket 增量请求转到 Chat 或 Anthropic 上游时恢复完整上下文。状态按租户和会话隔离，单实例部署可直接使用；多实例部署需要会话粘滞或共享存储，服务重启后内存状态会丢失。
 - Anthropic `messages/count_tokens` 只有 Anthropic 上游可直通；其他上游会用本地估算返回。
 - 模型名默认原样透传。需要改名时，在 Relay 上游配置里使用模型映射。
 - 单个上游和批量上游测试共用同一套测试逻辑；`responses_ws` 测试会等待完成事件并受 `RELAY_UPSTREAM_TEST_TIMEOUT_MS` 控制。

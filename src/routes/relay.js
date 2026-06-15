@@ -59,6 +59,10 @@ import {
     translateStreamChunk as chatChunkToAnthropicEvents
 } from '../services/copilot/anthropic-translator.js';
 import {
+    RelayStateMissingError,
+    relayConversationStore
+} from '../services/relay/conversation-state.js';
+import {
     anthropicResponseToChat,
     anthropicStreamToChatChunks,
     chatRequestToAnthropic
@@ -94,6 +98,29 @@ function sendOpenAIError(res, status, message, type = 'api_error') {
 function sendAnthropicError(res, status, message) {
     const errorType = status === 401 ? 'authentication_error' : status === 503 ? 'overloaded_error' : 'api_error';
     sendJson(res, status, {type: 'error', error: {type: errorType, message}});
+}
+
+function sendStateMissingOpenAIError(res, error) {
+    sendJson(res, 400, {
+        error: {
+            message: error.message,
+            type: 'invalid_request_error',
+            code: 'state_missing'
+        }
+    });
+}
+
+function toResponsesWebSocketStateMissingError(error) {
+    return Object.assign(error, {
+        name: 'ResponsesWebSocketError',
+        event: {
+            type: 'error',
+            error: {
+                message: error.message,
+                code: 'state_missing'
+            }
+        }
+    });
 }
 
 function normalizeConversationKey(value) {
@@ -195,6 +222,15 @@ function recordResponsesUsage(tenantId, usage, model) {
         usage?.input_tokens_details?.cached_tokens || 0,
         model
     );
+}
+
+function recordCompletedResponseState(tenantId, conversationKey, response) {
+    if (!response || !conversationKey) return;
+    relayConversationStore.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response
+    });
 }
 
 function upstreamErrorStatus(err) {
@@ -427,6 +463,12 @@ async function handleOpenAIChatCompletions(req, res) {
         openAIPayload.messages = injectBehaviorRules(openAIPayload.messages, relayStatsModel);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         openAIPayload.messages = stripDynamicReminders(openAIPayload.messages);
+        const baseConversationKey = extractConversationKey(req, openAIPayload, {tenantId});
+        relayConversationStore.saveChatRequest({
+            tenantId,
+            conversationKey: baseConversationKey,
+            request: openAIPayload
+        });
 
         if (isAnthropicUpstream(upstream)) {
             const anthropicPayload = chatRequestToAnthropic({
@@ -473,6 +515,11 @@ async function handleOpenAIChatCompletions(req, res) {
             const responseBody = await readResponseBody(response.body);
             const parsed = JSON.parse(responseBody);
             const chatResponse = anthropicResponseToChat(parsed, openAIPayload.model);
+            relayConversationStore.recordChatResponse({
+                tenantId,
+                conversationKey: baseConversationKey,
+                response: chatResponse
+            });
             const cacheHitTokens = extractCacheHitTokens(chatResponse.usage);
             recordUsage(
                 tenantId,
@@ -508,10 +555,12 @@ async function handleOpenAIChatCompletions(req, res) {
 
                 const streamState = createChatCompletionsStreamState();
                 let usage = null;
+                let completedResponse = null;
                 try {
                     for await (const event of wsResult.eventStream) {
                         if (event.type === 'response.completed') {
                             usage = event.data?.response?.usage || usage;
+                            completedResponse = event.data?.response || completedResponse;
                         }
                         const chunks = responsesEventToChatChunks(event.type, event.data, streamState);
                         for (const chatChunk of chunks) {
@@ -524,6 +573,7 @@ async function handleOpenAIChatCompletions(req, res) {
                     throw error;
                 }
 
+                recordCompletedResponseState(tenantId, baseConversationKey, completedResponse);
                 recordResponsesUsage(tenantId, usage, relayStatsModel);
                 res.write('data: [DONE]\n\n');
                 res.end();
@@ -531,6 +581,7 @@ async function handleOpenAIChatCompletions(req, res) {
             }
 
             const completedResponse = await collectResponsesWebSocketResponse(wsResult);
+            recordCompletedResponseState(tenantId, baseConversationKey, completedResponse);
             recordResponsesUsage(tenantId, completedResponse.usage, relayStatsModel);
             sendJson(res, 200, responsesResponseToChat(completedResponse));
             return;
@@ -567,6 +618,7 @@ async function handleOpenAIChatCompletions(req, res) {
                 const streamState = createChatCompletionsStreamState();
                 let buffer = '';
                 let usage = null;
+                let completedResponse = null;
 
                 response.body.on('data', (chunk) => {
                     buffer += chunk.toString('utf8');
@@ -589,6 +641,7 @@ async function handleOpenAIChatCompletions(req, res) {
 
                         if (event === 'response.completed') {
                             usage = parsed.response?.usage || usage;
+                            completedResponse = parsed.response || completedResponse;
                         }
 
                         const chunks = responsesEventToChatChunks(event, parsed, streamState);
@@ -597,6 +650,7 @@ async function handleOpenAIChatCompletions(req, res) {
                         }
 
                         if (event === 'response.completed') {
+                            recordCompletedResponseState(tenantId, conversationKey, completedResponse);
                             recordUsage(
                                 tenantId,
                                 usage?.input_tokens || 0,
@@ -647,6 +701,7 @@ async function handleOpenAIChatCompletions(req, res) {
                 parsed.usage?.input_tokens_details?.cached_tokens || 0,
                 relayStatsModel
             );
+            recordCompletedResponseState(tenantId, conversationKey, parsed);
             sendJson(res, 200, responsesResponseToChat(parsed));
             return;
         }
@@ -687,9 +742,18 @@ async function handleOpenAIChatCompletions(req, res) {
                 cacheHitTokens,
                 relayStatsModel
             );
+            relayConversationStore.recordChatResponse({
+                tenantId,
+                conversationKey,
+                response: parsed
+            });
             sendJson(res, 200, parsed);
         }
     } catch (error) {
+        if (error instanceof RelayStateMissingError) {
+            sendStateMissingOpenAIError(res, error);
+            return;
+        }
         if (isResponsesWebSocketProtocolError(error)) {
             sendResponsesWebSocketProtocolError(res, error);
             return;
@@ -726,6 +790,15 @@ async function handleAnthropicMessages(req, res) {
         const tenant = await unifiedTenantManager.getTenant(tenantId);
         const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
         const relayStatsModel = upstreamManager.resolveModel(anthropicPayload.model, upstream.index);
+        const openAIPayload = anthropicToOpenAI(anthropicPayload, relayStatsModel);
+        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages, relayStatsModel);
+        openAIPayload.messages = stripDynamicReminders(openAIPayload.messages);
+        const baseConversationKey = extractConversationKey(req, openAIPayload, {tenantId});
+        relayConversationStore.saveChatRequest({
+            tenantId,
+            conversationKey: baseConversationKey,
+            request: openAIPayload
+        });
 
         if (isAnthropicUpstream(upstream)) {
             const {response} = await callUpstream(upstream, (up) =>
@@ -809,15 +882,16 @@ async function handleAnthropicMessages(req, res) {
                 extractAnthropicCacheHitTokens(parsed.usage),
                 parsed.model || relayStatsModel
             );
+            relayConversationStore.recordChatResponse({
+                tenantId,
+                conversationKey: baseConversationKey,
+                response: anthropicResponseToChat(parsed, anthropicPayload.model)
+            });
             sendJson(res, 200, parsed);
             return;
         }
 
         // 转换为 OpenAI 格式
-        const openAIPayload = anthropicToOpenAI(anthropicPayload, relayStatsModel);
-        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages, relayStatsModel);
-        openAIPayload.messages = stripDynamicReminders(openAIPayload.messages);
-
         if (isResponsesWebSocketUpstream(upstream)) {
             const responsesPayload = chatRequestToResponses({
                 ...openAIPayload,
@@ -841,20 +915,31 @@ async function handleAnthropicMessages(req, res) {
                 });
 
                 let usage = null;
+                let completedResponse = null;
                 try {
-                    usage = await streamResponsesEventsAsAnthropic(wsResult.eventStream, res, req.signal);
+                    async function* trackCompletedResponses(stream) {
+                        for await (const event of stream) {
+                            if (event.type === 'response.completed') {
+                                completedResponse = event.data?.response || completedResponse;
+                            }
+                            yield event;
+                        }
+                    }
+                    usage = await streamResponsesEventsAsAnthropic(trackCompletedResponses(wsResult.eventStream), res, req.signal);
                     releaseResponsesWebSocketConnection(wsResult.conn);
                 } catch (error) {
                     discardResponsesWebSocketConnection(wsResult.conn);
                     throw error;
                 }
 
+                recordCompletedResponseState(tenantId, baseConversationKey, completedResponse);
                 recordResponsesUsage(tenantId, usage, relayStatsModel);
                 res.end();
                 return;
             }
 
             const completedResponse = await collectResponsesWebSocketResponse(wsResult);
+            recordCompletedResponseState(tenantId, baseConversationKey, completedResponse);
             recordResponsesUsage(tenantId, completedResponse.usage, relayStatsModel);
             const chatResponse = responsesResponseToChat(completedResponse);
             sendJson(res, 200, openAIToAnthropic(chatResponse));
@@ -889,7 +974,21 @@ async function handleAnthropicMessages(req, res) {
                     Connection: 'keep-alive'
                 });
 
-                const usage = await streamResponsesEventsAsAnthropic(parseResponsesSSEEvents(response.body, req.signal), res, req.signal);
+                let completedResponse = null;
+                async function* trackCompletedResponses(stream) {
+                    for await (const event of stream) {
+                        if (event.type === 'response.completed') {
+                            completedResponse = event.data?.response || completedResponse;
+                        }
+                        yield event;
+                    }
+                }
+                const usage = await streamResponsesEventsAsAnthropic(
+                    trackCompletedResponses(parseResponsesSSEEvents(response.body, req.signal)),
+                    res,
+                    req.signal
+                );
+                recordCompletedResponseState(tenantId, conversationKey, completedResponse);
                 recordResponsesUsage(tenantId, usage, relayStatsModel);
                 res.end();
                 return;
@@ -897,6 +996,7 @@ async function handleAnthropicMessages(req, res) {
 
             const responseBody = await readResponseBody(response.body);
             const parsed = JSON.parse(responseBody);
+            recordCompletedResponseState(tenantId, conversationKey, parsed);
             recordResponsesUsage(tenantId, parsed.usage, relayStatsModel);
             const chatResponse = responsesResponseToChat(parsed);
             sendJson(res, 200, openAIToAnthropic(chatResponse));
@@ -1072,6 +1172,11 @@ async function handleAnthropicMessages(req, res) {
                 ],
                 usage: aggregated.usage || {prompt_tokens: 0, completion_tokens: 0, total_tokens: 0}
             };
+            relayConversationStore.recordChatResponse({
+                tenantId,
+                conversationKey,
+                response: openAIResponse
+            });
             sendJson(res, 200, openAIToAnthropic(openAIResponse));
         }
     } catch (error) {
@@ -1179,7 +1284,13 @@ async function handleResponsesAPI(req, res) {
         const relayStatsModel = upstreamManager.resolveModel(responsesReq.model, upstream.index);
 
         if (isAnthropicUpstream(upstream)) {
-            const chatReq = responsesRequestToChat(responsesReq);
+            const conversationKey = extractConversationKey(req, responsesReq, {tenantId});
+            const hydrated = relayConversationStore.hydrateResponsesForFullHistory({
+                tenantId,
+                conversationKey,
+                request: responsesReq
+            });
+            const chatReq = hydrated.chatRequest;
             chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
             chatReq.messages = stripDynamicReminders(chatReq.messages);
             chatReq.stream = responsesReq.stream;
@@ -1213,13 +1324,19 @@ async function handleResponsesAPI(req, res) {
 
                 const streamState = createResponsesStreamState();
                 let finalUsage = null;
+                let completedResponse = null;
+                const stateConversationKey = hydrated.conversationKey || conversationKey;
                 for await (const chatChunk of anthropicStreamToChatChunks(response.body, parseSSEBlock, req.signal)) {
                     if (chatChunk.usage) finalUsage = chatChunk.usage;
                     const events = chatChunkToResponsesEvents(chatChunk, streamState);
                     for (const ev of events) {
+                        if (ev.event === 'response.completed') {
+                            completedResponse = ev.data?.response || completedResponse;
+                        }
                         res.write(`event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`);
                     }
                 }
+                recordCompletedResponseState(tenantId, stateConversationKey, completedResponse);
                 recordUsage(
                     tenantId,
                     finalUsage?.prompt_tokens || 0,
@@ -1241,7 +1358,9 @@ async function handleResponsesAPI(req, res) {
                 chatResponse.usage?.prompt_tokens_details?.cached_tokens || 0,
                 relayStatsModel
             );
-            sendJson(res, 200, chatResponseToResponses(chatResponse));
+            const responsesResponse = chatResponseToResponses(chatResponse);
+            recordCompletedResponseState(tenantId, hydrated.conversationKey || conversationKey, responsesResponse);
+            sendJson(res, 200, responsesResponse);
             return;
         }
 
@@ -1249,11 +1368,12 @@ async function handleResponsesAPI(req, res) {
             const tenant = await unifiedTenantManager.getTenant(tenantId);
             const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
             const wsPayload = {...responsesReq, model: upstreamManager.resolveModel(responsesReq.model, upstream.index)};
+            const conversationKey = extractConversationKey(req, wsPayload, {tenantId});
             const wsResult = await createResponsesWebSocket(wsPayload, upstream, {
                 requestType: 'ResponsesWebSocket',
                 stream: responsesReq.stream,
                 originalModel: responsesReq.model,
-                contextKey: extractConversationKey(req, wsPayload, {tenantId}),
+                contextKey: conversationKey,
                 rejectUnauthorized: !upstream.skip_tls_verify,
                 autoLink: false,
                 ...tenantMeta
@@ -1269,10 +1389,12 @@ async function handleResponsesAPI(req, res) {
                 const chatState = createChatCompletionsStreamState();
                 const responsesState = createResponsesStreamState();
                 let usage = null;
+                let completedResponse = null;
                 try {
                     for await (const event of wsResult.eventStream) {
                         if (event.type === 'response.completed') {
                             usage = event.data?.response?.usage || usage;
+                            completedResponse = event.data?.response || completedResponse;
                         }
                         const responseEvents = responsesEventToResponsesEvents(event.type, event.data, chatState, responsesState);
                         for (const responseEvent of responseEvents) {
@@ -1285,12 +1407,14 @@ async function handleResponsesAPI(req, res) {
                     throw error;
                 }
 
-            recordResponsesUsage(tenantId, usage, relayStatsModel);
+                recordCompletedResponseState(tenantId, conversationKey, completedResponse);
+                recordResponsesUsage(tenantId, usage, relayStatsModel);
                 res.end();
                 return;
             }
 
             const completedResponse = await collectResponsesWebSocketResponse(wsResult);
+            recordCompletedResponseState(tenantId, conversationKey, completedResponse);
             recordResponsesUsage(tenantId, completedResponse.usage, relayStatsModel);
             sendJson(res, 200, completedResponse);
             return;
@@ -1326,6 +1450,7 @@ async function handleResponsesAPI(req, res) {
                 });
 
                 let usage = null;
+                let completedResponse = null;
                 let buffer = '';
                 response.body.on('data', (chunk) => {
                     const text = chunk.toString('utf8');
@@ -1338,7 +1463,9 @@ async function handleResponsesAPI(req, res) {
                         const {event, data} = parseSSEBlock(part);
                         if (event !== 'response.completed' || !data || data === '[DONE]') continue;
                         try {
-                            usage = JSON.parse(data).response?.usage || usage;
+                            const completed = JSON.parse(data).response;
+                            usage = completed?.usage || usage;
+                            completedResponse = completed || completedResponse;
                         } catch {
                             continue;
                         }
@@ -1346,13 +1473,14 @@ async function handleResponsesAPI(req, res) {
                 });
 
                 response.body.on('end', () => {
-                            recordUsage(
-                                tenantId,
-                                usage?.input_tokens || 0,
-                                usage?.output_tokens || 0,
-                                usage?.input_tokens_details?.cached_tokens || 0,
-                                relayStatsModel
-                            );
+                    recordCompletedResponseState(tenantId, conversationKey, completedResponse);
+                    recordUsage(
+                        tenantId,
+                        usage?.input_tokens || 0,
+                        usage?.output_tokens || 0,
+                        usage?.input_tokens_details?.cached_tokens || 0,
+                        relayStatsModel
+                    );
                     res.end();
                 });
 
@@ -1365,6 +1493,7 @@ async function handleResponsesAPI(req, res) {
 
             const responseBody = await readResponseBody(response.body);
             const parsed = JSON.parse(responseBody);
+            recordCompletedResponseState(tenantId, conversationKey, parsed);
             recordUsage(
                 tenantId,
                 parsed.usage?.input_tokens || 0,
@@ -1377,14 +1506,20 @@ async function handleResponsesAPI(req, res) {
         }
 
         // Responses → Chat Completions
-        const chatReq = responsesRequestToChat(responsesReq);
+        const responsesConversationKey = extractConversationKey(req, responsesReq, {tenantId});
+        const hydrated = relayConversationStore.hydrateResponsesForFullHistory({
+            tenantId,
+            conversationKey: responsesConversationKey,
+            request: responsesReq
+        });
+        const chatReq = hydrated.chatRequest;
         chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         chatReq.messages = stripDynamicReminders(chatReq.messages);
 
         const tenant = await unifiedTenantManager.getTenant(tenantId);
         const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
-        const conversationKey = extractConversationKey(req, chatReq, {tenantId});
+        const conversationKey = hydrated.conversationKey || responsesConversationKey || extractConversationKey(req, chatReq, {tenantId});
         const relayMeta = {
             ...tenantMeta,
             conversationKey,
@@ -1439,6 +1574,9 @@ async function handleResponsesAPI(req, res) {
 
                     const events = chatChunkToResponsesEvents(data, streamState);
                     for (const ev of events) {
+                        if (ev.event === 'response.completed') {
+                            recordCompletedResponseState(tenantId, conversationKey, ev.data?.response);
+                        }
                         res.write(`event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`);
                     }
                 }
@@ -1461,7 +1599,21 @@ async function handleResponsesAPI(req, res) {
                         streamState.output.push(item);
                     }
                     if (streamState.started || streamState.output.length > 0) {
-                        res.write(`event: response.completed\ndata: ${JSON.stringify({type: 'response.completed', response: {id: streamState.responseId, object: 'response', created_at: Math.floor(Date.now() / 1000), status: 'completed', model: streamModel || responsesReq.model || 'unknown', output: streamState.output, usage: {input_tokens: streamInputTokens, output_tokens: streamOutputTokens, total_tokens: streamInputTokens + streamOutputTokens}}})}\n\n`);
+                        const completedResponse = {
+                            id: streamState.responseId,
+                            object: 'response',
+                            created_at: Math.floor(Date.now() / 1000),
+                            status: 'completed',
+                            model: streamModel || responsesReq.model || 'unknown',
+                            output: streamState.output,
+                            usage: {
+                                input_tokens: streamInputTokens,
+                                output_tokens: streamOutputTokens,
+                                total_tokens: streamInputTokens + streamOutputTokens
+                            }
+                        };
+                        res.write(`event: response.completed\ndata: ${JSON.stringify({type: 'response.completed', response: completedResponse})}\n\n`);
+                        recordCompletedResponseState(tenantId, conversationKey, completedResponse);
                     }
                 }
                 recordUsage(tenantId, streamInputTokens, streamOutputTokens, streamCacheHitTokens, relayStatsModel);
@@ -1507,9 +1659,15 @@ async function handleResponsesAPI(req, res) {
                 usage: aggregated.usage || {prompt_tokens: 0, completion_tokens: 0, total_tokens: 0}
             };
 
-            sendJson(res, 200, chatResponseToResponses(chatResponse));
+            const responsesResponse = chatResponseToResponses(chatResponse);
+            recordCompletedResponseState(tenantId, conversationKey, responsesResponse);
+            sendJson(res, 200, responsesResponse);
         }
     } catch (error) {
+        if (error instanceof RelayStateMissingError) {
+            sendStateMissingOpenAIError(res, error);
+            return;
+        }
         if (isResponsesWebSocketProtocolError(error)) {
             sendResponsesWebSocketProtocolError(res, error);
             return;
@@ -1725,7 +1883,18 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
     };
 
     if (isAnthropicUpstream(upstream)) {
-        const chatReq = responsesRequestToChat({...payload, model: resolvedModel, stream: true});
+        let hydrated;
+        try {
+            hydrated = relayConversationStore.hydrateResponsesForFullHistory({
+                tenantId,
+                conversationKey,
+                request: {...payload, model: resolvedModel, stream: true}
+            });
+        } catch (error) {
+            if (error instanceof RelayStateMissingError) throw toResponsesWebSocketStateMissingError(error);
+            throw error;
+        }
+        const chatReq = hydrated.chatRequest;
         chatReq.messages = injectBehaviorRules(chatReq.messages, resolvedModel);
         chatReq.messages = stripDynamicReminders(chatReq.messages);
         chatReq.stream = true;
@@ -1753,6 +1922,9 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
             if (signal?.aborted) break;
             const events = chatChunkToResponsesEvents(chatChunk, streamState);
             for (const ev of events) {
+                if (ev.event === 'response.completed') {
+                    recordCompletedResponseState(tenantId, hydrated.conversationKey || conversationKey, ev.data?.response);
+                }
                 yield {type: ev.event, data: ev.data};
             }
         }
@@ -1788,6 +1960,9 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
                     discardResponsesWebSocketConnection(wsResult.conn);
                     connHandled = true;
                     return;
+                }
+                if (event.type === 'response.completed') {
+                    recordCompletedResponseState(tenantId, conversationKey, event.data?.response);
                 }
                 yield event;
             }
@@ -1827,6 +2002,9 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
                 if (!data || data === '[DONE]') continue;
                 let parsed;
                 try { parsed = JSON.parse(data); } catch { continue; }
+                if ((event || parsed.type) === 'response.completed') {
+                    recordCompletedResponseState(tenantId, conversationKey, parsed.response);
+                }
                 yield {type: event || parsed.type, data: parsed};
             }
         }
@@ -1834,7 +2012,18 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
     }
 
     // OpenAI Chat 上游：Chat → Responses 事件转换
-    const chatReq = responsesRequestToChat({...payload, model: resolvedModel});
+    let hydrated;
+    try {
+        hydrated = relayConversationStore.hydrateResponsesForFullHistory({
+            tenantId,
+            conversationKey,
+            request: {...payload, model: resolvedModel}
+        });
+    } catch (error) {
+        if (error instanceof RelayStateMissingError) throw toResponsesWebSocketStateMissingError(error);
+        throw error;
+    }
+    const chatReq = hydrated.chatRequest;
     chatReq.messages = injectBehaviorRules(chatReq.messages, resolvedModel);
     chatReq.messages = stripDynamicReminders(chatReq.messages);
     chatReq.stream = true;
@@ -1868,6 +2057,9 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
 
             const events = chatChunkToResponsesEvents(data, streamState);
             for (const ev of events) {
+                if (ev.event === 'response.completed') {
+                    recordCompletedResponseState(tenantId, hydrated.conversationKey || conversationKey, ev.data?.response);
+                }
                 yield {type: ev.event, data: ev.data};
             }
         }
