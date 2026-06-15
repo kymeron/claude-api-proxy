@@ -2,11 +2,10 @@ export const RESPONSES_WS_MODE_OFF = 'off';
 export const RESPONSES_WS_MODE_CTX_POOL = 'ctx_pool';
 export const RESPONSES_WS_MODE_PASSTHROUGH = 'passthrough';
 
-const LEGACY_CTX_POOL_MODES = new Set(['shared', 'dedicated']);
+const LEGACY_CTX_POOL_MODES = new Set(['shared', 'dedicated', RESPONSES_WS_MODE_PASSTHROUGH]);
 const VALID_RESPONSES_WS_MODES = new Set([
     RESPONSES_WS_MODE_OFF,
-    RESPONSES_WS_MODE_CTX_POOL,
-    RESPONSES_WS_MODE_PASSTHROUGH
+    RESPONSES_WS_MODE_CTX_POOL
 ]);
 
 export function normalizeResponsesWebSocketMode(value, fallback = RESPONSES_WS_MODE_CTX_POOL) {

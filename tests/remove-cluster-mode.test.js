@@ -21,6 +21,7 @@ test('legacy cluster deployment and broadcast sync are removed', () => {
         'src/services/relay/tenant-manager.js',
         'src/services/codebuddy/tenant-manager.js',
         'scripts/deploy.mjs',
+        '.env.example',
         'README.md',
         '本地安装部署.md'
     ];

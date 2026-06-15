@@ -13,9 +13,6 @@ import {
     createAnthropicMessages,
     createAnthropicCountTokens,
     getUpstreamModels,
-    getProxyAgent,
-    buildResponsesWebSocketHeaders,
-    buildResponsesWebSocketUrl,
     isAnthropicUpstream,
     isResponsesUpstream,
     isResponsesWebSocketUpstream,
@@ -52,8 +49,6 @@ import {
 } from '../transformer/responses-translator.js';
 import {isResponsesWebSocketProtocolError} from '../services/shared/responses-ws-client.js';
 import {handleWSConnection} from '../services/shared/responses-ws-server.js';
-import {shouldUseResponsesWebSocketPassthrough} from '../services/shared/responses-ws-mode.js';
-import {passthroughResponsesWebSocket} from '../services/shared/responses-ws-passthrough.js';
 import {
     createStreamState as createAnthropicEventState,
     translateStreamChunk as chatChunkToAnthropicEvents
@@ -1369,11 +1364,17 @@ async function handleResponsesAPI(req, res) {
             const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
             const wsPayload = {...responsesReq, model: upstreamManager.resolveModel(responsesReq.model, upstream.index)};
             const conversationKey = extractConversationKey(req, wsPayload, {tenantId});
-            const wsResult = await createResponsesWebSocket(wsPayload, upstream, {
+            const prepared = relayConversationStore.prepareResponsesPassthrough({
+                tenantId,
+                conversationKey,
+                request: wsPayload
+            });
+            const stateConversationKey = prepared.conversationKey || conversationKey;
+            const wsResult = await createResponsesWebSocket(prepared.request, upstream, {
                 requestType: 'ResponsesWebSocket',
                 stream: responsesReq.stream,
                 originalModel: responsesReq.model,
-                contextKey: conversationKey,
+                contextKey: stateConversationKey,
                 rejectUnauthorized: !upstream.skip_tls_verify,
                 autoLink: false,
                 ...tenantMeta
@@ -1407,14 +1408,14 @@ async function handleResponsesAPI(req, res) {
                     throw error;
                 }
 
-                recordCompletedResponseState(tenantId, conversationKey, completedResponse);
+                recordCompletedResponseState(tenantId, stateConversationKey, completedResponse);
                 recordResponsesUsage(tenantId, usage, relayStatsModel);
                 res.end();
                 return;
             }
 
             const completedResponse = await collectResponsesWebSocketResponse(wsResult);
-            recordCompletedResponseState(tenantId, conversationKey, completedResponse);
+            recordCompletedResponseState(tenantId, stateConversationKey, completedResponse);
             recordResponsesUsage(tenantId, completedResponse.usage, relayStatsModel);
             sendJson(res, 200, completedResponse);
             return;
@@ -1424,14 +1425,21 @@ async function handleResponsesAPI(req, res) {
             const tenant = await unifiedTenantManager.getTenant(tenantId);
             const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
             const conversationKey = extractConversationKey(req, responsesReq, {tenantId});
+            const responsesPayload = {...responsesReq, model: upstreamManager.resolveModel(responsesReq.model, upstream.index)};
+            const prepared = relayConversationStore.prepareResponsesPassthrough({
+                tenantId,
+                conversationKey,
+                request: responsesPayload
+            });
+            const stateConversationKey = prepared.conversationKey || conversationKey;
             const relayMeta = {
                 ...tenantMeta,
-                conversationKey,
-                sessionId: tenantId ? `session-${tenantId}` : conversationKey
+                conversationKey: stateConversationKey,
+                sessionId: tenantId ? `session-${tenantId}` : stateConversationKey
             };
             const {response} = await callUpstream(upstream, (up) =>
                 createResponses(
-                    {...responsesReq, model: upstreamManager.resolveModel(responsesReq.model, up.index)},
+                    {...prepared.request, model: upstreamManager.resolveModel(responsesReq.model, up.index)},
                     up,
                     {
                         requestType: 'ResponsesPassthrough',
@@ -1473,7 +1481,7 @@ async function handleResponsesAPI(req, res) {
                 });
 
                 response.body.on('end', () => {
-                    recordCompletedResponseState(tenantId, conversationKey, completedResponse);
+                    recordCompletedResponseState(tenantId, stateConversationKey, completedResponse);
                     recordUsage(
                         tenantId,
                         usage?.input_tokens || 0,
@@ -1493,7 +1501,7 @@ async function handleResponsesAPI(req, res) {
 
             const responseBody = await readResponseBody(response.body);
             const parsed = JSON.parse(responseBody);
-            recordCompletedResponseState(tenantId, conversationKey, parsed);
+            recordCompletedResponseState(tenantId, stateConversationKey, parsed);
             recordUsage(
                 tenantId,
                 parsed.usage?.input_tokens || 0,
@@ -1934,11 +1942,17 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
     // Responses WS 上游：直接 WS 连接上游，转发事件
     if (isResponsesWebSocketUpstream(upstream)) {
         const wsPayload = {...payload, model: resolvedModel};
-        const wsResult = await createResponsesWebSocket(wsPayload, upstream, {
+        const prepared = relayConversationStore.prepareResponsesPassthrough({
+            tenantId,
+            conversationKey,
+            request: wsPayload
+        });
+        const stateConversationKey = prepared.conversationKey || conversationKey;
+        const wsResult = await createResponsesWebSocket(prepared.request, upstream, {
             requestType: 'RelayResponsesWebSocketRelay',
             stream: true,
             originalModel: payload.model,
-            contextKey: conversationKey,
+            contextKey: stateConversationKey,
             rejectUnauthorized: !upstream.skip_tls_verify,
             autoLink: false,
             ...tenantMeta
@@ -1955,7 +1969,7 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
                     return;
                 }
                 if (event.type === 'response.completed') {
-                    recordCompletedResponseState(tenantId, conversationKey, event.data?.response);
+                    recordCompletedResponseState(tenantId, stateConversationKey, event.data?.response);
                 }
                 yield event;
             }
@@ -1974,12 +1988,19 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
         // stream: WS 客户端不发 stream 字段，但 HTTP 上游需要 stream=true 才返回 SSE
         // store: 火山引擎需要 store=true 才存储 response，否则 previous_response_id 找不到
         const responsesPayload = {...payload, model: resolvedModel, stream: true, store: true};
+        const prepared = relayConversationStore.prepareResponsesPassthrough({
+            tenantId,
+            conversationKey,
+            request: responsesPayload
+        });
+        const stateConversationKey = prepared.conversationKey || conversationKey;
         const {response} = await callUpstream(upstream, (up) =>
-            createResponses(responsesPayload, up, {
+            createResponses(prepared.request, up, {
                 requestType: 'ResponsesWS',
                 stream: true,
                 originalModel: payload.model,
-                ...relayMeta
+                ...relayMeta,
+                conversationKey: stateConversationKey
             })
         );
 
@@ -1996,7 +2017,7 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
                 let parsed;
                 try { parsed = JSON.parse(data); } catch { continue; }
                 if ((event || parsed.type) === 'response.completed') {
-                    recordCompletedResponseState(tenantId, conversationKey, parsed.response);
+                    recordCompletedResponseState(tenantId, stateConversationKey, parsed.response);
                 }
                 yield {type: event || parsed.type, data: parsed};
             }
@@ -2074,20 +2095,6 @@ export async function handleRelayResponsesWS(clientWs, req) {
     const tenantId = req.tenantId;
     const upstreamManager = await unifiedTenantManager.getUpstreamManager(tenantId);
     const upstream = upstreamManager?.getActiveUpstream();
-
-    if (upstream && shouldUseResponsesWebSocketPassthrough(upstream)) {
-        const url = buildResponsesWebSocketUrl(upstream, 'responses');
-        const headers = buildResponsesWebSocketHeaders(upstream);
-        const agent = getProxyAgent(upstream);
-        logger.info(`[${upstream.name}]: ${url}, protocol: responses_ws, mode: passthrough`);
-        await passthroughResponsesWebSocket(clientWs, {
-            url,
-            headers,
-            agent,
-            rejectUnauthorized: !upstream.skip_tls_verify
-        });
-        return;
-    }
 
     handleWSConnection(clientWs, {
         authenticate: () => true,

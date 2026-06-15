@@ -151,7 +151,7 @@ Expected: FAIL，错误为 `Cannot find module '../src/services/relay/conversati
 ```js
 import {responsesRequestToChat, responsesResponseToChat} from '../../transformer/responses-translator.js';
 
-const DEFAULT_TTL_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 
 export class RelayStateMissingError extends Error {
     constructor(previousResponseId) {
@@ -681,7 +681,7 @@ Expected: PASS。
 在 Relay 协议支持段落增加：
 
 ```md
-- Relay 会维护短期会话状态，用于 Responses/Responses WebSocket 增量请求转到 Chat 或 Anthropic 上游时恢复完整上下文。状态按租户和会话隔离，默认使用内存存储，重启后会丢失。
+- Relay 会维护短期会话状态，用于 Responses/Responses WebSocket 增量请求转到 Chat 或 Anthropic 上游时恢复完整上下文。状态按租户和会话隔离，默认使用内存存储，保留 24 小时并定期清理，重启后会丢失。
 ```
 
 - [ ] **Step 2: 本地安装部署增加状态说明**
@@ -693,7 +693,7 @@ Expected: PASS。
 Run:
 
 ```bash
-node --test tests/relay-conversation-state.test.js tests/relay-responses-ws.test.js tests/responses-ws-stream-bridge.test.js tests/responses-ws-client.test.js tests/responses-ws-passthrough.test.js tests/responses-input-sanitize.test.js
+node --test tests/relay-conversation-state.test.js tests/relay-responses-ws.test.js tests/responses-ws-stream-bridge.test.js tests/responses-ws-client.test.js tests/responses-input-sanitize.test.js
 ```
 
 Expected: PASS。

@@ -17,22 +17,20 @@ Make Responses WebSocket mode usable and fast across Relay, CodeBuddy, and Copil
 
 - `off`: do not use upstream Responses WS.
 - `ctx_pool`: default. Use pooled upstream WS connections, keyed by upstream, auth, network settings, and conversation context.
-- `passthrough`: only for Relay Responses WS ingress with an active `responses_ws` upstream. After local auth and upstream resolution, relay client and upstream frames directly.
+- `passthrough`: legacy compatibility value. Normalize to `ctx_pool` so Relay Responses WS ingress still records conversation state.
 
-Legacy mode names `shared` and `dedicated` normalize to `ctx_pool`.
+Legacy mode names `shared`, `dedicated`, and `passthrough` normalize to `ctx_pool`.
 
 ## Implementation
 
 - Add mode normalization in `src/services/shared/responses-ws-mode.js`.
 - Fix upstream WS URL construction in `src/services/relay/api.js` so query strings survive and endpoint detection is safe.
 - Tighten `prepareResponsesWebSocketPayload()` in `src/services/shared/responses-ws-client.js`.
-- Add `src/services/shared/responses-ws-passthrough.js` for bidirectional frame relay.
-- Wire Relay WS ingress so `passthrough` is used only when explicitly configured and the active upstream is `responses_ws`; otherwise use `ctx_pool`.
+- Keep Relay WS ingress on `ctx_pool` so state hydration and completion recording stay enabled.
 
 ## Testing
 
 - Unit-test URL conversion with existing query strings and direct `/responses` base URLs.
-- Unit-test mode normalization and passthrough checks.
+- Unit-test mode normalization and legacy `passthrough` compatibility.
 - Unit-test WS payload field preservation/removal.
-- Unit-test passthrough frame forwarding and close behavior.
 - Run targeted tests and the full `npm test` suite.

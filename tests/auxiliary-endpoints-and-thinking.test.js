@@ -161,3 +161,10 @@ test('relay routes expose cross-protocol bridges without protocol mismatch rejec
     assert.doesNotMatch(source, /getProtocolErrorMessage\(upstream, 'anthropic', '\/relay\/v1\/responses'\)/);
     assert.doesNotMatch(source, /getProtocolErrorMessage\(upstream, 'responses', '\/relay\/anthropic\/v1\/messages'\)/);
 });
+
+test('relay Responses-capable passthrough paths remember visible input before completion', () => {
+    const source = readFileSync(join(root, 'src/routes/relay.js'), 'utf8');
+    const prepareCalls = source.match(/prepareResponsesPassthrough/g) || [];
+
+    assert.equal(prepareCalls.length >= 4, true);
+});

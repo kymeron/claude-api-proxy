@@ -109,7 +109,7 @@ test('Anthropic URL builder does not duplicate v1 or message endpoints', () => {
 });
 
 test('Responses WebSocket mode normalizes current and legacy values', () => {
-    assert.equal(normalizeResponsesWebSocketMode('passthrough'), 'passthrough');
+    assert.equal(normalizeResponsesWebSocketMode('passthrough'), 'ctx_pool');
     assert.equal(normalizeResponsesWebSocketMode('ctx_pool'), 'ctx_pool');
     assert.equal(normalizeResponsesWebSocketMode('shared'), 'ctx_pool');
     assert.equal(normalizeResponsesWebSocketMode('dedicated'), 'ctx_pool');
@@ -117,10 +117,10 @@ test('Responses WebSocket mode normalizes current and legacy values', () => {
     assert.equal(normalizeResponsesWebSocketMode('unknown'), 'ctx_pool');
 });
 
-test('passthrough mode only applies to responses_ws upstreams', () => {
+test('passthrough compatibility mode stays on the stateful relay path', () => {
     assert.equal(
         shouldUseResponsesWebSocketPassthrough({protocol: 'responses_ws', ws_mode: 'passthrough'}),
-        true
+        false
     );
     assert.equal(
         shouldUseResponsesWebSocketPassthrough({protocol: 'responses', ws_mode: 'passthrough'}),
@@ -132,8 +132,11 @@ test('passthrough mode only applies to responses_ws upstreams', () => {
     );
     assert.equal(
         shouldUseResponsesWebSocketPassthrough({protocol: 'responses_ws', base_url: 'https://api.example.com/v1?ws_mode=passthrough'}),
-        true
+        false
     );
+
+    const relaySource = readFileSync(join(process.cwd(), 'src/routes/relay.js'), 'utf8');
+    assert.equal(relaySource.includes('passthroughResponsesWebSocket'), false);
 });
 
 test('Responses WebSocket relay keeps the Anthropic upstream conversion path enabled', () => {
