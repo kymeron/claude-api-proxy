@@ -29,7 +29,7 @@ Responses 和 Responses WebSocket 则可能只携带增量输入和
 
 新增一个 Relay 通用的 `RelayConversationStore`。所有 Relay 实例都使用同一套逻辑，不区分本地和云上。
 
-第一版使用内存存储即可，因为当前规模大约 10 人以内。存储接口需要和具体实现解耦，后续如果要支持多实例、重启恢复或更长时间保留，可以替换成 Redis 或数据库实现。
+第一版使用内存存储即可，因为当前规模为个位数用户，部署目标已经调整为单实例。存储接口需要和具体实现解耦，后续如果重新扩容、需要重启恢复或更长时间保留，可以替换成 Redis 或数据库实现。
 
 状态按 `tenantId + conversationKey` 保存短期会话，并额外维护
 `response_id -> conversationKey` 索引。这样下一次 Responses 请求只带

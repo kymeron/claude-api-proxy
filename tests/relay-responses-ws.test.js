@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'fs';
+import {join} from 'path';
 import {
     buildProtocolAwareUrl,
     buildResponsesWebSocketHeaders,
@@ -132,4 +134,11 @@ test('passthrough mode only applies to responses_ws upstreams', () => {
         shouldUseResponsesWebSocketPassthrough({protocol: 'responses_ws', base_url: 'https://api.example.com/v1?ws_mode=passthrough'}),
         true
     );
+});
+
+test('Responses WebSocket relay keeps the Anthropic upstream conversion path enabled', () => {
+    const relaySource = readFileSync(join(process.cwd(), 'src/routes/relay.js'), 'utf8');
+
+    assert.equal(relaySource.includes('ResponsesWSViaAnthropic'), true);
+    assert.equal(relaySource.includes('当前上游为 Anthropic 协议，不支持 Responses API'), false);
 });

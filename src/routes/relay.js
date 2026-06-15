@@ -1860,7 +1860,7 @@ async function handleResponsesCompact(req, res) {
 /**
  * Relay WS 处理器的核心请求逻辑（async generator）
  * 根据上游协议分发：
- * - Anthropic 上游 → 报错
+ * - Anthropic 上游 → hydrate Responses 增量上下文后转 Anthropic stream
  * - Responses WS 上游 → 直接 WS 转发
  * - Responses HTTP 上游 → SSE → WS 事件
  * - OpenAI Chat 上游 → Chat→Responses 事件
@@ -1929,13 +1929,6 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
             }
         }
         return;
-    }
-
-    if (isAnthropicUpstream(upstream)) {
-        throw Object.assign(new Error('当前上游为 Anthropic 协议，不支持 Responses API'), {
-            name: 'ResponsesWebSocketError',
-            event: {type: 'error', error: {message: '当前上游为 Anthropic 协议，不支持 Responses API', code: 'protocol_mismatch'}}
-        });
     }
 
     // Responses WS 上游：直接 WS 连接上游，转发事件
