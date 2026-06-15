@@ -1,118 +1,113 @@
-# Relay Conversation State Design
+# Relay 会话状态设计
 
-## Goal
+## 目标
 
-Make all 16 Relay protocol combinations usable when a request passes through
-OpenAI Chat Completions, OpenAI Responses HTTP, Responses WebSocket, and
-Anthropic Messages. The fix must use the same code path for local and cloud
-deployments. A Relay instance should not know whether it is the local hop or
-the upstream hop; it should decide behavior only from the incoming protocol,
-the active upstream protocol, and the available conversation state.
+让 Relay 的 16 种协议组合都能正常工作。这里的协议包括 OpenAI Chat
+Completions、OpenAI Responses HTTP、Responses WebSocket 和 Anthropic
+Messages。
 
-## Problem
+这套方案必须同时适用于本地部署和云端部署，不能写“云上专用”或“本地专用”的逻辑。每个
+Relay 实例只根据三个信息做决定：
 
-Chat Completions and Anthropic Messages usually carry a full transcript in each
-request. Responses and Responses WebSocket may carry only incremental input plus
-`previous_response_id`, relying on upstream state to recover prior context.
+- 当前入口协议
+- 当前活跃上游协议
+- 当前实例是否能找到对应的会话状态
 
-The current Relay converters can translate the visible Responses input, but they
-cannot reconstruct omitted history. This works when the active upstream is also
-Responses or Responses WebSocket, because that upstream can resolve
-`previous_response_id`. It fails when the active upstream is Chat Completions or
-Anthropic, because those protocols require full messages.
+## 问题
 
-## Design
+Chat Completions 和 Anthropic Messages 通常会在每次请求里携带完整上下文。
+Responses 和 Responses WebSocket 则可能只携带增量输入和
+`previous_response_id`，并依赖 Responses 上游保存的历史状态来恢复上下文。
 
-Add a shared `RelayConversationStore` used by every Relay instance. The store is
-a short-lived, tenant-scoped state cache keyed by `tenantId + conversationKey`.
-It also indexes `response_id -> conversationKey` so a later Responses request
-can hydrate history from `previous_response_id`.
+当前 Relay 的转换器只能转换请求里可见的 Responses input，无法凭空还原被省略的历史。
+当活跃上游也是 Responses 或 Responses WebSocket 时，这通常没问题，因为上游可以自己解析
+`previous_response_id`。但当活跃上游是 Chat Completions 或 Anthropic 时就会失败，因为这两类协议需要完整 messages。
 
-The first implementation can be in memory because expected usage is small
-(around 10 users). The store interface should hide the storage backend so Redis
-or database-backed storage can replace it later without changing protocol
-conversion logic.
+这就是当前现象的根因：Responses/WS 上游优化后不报错了，但 Chat 和 Anthropic 上游又开始因为缺少历史字段报错。
 
-Relay should keep a canonical transcript instead of treating Chat or Responses
-as the only internal representation. The canonical state includes:
+## 设计
 
-- model and request options that affect generation
-- system or instructions content
-- ordered messages with role, content parts, reasoning, tool calls, tool output,
-  and assistant output
-- tool definitions, tool choice, and parallel tool call settings
-- known Responses ids and their completed output snapshots
-- timestamps and size counters for TTL and pruning
+新增一个 Relay 通用的 `RelayConversationStore`。所有 Relay 实例都使用同一套逻辑，不区分本地和云上。
 
-## Data Flow
+第一版使用内存存储即可，因为当前规模大约 10 人以内。存储接口需要和具体实现解耦，后续如果要支持多实例、重启恢复或更长时间保留，可以替换成 Redis 或数据库实现。
 
-For Chat Completions ingress, Relay converts the full `messages` payload into a
-canonical transcript and stores it before calling the active upstream.
+状态按 `tenantId + conversationKey` 保存短期会话，并额外维护
+`response_id -> conversationKey` 索引。这样下一次 Responses 请求只带
+`previous_response_id` 时，Relay 可以找到对应会话并恢复完整上下文。
 
-For Anthropic ingress, Relay converts `system`, `messages`, tools, tool choice,
-thinking, and tool blocks into the same canonical transcript and stores it
-before calling the active upstream.
+Relay 内部不要把 Chat 或 Responses 当作唯一中间格式，而是维护一份自己的 canonical transcript。它至少包含：
 
-For Responses HTTP and Responses WebSocket ingress, Relay first checks whether
-the request references `previous_response_id`. If state exists, Relay hydrates
-the prior canonical transcript and appends the new Responses input. If no state
-exists, Relay keeps only the visible input until upstream formatting decides
-whether that is sufficient. Responses-capable upstreams can still receive the
-incremental request, while Chat and Anthropic upstreams must fail with
-`state_missing`.
+- model 和会影响生成结果的请求参数
+- system 或 instructions 内容
+- 按顺序排列的消息历史
+- content parts、reasoning、assistant output
+- tool calls 和 tool results
+- tools、tool_choice、parallel_tool_calls
+- 已知的 Responses id 和对应完成输出
+- 更新时间、过期时间、大小计数和裁剪信息
 
-After every successful upstream response, Relay records the assistant output in
-the canonical transcript. If the upstream response contains a Responses id, Relay
-maps that id back to the conversation state. If the upstream is Chat or
-Anthropic, Relay generates equivalent assistant transcript entries from the
-converted response.
+## 数据流
 
-## Upstream Formatting
+Chat Completions 入口通常自带完整 `messages`。Relay 收到后先转换成 canonical transcript，写入 store，再根据当前活跃上游协议进行格式化。
 
-When the active upstream is Responses HTTP or Responses WebSocket, Relay may
-preserve incremental Responses behavior. It can send `previous_response_id`
-where appropriate and continue using the existing WebSocket context pool.
+Anthropic 入口通常自带完整 `system`、`messages`、tools、tool_choice、thinking 和 tool block。Relay 收到后同样先转换成 canonical transcript，写入 store，再进入上游调用。
 
-When the active upstream is Chat Completions or Anthropic, Relay must format from
-the hydrated canonical transcript. It must not convert only the current
-Responses input item. If the request depends on `previous_response_id` and the
-store cannot hydrate it, Relay returns a clear `state_missing` protocol error
-instead of sending a lossy request upstream.
+Responses HTTP 和 Responses WebSocket 入口需要先检查是否带有
+`previous_response_id`：
 
-This rule applies identically in local and cloud deployments. The behavior is
-triggered by the target upstream protocol, not by deployment role.
+- 如果 store 中能找到对应状态，Relay 先恢复旧 transcript，再追加这次请求里的新 input。
+- 如果找不到状态，Relay 暂时只能保留本次请求可见 input，是否足够继续由上游协议决定。
+- 如果当前活跃上游是 Responses 或 Responses WebSocket，可以继续透传增量请求，因为下一跳 Responses-capable 上游可能有状态。
+- 如果当前活跃上游是 Chat 或 Anthropic，必须返回 `state_missing`，不能发送一个丢历史的请求。
 
-## Error Handling
+每次上游成功返回后，Relay 都需要把 assistant 输出写回 canonical transcript：
 
-If state is missing and the active upstream is Responses or Responses WebSocket,
-Relay may pass the request through because a downstream Responses-capable hop may
-have the needed state.
+- 如果上游返回 Responses id，把该 id 映射回当前会话。
+- 如果上游是 Chat 或 Anthropic，把转换后的 assistant message、tool call、reasoning 和 usage 相关输出写回状态。
+- 如果是流式响应，在完成事件或结束阶段写入最终输出。
 
-If state is missing and the active upstream is Chat or Anthropic, Relay should
-fail before the upstream call with an explicit error:
+## 上游格式化规则
 
-- OpenAI-shaped routes return an OpenAI error body with code `state_missing`.
-- Anthropic-shaped routes return an Anthropic error body with code
-  `state_missing`.
-- Responses WebSocket routes send a WS error event with code `state_missing`.
+当活跃上游是 Responses HTTP 或 Responses WebSocket 时，Relay 可以继续保留 Responses 的增量能力。也就是说，它可以继续发送
+`previous_response_id`，并继续使用现有 Responses WebSocket context pool。
 
-State entries expire by TTL and by maximum transcript size. Expiration is normal
-and should be logged at info/debug level, not as an upstream failure.
+当活跃上游是 Chat Completions 或 Anthropic 时，Relay 必须从已经恢复的 canonical transcript 生成完整请求：
 
-## Testing
+- Chat 上游需要完整 `messages`
+- Anthropic 上游需要完整 `system` 和 `messages`
+- 不能只把当前 Responses input item 临时转换后发上游
 
-Add tests for state hydration before implementation changes:
+这个规则只由“目标上游协议”触发，和当前实例部署在本地还是云上无关。
 
-- Responses HTTP to Chat with `previous_response_id` uses stored history.
-- Responses HTTP to Anthropic with `previous_response_id` uses stored history.
-- Responses WebSocket to Chat with `previous_response_id` uses stored history.
-- Responses WebSocket to Anthropic with `previous_response_id` uses stored
-  history.
-- Missing state fails for Chat and Anthropic upstreams.
-- Missing state can pass through to Responses and Responses WebSocket upstreams.
-- Chat and Anthropic ingress update the same store used by Responses ingress.
-- Response ids from completed Responses events are mapped back to the canonical
-  conversation.
+## 错误处理
 
-Run the targeted relay and Responses WebSocket tests first, then the full
-`npm test` suite.
+如果状态缺失，但当前活跃上游是 Responses 或 Responses WebSocket，Relay 可以继续透传。因为下一层 Responses-capable Relay 或最终模型服务可能能解析
+`previous_response_id`。
+
+如果状态缺失，且当前活跃上游是 Chat 或 Anthropic，Relay 必须在调用上游前失败，并返回明确错误：
+
+- OpenAI 形态的 HTTP 路由返回 OpenAI 风格错误，code 为 `state_missing`
+- Anthropic 形态的 HTTP 路由返回 Anthropic 风格错误，code 为 `state_missing`
+- Responses WebSocket 路由发送 `error` 事件，code 为 `state_missing`
+
+状态过期是正常情况，不应当伪装成上游错误。日志级别建议用 info 或 debug。
+
+## 测试
+
+实现前先补失败测试，至少覆盖：
+
+- Responses HTTP -> Chat，带 `previous_response_id` 时能使用已存历史
+- Responses HTTP -> Anthropic，带 `previous_response_id` 时能使用已存历史
+- Responses WebSocket -> Chat，带 `previous_response_id` 时能使用已存历史
+- Responses WebSocket -> Anthropic，带 `previous_response_id` 时能使用已存历史
+- 状态缺失时，Chat 和 Anthropic 上游会返回 `state_missing`
+- 状态缺失时，Responses 和 Responses WebSocket 上游仍可透传
+- Chat 入口会更新同一份 store，供后续 Responses 入口恢复
+- Anthropic 入口会更新同一份 store，供后续 Responses 入口恢复
+- `response.completed` 里的 response id 会映射回 canonical conversation
+
+验证顺序建议：
+
+1. 先跑新增的 conversation state 单元测试。
+2. 再跑 relay 和 Responses WebSocket 相关测试。
+3. 最后跑完整 `npm test`。
