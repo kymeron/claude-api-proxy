@@ -248,19 +248,31 @@ function mergeChatRequests(base, visibleChat, originalResponsesRequest) {
 }
 
 function getDuplicatePrefixLength(baseMessages, visibleMessages) {
+    // 处理 system 消息偏移：base 可能有 relay 注入的 system 消息而 visible 没有，
+    // 或反之。跳过单侧的 system 前缀后再做前缀匹配。
+    let baseOffset = 0;
+    let visibleOffset = 0;
+
+    if (baseMessages[0]?.role === 'system' && visibleMessages[0]?.role !== 'system') {
+        baseOffset = 1;
+    } else if (visibleMessages[0]?.role === 'system' && baseMessages[0]?.role !== 'system') {
+        visibleOffset = 1;
+    }
+
     let commonPrefixLength = 0;
-    const max = Math.min(baseMessages.length, visibleMessages.length);
+    const maxBase = baseMessages.length - baseOffset;
+    const maxVisible = visibleMessages.length - visibleOffset;
+    const max = Math.min(maxBase, maxVisible);
     while (
         commonPrefixLength < max
-        && messagesEqual(baseMessages[commonPrefixLength], visibleMessages[commonPrefixLength])
+        && messagesEqual(baseMessages[baseOffset + commonPrefixLength], visibleMessages[visibleOffset + commonPrefixLength])
     ) {
         commonPrefixLength++;
     }
 
     if (commonPrefixLength === 0) return 0;
-    if (commonPrefixLength === baseMessages.length) return commonPrefixLength;
-    if (commonPrefixLength > 1) return commonPrefixLength;
-    return baseMessages[0]?.role === 'system' ? 1 : 0;
+    // 返回 visible 中已被 base 覆盖的消息数量
+    return visibleOffset + commonPrefixLength;
 }
 
 function messagesEqual(left, right) {
