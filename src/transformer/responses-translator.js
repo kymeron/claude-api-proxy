@@ -32,10 +32,10 @@ export function responsesRequestToChat(responsesReq) {
         }
     }
 
-    // 合并连续同角色消息（主要处理 reasoning → assistant 的合并）
-    // reasoning item 被转为 {role:'assistant', reasoning_content:'...'}，
-    // 后续的 assistant 消息需要与之合并为一条，否则 Chat API 不允许连续 assistant 消息
-    _mergeConsecutiveMessages(messages);
+    // 合并连续的 assistant 消息（同一轮中 output_text + function_call 属于同一条 assistant 消息）
+    // OpenAI Chat Completions 格式不允许连续的 assistant 消息，
+    // 且 DeepSeek 等上游严格要求 tool_calls 消息后紧跟所有 tool 响应
+    mergeConsecutiveAssistantMessages(messages);
 
     const chatReq = {
         model: responsesReq.model,
@@ -220,39 +220,179 @@ export function chatRequestToResponses(chatReq) {
 }
 
 /**
- * 合并连续同角色消息
- * Responses API 中 reasoning 和 assistant message 是独立的 input item，
- * 转换为 Chat Completions 后可能产生连续的 assistant 消息，需要合并
- * 规则：后一条消息的内容（content/reasoning_content/tool_calls）合并到前一条
+ * 确保 messages 序列符合 OpenAI Chat Completions 格式要求：
+ * 1. 不能有连续的 assistant 消息
+ * 2. assistant(tool_calls) 后必须紧跟所有对应的 tool 消息
+ * 3. 重复的 tool_call_id 不允许
+ *
+ * 策略：从 tool 消息出发，将 tool_call_id 分组到其所属的 assistant 消息，
+ * 然后重新排列为合法的序列。这是唯一能保证 DeepSeek 严格校验通过的方式。
  */
-function _mergeConsecutiveMessages(messages) {
+export function mergeConsecutiveAssistantMessages(messages) {
+    // === 第一步：去重 ===
+    // 1a. 去除重复的 tool 消息（相同 tool_call_id 只保留第一个）
+    const seenToolIds = new Set();
+    for (let j = messages.length - 1; j >= 0; j--) {
+        const msg = messages[j];
+        if (msg.role === 'tool' && msg.tool_call_id) {
+            if (seenToolIds.has(msg.tool_call_id)) {
+                messages.splice(j, 1);
+            } else {
+                seenToolIds.add(msg.tool_call_id);
+            }
+        }
+    }
+
+    // 1b. 去除完全重复的 assistant 消息（content、tool_calls、reasoning_content 完全相同）
+    const seenAssistantKeys = new Set();
+    for (let j = messages.length - 1; j >= 0; j--) {
+        const msg = messages[j];
+        if (msg.role === 'assistant') {
+            const key = JSON.stringify({
+                c: msg.content,
+                tc: (msg.tool_calls || []).map(tc => tc.id).sort(),
+                r: msg.reasoning_content
+            });
+            if (seenAssistantKeys.has(key)) {
+                messages.splice(j, 1);
+            } else {
+                seenAssistantKeys.add(key);
+            }
+        }
+    }
+
+    // === 第二步：合并连续的 assistant 消息 ===
     let i = 0;
     while (i < messages.length - 1) {
         const curr = messages[i];
         const next = messages[i + 1];
-        if (curr.role === next.role) {
-            // 合并 reasoning_content
-            if (next.reasoning_content && !curr.reasoning_content) {
-                curr.reasoning_content = next.reasoning_content;
-            } else if (next.reasoning_content && curr.reasoning_content) {
-                curr.reasoning_content += '\n\n' + next.reasoning_content;
-            }
+        if (curr.role === 'assistant' && next.role === 'assistant') {
             // 合并 content
-            if (next.content != null && curr.content == null) {
+            const currHasContent = curr.content != null && curr.content !== '';
+            const nextHasContent = next.content != null && next.content !== '';
+            if (currHasContent && nextHasContent) {
+                curr.content = curr.content + '\n' + next.content;
+            } else if (nextHasContent) {
                 curr.content = next.content;
-            } else if (next.content != null && curr.content != null) {
-                const currText = typeof curr.content === 'string' ? curr.content : JSON.stringify(curr.content);
-                const nextText = typeof next.content === 'string' ? next.content : JSON.stringify(next.content);
-                if (nextText) curr.content = currText ? currText + '\n\n' + nextText : nextText;
+            } else if (!currHasContent && next.content === '') {
+                curr.content = '';
             }
-            // 合并 tool_calls
-            if (next.tool_calls) {
-                curr.tool_calls = [...(curr.tool_calls || []), ...next.tool_calls];
+
+            // 合并 tool_calls（按 id 去重）
+            if (next.tool_calls?.length) {
+                const existingIds = new Set((curr.tool_calls || []).map(tc => tc.id));
+                const newCalls = next.tool_calls.filter(tc => !existingIds.has(tc.id));
+                curr.tool_calls = [...(curr.tool_calls || []), ...newCalls];
             }
+
+            // 合并 reasoning_content
+            if (next.reasoning_content) {
+                curr.reasoning_content = curr.reasoning_content
+                    ? curr.reasoning_content + '\n' + next.reasoning_content
+                    : next.reasoning_content;
+            }
+
             messages.splice(i + 1, 1);
-            // 不递增 i，继续检查合并后的消息是否还需要和下一项合并
         } else {
             i++;
+        }
+    }
+
+    // === 第三步：确保 assistant(tool_calls) 后紧跟对应的 tool 消息 ===
+    // 对每个 assistant(tool_calls)，检查紧跟的消息是否是对应的 tool。
+    // 如果不是，说明 tool 消息在别处——需要重新排列。
+    // 策略：将 tool 消息移到其所属 assistant 的正后方。
+    for (let j = 0; j < messages.length; j++) {
+        const msg = messages[j];
+        if (msg.role !== 'assistant' || !msg.tool_calls?.length) continue;
+
+        // 收集紧跟的 tool_call_ids
+        const followingToolIds = new Set();
+        for (let k = j + 1; k < messages.length && messages[k].role === 'tool'; k++) {
+            followingToolIds.add(messages[k].tool_call_id);
+        }
+
+        // 找出缺失的 tool_call_ids（有 tool_calls 但没有紧跟的 tool 消息）
+        const missingIds = msg.tool_calls
+            .map(tc => tc.id)
+            .filter(id => !followingToolIds.has(id));
+
+        if (missingIds.length === 0) continue; // 全部 OK
+
+        // 对于缺失的 tool_call_ids，在消息序列中找到对应的 tool 消息，
+        // 把它们移到当前 assistant 的正后方
+        for (const missingId of missingIds) {
+            const toolIdx = messages.findIndex(
+                m => m.role === 'tool' && m.tool_call_id === missingId
+            );
+            if (toolIdx === -1) {
+                // 找不到对应的 tool 消息——从 assistant 中移除这个 tool_call
+                msg.tool_calls = msg.tool_calls.filter(tc => tc.id !== missingId);
+                if (msg.tool_calls.length === 0) {
+                    delete msg.tool_calls;
+                    if (!msg.content) msg.content = '';
+                }
+                continue;
+            }
+
+            // 从原位置取出 tool 消息
+            const [toolMsg] = messages.splice(toolIdx, 1);
+
+            // 插入到当前 assistant 的 tool 消息组之后
+            // 找到当前 assistant 后面连续 tool 消息的末尾
+            let insertPos = j + 1;
+            while (insertPos < messages.length && messages[insertPos].role === 'tool') {
+                insertPos++;
+            }
+            messages.splice(insertPos, 0, toolMsg);
+
+            // splice 后索引可能变了，重新处理
+            j--;
+            break;
+        }
+    }
+
+    // === 第四步：再次合并连续 assistant（移动 tool 消息后可能产生新的连续 assistant）===
+    i = 0;
+    while (i < messages.length - 1) {
+        const curr = messages[i];
+        const next = messages[i + 1];
+        if (curr.role === 'assistant' && next.role === 'assistant') {
+            const currHasContent = curr.content != null && curr.content !== '';
+            const nextHasContent = next.content != null && next.content !== '';
+            if (currHasContent && nextHasContent) {
+                curr.content = curr.content + '\n' + next.content;
+            } else if (nextHasContent) {
+                curr.content = next.content;
+            } else if (!currHasContent && next.content === '') {
+                curr.content = '';
+            }
+            if (next.tool_calls?.length) {
+                const existingIds = new Set((curr.tool_calls || []).map(tc => tc.id));
+                const newCalls = next.tool_calls.filter(tc => !existingIds.has(tc.id));
+                curr.tool_calls = [...(curr.tool_calls || []), ...newCalls];
+            }
+            if (next.reasoning_content) {
+                curr.reasoning_content = curr.reasoning_content
+                    ? curr.reasoning_content + '\n' + next.reasoning_content
+                    : next.reasoning_content;
+            }
+            messages.splice(i + 1, 1);
+        } else {
+            i++;
+        }
+    }
+
+    // === 第五步：去除没有对应 assistant tool_calls 的孤立 tool 消息 ===
+    const allToolCallIds = new Set();
+    for (const msg of messages) {
+        if (msg.role === 'assistant' && msg.tool_calls?.length) {
+            for (const tc of msg.tool_calls) allToolCallIds.add(tc.id);
+        }
+    }
+    for (let j = messages.length - 1; j >= 0; j--) {
+        if (messages[j].role === 'tool' && messages[j].tool_call_id && !allToolCallIds.has(messages[j].tool_call_id)) {
+            messages.splice(j, 1);
         }
     }
 }
@@ -281,10 +421,23 @@ function convertInputItem(item) {
         return {role: mappedRole, content: item.content || ''};
     }
 
+    // {type: "reasoning", ...} — 思维链
+    // DeepSeek 等模型要求：当进行了工具调用时，reasoning_content 必须在后续所有请求中回传，
+    // 否则 API 返回 400。同时，缺少 reasoning_content 会导致 conversation state 合并时
+    // 消息去重失败，产生重复的 assistant 消息。
+    if (item.type === 'reasoning') {
+        const reasoningText = Array.isArray(item.summary)
+            ? item.summary.map(s => s.text || '').filter(Boolean).join('\n')
+            : '';
+        if (!reasoningText) return null;
+        return {role: 'assistant', reasoning_content: reasoningText};
+    }
+
     // {type: "function_call", ...} — 工具调用
     if (item.type === 'function_call') {
         return {
             role: 'assistant',
+            content: item.content ?? '',
             tool_calls: [{
                 id: item.call_id || generateId(),
                 type: 'function',
@@ -581,7 +734,7 @@ export function responsesResponseToChat(responsesRes) {
             index: 0,
             message: {
                 role: 'assistant',
-                content: textParts.join('') || null,
+                content: toolCalls.length > 0 ? (textParts.join('') || '') : (textParts.join('') || null),
                 reasoning_content: reasoningParts.join('\n') || undefined,
                 tool_calls: toolCalls.length > 0 ? toolCalls : undefined
             },

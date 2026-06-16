@@ -45,7 +45,8 @@ import {
     responsesEventToChatChunks,
     responsesEventToResponsesEvents,
     compactRequestToChat,
-    chatResponseToCompact
+    chatResponseToCompact,
+    mergeConsecutiveAssistantMessages
 } from '../transformer/responses-translator.js';
 import {isResponsesWebSocketProtocolError} from '../services/shared/responses-ws-client.js';
 import {handleWSConnection} from '../services/shared/responses-ws-server.js';
@@ -1288,6 +1289,7 @@ async function handleResponsesAPI(req, res) {
             const chatReq = hydrated.chatRequest;
             chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
             chatReq.messages = stripDynamicReminders(chatReq.messages);
+            mergeConsecutiveAssistantMessages(chatReq.messages);
             chatReq.stream = responsesReq.stream;
             const anthropicPayload = chatRequestToAnthropic({
                 ...chatReq,
@@ -1524,6 +1526,9 @@ async function handleResponsesAPI(req, res) {
         chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         chatReq.messages = stripDynamicReminders(chatReq.messages);
+        // 合并连续的 assistant 消息（hydrate 合并后可能产生重复的 assistant 消息，
+        // 例如 base 和 visible 去重失败时；DeepSeek 等上游不允许连续 assistant 消息）
+        mergeConsecutiveAssistantMessages(chatReq.messages);
 
         const tenant = await unifiedTenantManager.getTenant(tenantId);
         const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
@@ -1659,7 +1664,8 @@ async function handleResponsesAPI(req, res) {
                     index: 0,
                     message: {
                         role: 'assistant',
-                        content: aggregated.content || null,
+                        content: aggregated.toolCalls.length > 0 ? (aggregated.content || '') : (aggregated.content || null),
+                        reasoning_content: aggregated.reasoningContent || undefined,
                         tool_calls: aggregated.toolCalls.length > 0 ? aggregated.toolCalls : undefined
                     },
                     finish_reason: aggregated.finishReason || 'stop'
