@@ -186,7 +186,8 @@ export class UpstreamManager {
             try {
                 const wsUrl = buildResponsesWebSocketUrl(oldUpstream, 'responses');
                 const proxyMode = oldUpstream.proxy ? oldUpstream.proxy : 'direct';
-                const networkKey = `${wsUrl}:${proxyMode}:tls-verify`;
+                const tlsPart = oldUpstream.skip_tls_verify ? 'tls-skip' : 'tls-verify';
+                const networkKey = `${wsUrl}:${proxyMode}:${tlsPart}`;
                 const oldPoolKey = connectionPoolKey(`${wsUrl}:${oldUpstream.api_key || ''}`, networkKey);
                 discardByPoolKey(oldPoolKey);
                 logger.info(`Relay: 切换上游时清除旧上游 WebSocket 连接: ${oldUpstream.name}, poolKey=${oldPoolKey}`);

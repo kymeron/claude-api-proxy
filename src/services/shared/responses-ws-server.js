@@ -107,6 +107,7 @@ export function handleWSConnection(clientWs, options) {
                 setAbortController: (ac) => { currentAbortController = ac; },
                 setProcessing: (v) => { isProcessing = v; },
                 isClosed: () => closed,
+                clearCleanupTimer: () => { if (cleanupTimer) { clearTimeout(cleanupTimer); cleanupTimer = null; } },
             });
         } else if (message.type === 'response.cancel') {
             if (currentAbortController) {
@@ -280,7 +281,7 @@ async function _processRequest(clientWs, message, authResult, handleRequest, ctx
         // （在 for-await 循环结束后调用 releaseResponsesWebSocketConnection/discardResponsesWebSocketConnection）
 
         // 清理断连超时定时器
-        if (cleanupTimer) { clearTimeout(cleanupTimer); cleanupTimer = null; }
+        ctx.clearCleanupTimer();
 
         // 记录用量
         if (ctx.onUsage && (inputTokens > 0 || outputTokens > 0)) {

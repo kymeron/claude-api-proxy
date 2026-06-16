@@ -2100,8 +2100,6 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
 export async function handleRelayResponsesWS(clientWs, req) {
     const tenantId = req.tenantId;
     const upstreamManager = await unifiedTenantManager.getUpstreamManager(tenantId);
-    const upstream = upstreamManager?.getActiveUpstream();
-
     handleWSConnection(clientWs, {
         authenticate: () => true,
         req,
@@ -2113,6 +2111,8 @@ export async function handleRelayResponsesWS(clientWs, req) {
                 });
             }
 
+            // 每次请求时重新获取活跃上游，确保切换上游后立即生效
+            const upstream = upstreamManager.getActiveUpstream();
             if (!upstream) {
                 throw Object.assign(new Error('未配置可用上游'), {
                     name: 'ResponsesWebSocketError',
