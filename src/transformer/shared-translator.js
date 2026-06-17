@@ -1001,15 +1001,22 @@ export function normalizeResponsesPayload(payload, meta = {}) {
         }
     }
 
-    // input 中 assistant 消息添加 partial 字段
+    // input 尾部 assistant 消息的模型相关处理：
     // 火山引擎 Responses API：partial 只能用在 input 最后一条消息上，且必须为 true
     // 中间的 assistant 消息不能带 partial 字段，否则报 400
-    // 只有 doubao-seed 系列模型支持续写模式（partial prefill），glm 等模型不支持会报 400，
-    // 因此仅当模型命中 doubao-seed 时才给最后一条 assistant 消息注入 partial: true
+    // - doubao-seed 系列：支持 partial（prefill）续写，保留尾部 assistant 并注入 partial:true
+    // - 其他模型（如 glm）：不支持 prefill，最后一条消息不能是 assistant 角色，否则上游 400：
+    //   "The last message cannot be from the assistant for a model that does not support prefill"
+    //   此时丢弃尾部 assistant 消息，让 input 退回以 user 结尾的合法形态（符合官方文档 input 约定）。
+    //   与 sanitizeResponsesInput 末尾逻辑保持一致，覆盖 relay HTTP 透传路径。
     if (Array.isArray(ordered.input) && ordered.input.length > 0) {
         const lastItem = ordered.input[ordered.input.length - 1];
-        if (lastItem?.role === 'assistant' && lastItem.partial === undefined && isDoubaoSeedModel(ordered.model)) {
-            lastItem.partial = true;
+        if (lastItem?.role === 'assistant') {
+            if (lastItem.partial === undefined && isDoubaoSeedModel(ordered.model)) {
+                lastItem.partial = true;
+            } else if (!isDoubaoSeedModel(ordered.model)) {
+                ordered.input.pop();
+            }
         }
     }
 
