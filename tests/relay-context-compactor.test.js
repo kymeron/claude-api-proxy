@@ -160,7 +160,7 @@ test('resolveContextCompactionPolicy defaults unmarked models to 200k', () => {
     for (const model of ['deepseek-chat', 'claude-3-5-sonnet-20241022', 'glm-5.2', 'kimi-k2.7', 'deepseek-v4-pro']) {
         const policy = resolveContextCompactionPolicy(model);
         assert.equal(policy.contextWindowTokens, 200_000);
-        assert.equal(policy.thresholdTokens, 140_000);
+        assert.equal(policy.thresholdTokens, 180_000);
         assert.equal(policy.recentTokens, 50_000);
         assert.equal(policy.summaryTokens, 4096);
     }
@@ -169,7 +169,7 @@ test('resolveContextCompactionPolicy defaults unmarked models to 200k', () => {
 test('resolveContextCompactionPolicy uses bracketed 1m marker', () => {
     const policy = resolveContextCompactionPolicy('glm-5.2 [1m]');
     assert.equal(policy.contextWindowTokens, 1_000_000);
-    assert.equal(policy.thresholdTokens, 700_000);
+    assert.equal(policy.thresholdTokens, 900_000);
     assert.equal(policy.recentTokens, 250_000);
     assert.equal(policy.summaryTokens, 4096);
 });
