@@ -86,11 +86,11 @@ export async function compactChatRequestIfNeeded({
         return unchanged(chatRequest, 'empty_summary', estimatedTokens);
     }
 
-    const compactedMessages = [
-        ...split.systemMessages,
-        {role: 'system', content: `${RELAY_COMPACTION_SUMMARY_PREFIX}\n${summary}`},
-        ...split.recentMessages
-    ];
+    const compactedMessages = buildCompactedMessages({
+        systemMessages: split.systemMessages,
+        summary,
+        recentMessages: split.recentMessages
+    });
     const compactedRequest = {
         ...clone(chatRequest),
         messages: compactedMessages
@@ -151,12 +151,16 @@ function splitMessagesForCompaction(messages, recentTokens) {
 
     for (const message of messages) {
         if (!message || typeof message !== 'object') continue;
-        if (isRelaySummaryMessage(message)) {
-            previousSummaries.push(stripSummaryPrefix(message.content));
+        if (inLeadingSystem && (message.role === 'system' || message.role === 'developer')) {
+            const splitSystem = splitRelaySummaryFromContent(message.content);
+            if (splitSystem.summary) previousSummaries.push(splitSystem.summary);
+            if (splitSystem.content) {
+                systemMessages.push({...clone(message), content: splitSystem.content});
+            }
             continue;
         }
-        if (inLeadingSystem && (message.role === 'system' || message.role === 'developer')) {
-            systemMessages.push(clone(message));
+        if (isRelaySummaryMessage(message)) {
+            previousSummaries.push(stripSummaryPrefix(message.content));
             continue;
         }
         inLeadingSystem = false;
@@ -174,6 +178,10 @@ function splitMessagesForCompaction(messages, recentTokens) {
         tailStart--;
     }
 
+    while (tailStart > 0 && conversationMessages[tailStart]?.role !== 'user') {
+        tailStart--;
+    }
+
     return {
         systemMessages,
         previousSummary: previousSummaries.filter(Boolean).join('\n\n'),
@@ -185,6 +193,37 @@ function splitMessagesForCompaction(messages, recentTokens) {
 function isRelaySummaryMessage(message) {
     return typeof message?.content === 'string'
         && message.content.startsWith(RELAY_COMPACTION_SUMMARY_PREFIX);
+}
+
+function splitRelaySummaryFromContent(content) {
+    if (typeof content !== 'string') return {content, summary: ''};
+    const summaryIndex = content.indexOf(RELAY_COMPACTION_SUMMARY_PREFIX);
+    if (summaryIndex < 0) return {content, summary: ''};
+    return {
+        content: content.slice(0, summaryIndex).trim(),
+        summary: content.slice(summaryIndex + RELAY_COMPACTION_SUMMARY_PREFIX.length).trim()
+    };
+}
+
+function buildCompactedMessages({systemMessages, summary, recentMessages}) {
+    const summaryContent = `${RELAY_COMPACTION_SUMMARY_PREFIX}\n${summary}`;
+    if (!Array.isArray(systemMessages) || systemMessages.length === 0) {
+        return [{role: 'system', content: summaryContent}, ...recentMessages];
+    }
+
+    const systemContent = systemMessages
+        .map((message) => contentToText(message.content))
+        .filter(Boolean)
+        .join('\n\n');
+
+    return [
+        {
+            ...clone(systemMessages[0]),
+            role: 'system',
+            content: [systemContent, summaryContent].filter(Boolean).join('\n\n')
+        },
+        ...recentMessages
+    ];
 }
 
 function stripSummaryPrefix(content) {

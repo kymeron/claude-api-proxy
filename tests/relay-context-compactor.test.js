@@ -80,12 +80,10 @@ test('compactChatRequestIfNeeded replaces old history with one summary and recen
     assert.equal(result.reason, 'threshold');
     assert.deepEqual(result.chatRequest.tools, chatRequest.tools);
     assert.equal(result.chatRequest.tool_choice, 'auto');
-    assert.deepEqual(result.chatRequest.messages.map((item) => item.role), ['system', 'system', 'user']);
-    assert.equal(result.chatRequest.messages[0].content, 'You are a coding assistant.');
-    assert.equal(
-        result.chatRequest.messages[1].content,
-        `${RELAY_COMPACTION_SUMMARY_PREFIX}\nSummary of old turns, tool decisions, files mentioned, and open tasks.`
-    );
+    assert.deepEqual(result.chatRequest.messages.map((item) => item.role), ['system', 'user']);
+    assert.match(result.chatRequest.messages[0].content, /You are a coding assistant\./);
+    assert.match(result.chatRequest.messages[0].content, /\[Relay conversation summary\]/);
+    assert.match(result.chatRequest.messages[0].content, /Summary of old turns, tool decisions, files mentioned, and open tasks\./);
     assert.equal(result.chatRequest.messages.at(-1).content.includes('latest question'), true);
     assert.equal(estimateChatRequestTokens(result.chatRequest) < estimateChatRequestTokens(chatRequest), true);
 });
@@ -120,8 +118,42 @@ test('compactChatRequestIfNeeded folds a previous relay summary into the replace
     const summaries = result.chatRequest.messages.filter((item) =>
         typeof item.content === 'string' && item.content.startsWith(RELAY_COMPACTION_SUMMARY_PREFIX)
     );
-    assert.equal(summaries.length, 1);
-    assert.equal(summaries[0].content, `${RELAY_COMPACTION_SUMMARY_PREFIX}\nUpdated compact summary.`);
+    assert.equal(summaries.length, 0);
+    assert.deepEqual(result.chatRequest.messages.map((item) => item.role), ['system', 'user']);
+    assert.match(result.chatRequest.messages[0].content, /Original system/);
+    assert.match(result.chatRequest.messages[0].content, /\[Relay conversation summary\]\nUpdated compact summary\./);
+});
+
+test('compactChatRequestIfNeeded folds an embedded previous relay summary', async () => {
+    const chatRequest = {
+        model: 'test-model',
+        messages: [
+            message('system', `Original system\n\n${RELAY_COMPACTION_SUMMARY_PREFIX}\nPrevious embedded summary.`),
+            message('user', 'older turn '.repeat(150)),
+            message('assistant', 'older answer '.repeat(150)),
+            message('user', 'current question')
+        ]
+    };
+
+    const result = await compactChatRequestIfNeeded({
+        chatRequest,
+        summarize: async ({previousSummary, messages}) => {
+            assert.equal(previousSummary, 'Previous embedded summary.');
+            assert.deepEqual(messages.map((item) => item.role), ['user', 'assistant']);
+            return 'Updated embedded summary.';
+        },
+        config: {
+            enabled: true,
+            thresholdTokens: 50,
+            recentTokens: 10,
+            summaryTokens: 128
+        }
+    });
+
+    assert.deepEqual(result.chatRequest.messages.map((item) => item.role), ['system', 'user']);
+    assert.match(result.chatRequest.messages[0].content, /^Original system/);
+    assert.doesNotMatch(result.chatRequest.messages[0].content, /Previous embedded summary/);
+    assert.match(result.chatRequest.messages[0].content, /\[Relay conversation summary\]\nUpdated embedded summary\./);
 });
 
 test('resolveContextCompactionPolicy defaults unmarked models to 200k', () => {
@@ -197,11 +229,13 @@ test('compactChatRequestIfNeeded triggers using the automatic model threshold', 
     const oldText = 'old-auto-context '.repeat(30000);
     const recentText = 'recent-auto-context '.repeat(200);
     const chatRequest = {
-            model: 'test-auto-default',
+        model: 'test-auto-default',
         messages: [
             message('system', 'Original system'),
             message('user', oldText + 'question 1'),
             message('assistant', oldText + 'answer 1'),
+            message('user', oldText + 'question 2'),
+            message('assistant', oldText + 'answer 2'),
             message('user', recentText + 'latest question')
         ]
     };
@@ -216,7 +250,9 @@ test('compactChatRequestIfNeeded triggers using the automatic model threshold', 
 
     assert.equal(result.compacted, true);
     assert.equal(result.reason, 'threshold');
-    assert.equal(result.chatRequest.messages[1].content, `${RELAY_COMPACTION_SUMMARY_PREFIX}\nAutomatic policy summary.`);
+    assert.deepEqual(result.chatRequest.messages.map((item) => item.role).slice(0, 2), ['system', 'user']);
+    assert.match(result.chatRequest.messages[0].content, /Original system/);
+    assert.match(result.chatRequest.messages[0].content, /\[Relay conversation summary\]\nAutomatic policy summary\./);
 });
 
 test('isContextWindowExceededError matches only context-window 400 errors', () => {
