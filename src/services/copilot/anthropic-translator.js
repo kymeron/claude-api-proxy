@@ -211,7 +211,7 @@ function handleAssistantMessage(message) {
 
     const result = {
         role: 'assistant',
-        content: allText || null
+        content: allText || (toolUseBlocks.length > 0 ? '' : null)
     };
 
     // 添加 tool_calls

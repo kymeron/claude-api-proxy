@@ -1,4 +1,5 @@
 import {createHash} from 'crypto';
+import {mergeConsecutiveAssistantMessages} from '../transformer/responses-translator.js';
 
 function extractAnthropicCacheHitTokens(usage) {
     return usage?.cache_read_input_tokens || 0;
@@ -53,7 +54,9 @@ function chatToolChoiceToAnthropic(toolChoice) {
 export function chatRequestToAnthropic(chatReq) {
     const messages = [];
     const systemParts = [];
-    for (const message of chatReq.messages || []) {
+    const chatMessages = cloneChatMessages(chatReq.messages || []);
+    mergeConsecutiveAssistantMessages(chatMessages);
+    for (const message of chatMessages) {
         if (!message || typeof message !== 'object') continue;
         if (message.role === 'system' || message.role === 'developer') {
             const text = chatContentToText(message.content);
@@ -109,6 +112,13 @@ export function chatRequestToAnthropic(chatReq) {
     const toolChoice = chatToolChoiceToAnthropic(chatReq.tool_choice);
     if (toolChoice) payload.tool_choice = toolChoice;
     return payload;
+}
+
+function cloneChatMessages(messages) {
+    return messages.map((message) => {
+        if (!message || typeof message !== 'object') return message;
+        return JSON.parse(JSON.stringify(message));
+    });
 }
 
 export function anthropicUsageToChatUsage(usage) {

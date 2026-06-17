@@ -500,7 +500,7 @@ function handleAssistantMessage(message) {
 
     const result = {
         role: 'assistant',
-        content: allText || null
+        content: allText || (toolUseBlocks.length > 0 ? '' : null)
     };
 
     // fix: 将 thinking 转换为 reasoning_content（DeepSeek 和 kimi 要求多轮回传）

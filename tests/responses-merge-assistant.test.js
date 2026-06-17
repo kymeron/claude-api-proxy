@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {responsesRequestToChat, responsesResponseToChat} from '../src/transformer/responses-translator.js';
+import {mergeConsecutiveAssistantMessages, responsesRequestToChat, responsesResponseToChat} from '../src/transformer/responses-translator.js';
 
 test('responsesRequestToChat merges consecutive assistant messages from output_text + function_call', () => {
     const result = responsesRequestToChat({
@@ -108,6 +108,45 @@ test('responsesRequestToChat handles multi-turn with tool calls correctly', () =
         {role: 'assistant', content: 'The weather is sunny!'},
         {role: 'user', content: 'And the time?'}
     ]);
+});
+
+test('mergeConsecutiveAssistantMessages moves preceding tool result directly after assistant tool_calls', () => {
+    const toolCall = {
+        id: 'call_1',
+        type: 'function',
+        function: {name: 'read_file', arguments: '{"path":"README.md"}'}
+    };
+    const messages = [
+        {role: 'user', content: 'Read README.md'},
+        {role: 'tool', tool_call_id: 'call_1', content: 'README contents'},
+        {role: 'assistant', content: '', tool_calls: [toolCall]},
+        {role: 'user', content: 'Continue'}
+    ];
+
+    mergeConsecutiveAssistantMessages(messages);
+
+    assert.deepEqual(messages, [
+        {role: 'user', content: 'Read README.md'},
+        {role: 'assistant', content: '', tool_calls: [toolCall]},
+        {role: 'tool', tool_call_id: 'call_1', content: 'README contents'},
+        {role: 'user', content: 'Continue'}
+    ]);
+});
+
+test('mergeConsecutiveAssistantMessages normalizes assistant tool_calls content to empty string', () => {
+    const toolCall = {
+        id: 'call_1',
+        type: 'function',
+        function: {name: 'search', arguments: '{"query":"test"}'}
+    };
+    const messages = [
+        {role: 'assistant', content: null, tool_calls: [toolCall]},
+        {role: 'tool', tool_call_id: 'call_1', content: 'result'}
+    ];
+
+    mergeConsecutiveAssistantMessages(messages);
+
+    assert.equal(messages[0].content, '');
 });
 
 // === DeepSeek reasoning_content tests ===

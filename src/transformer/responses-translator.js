@@ -337,6 +337,9 @@ export function mergeConsecutiveAssistantMessages(messages) {
 
             // 从原位置取出 tool 消息
             const [toolMsg] = messages.splice(toolIdx, 1);
+            if (toolIdx < j) {
+                j--;
+            }
 
             // 插入到当前 assistant 的 tool 消息组之后
             // 找到当前 assistant 后面连续 tool 消息的末尾
@@ -393,6 +396,14 @@ export function mergeConsecutiveAssistantMessages(messages) {
     for (let j = messages.length - 1; j >= 0; j--) {
         if (messages[j].role === 'tool' && messages[j].tool_call_id && !allToolCallIds.has(messages[j].tool_call_id)) {
             messages.splice(j, 1);
+        }
+    }
+
+    // Chat 兼容上游通常允许 assistant(tool_calls).content 为 null，
+    // 但 Kimi/DeepSeek 等严格实现要求这里是字符串。
+    for (const msg of messages) {
+        if (msg.role === 'assistant' && msg.tool_calls?.length && msg.content == null) {
+            msg.content = '';
         }
     }
 }

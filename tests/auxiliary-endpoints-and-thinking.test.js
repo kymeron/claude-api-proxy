@@ -3,10 +3,13 @@ import test from 'node:test';
 import {existsSync, readFileSync} from 'fs';
 import {join} from 'path';
 import {
+    openAIToAnthropic,
     sanitizeAnthropicPayload,
     sanitizeAnthropicMessages
 } from '../src/transformer/shared-translator.js';
 import {anthropicToOpenAI as copilotAnthropicToOpenAI} from '../src/services/copilot/anthropic-translator.js';
+import {anthropicToOpenAI as relayAnthropicToOpenAI} from '../src/services/relay/translator.js';
+import {anthropicToOpenAI as codebuddyAnthropicToOpenAI} from '../src/services/codebuddy/translator.js';
 import {
     anthropicResponseToChat,
     chatRequestToAnthropic
@@ -64,6 +67,80 @@ test('copilot keeps historical thinking separate from assistant content', () => 
     const assistant = converted.messages.find((message) => message.role === 'assistant');
     assert.equal(assistant.content, 'visible answer');
     assert.equal(assistant.reasoning_content, 'hidden chain');
+});
+
+test('anthropic translators keep tool_use-only assistant content as empty string', () => {
+    for (const convert of [copilotAnthropicToOpenAI, relayAnthropicToOpenAI, codebuddyAnthropicToOpenAI]) {
+        const converted = convert({
+            model: 'claude-sonnet-4',
+            max_tokens: 128,
+            messages: [{
+                role: 'assistant',
+                content: [
+                    {type: 'thinking', thinking: 'need tool'},
+                    {type: 'tool_use', id: 'call_1', name: 'read_file', input: {path: 'README.md'}}
+                ]
+            }]
+        });
+
+        const assistant = converted.messages.find((message) => message.role === 'assistant');
+        assert.equal(assistant.content, '');
+        assert.equal(assistant.reasoning_content, 'need tool');
+        assert.equal(assistant.tool_calls[0].id, 'call_1');
+    }
+});
+
+test('openAIToAnthropic returns reasoning_content as a thinking block', () => {
+    const converted = openAIToAnthropic({
+        id: 'chatcmpl_1',
+        model: 'kimi-k2.6',
+        choices: [{
+            index: 0,
+            message: {
+                role: 'assistant',
+                reasoning_content: 'check the file first',
+                content: 'I will read it.',
+                tool_calls: [{
+                    id: 'call_1',
+                    type: 'function',
+                    function: {name: 'read_file', arguments: '{"path":"README.md"}'}
+                }]
+            },
+            finish_reason: 'tool_calls'
+        }],
+        usage: {prompt_tokens: 10, completion_tokens: 5}
+    });
+
+    assert.deepEqual(converted.content.map((block) => block.type), ['thinking', 'text', 'tool_use']);
+    assert.equal(converted.content[0].thinking, 'check the file first');
+});
+
+test('chatRequestToAnthropic moves preceding tool result after assistant tool_use', () => {
+    const converted = chatRequestToAnthropic({
+        model: 'claude-sonnet-4',
+        messages: [
+            {role: 'user', content: 'Read README.md'},
+            {role: 'tool', tool_call_id: 'call_1', content: 'README contents'},
+            {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{
+                    id: 'call_1',
+                    type: 'function',
+                    function: {name: 'read_file', arguments: '{"path":"README.md"}'}
+                }]
+            },
+            {role: 'user', content: 'Continue'}
+        ]
+    });
+
+    assert.equal(converted.messages[0].role, 'user');
+    assert.equal(converted.messages[1].role, 'assistant');
+    assert.equal(converted.messages[1].content[0].type, 'tool_use');
+    assert.equal(converted.messages[2].role, 'user');
+    assert.equal(converted.messages[2].content[0].type, 'tool_result');
+    assert.equal(converted.messages[2].content[0].tool_use_id, 'call_1');
+    assert.equal(converted.messages[3].role, 'user');
 });
 
 test('all service routes keep Anthropic endpoints out of OpenAI namespace', () => {

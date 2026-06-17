@@ -631,6 +631,7 @@ async function handleOpenAIChatCompletions(req, res) {
         openAIPayload.messages = injectBehaviorRules(openAIPayload.messages, relayStatsModel);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         openAIPayload.messages = stripDynamicReminders(openAIPayload.messages);
+        mergeConsecutiveAssistantMessages(openAIPayload.messages);
         const baseConversationKey = extractConversationKey(req, openAIPayload, {tenantId});
         relayConversationStore.saveChatRequest({
             tenantId,
@@ -961,6 +962,7 @@ async function handleAnthropicMessages(req, res) {
         const openAIPayload = anthropicToOpenAI(anthropicPayload, relayStatsModel);
         openAIPayload.messages = injectBehaviorRules(openAIPayload.messages, relayStatsModel);
         openAIPayload.messages = stripDynamicReminders(openAIPayload.messages);
+        mergeConsecutiveAssistantMessages(openAIPayload.messages);
         const baseConversationKey = extractConversationKey(req, openAIPayload, {tenantId});
         relayConversationStore.saveChatRequest({
             tenantId,
@@ -1333,6 +1335,7 @@ async function handleAnthropicMessages(req, res) {
                         message: {
                             role: 'assistant',
                             content: aggregated.content || null,
+                            reasoning_content: aggregated.reasoningContent || undefined,
                             tool_calls: aggregated.toolCalls.length > 0 ? aggregated.toolCalls : undefined
                         },
                         finish_reason: aggregated.finishReason || 'stop'
@@ -1925,6 +1928,7 @@ async function handleResponsesCompact(req, res) {
             const chatReq = compactRequestToChat(compactReq);
             chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
             chatReq.messages = stripDynamicReminders(chatReq.messages);
+            mergeConsecutiveAssistantMessages(chatReq.messages);
             const anthropicPayload = chatRequestToAnthropic({
                 ...chatReq,
                 model: upstreamManager.resolveModel(chatReq.model, upstream.index),
@@ -1965,6 +1969,7 @@ async function handleResponsesCompact(req, res) {
             chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
             // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
             chatReq.messages = stripDynamicReminders(chatReq.messages);
+            mergeConsecutiveAssistantMessages(chatReq.messages);
             const responsesPayload = chatRequestToResponses({
                 ...chatReq,
                 model: upstreamManager.resolveModel(chatReq.model, upstream.index),
@@ -2027,6 +2032,7 @@ async function handleResponsesCompact(req, res) {
         chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
         // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         chatReq.messages = stripDynamicReminders(chatReq.messages);
+        mergeConsecutiveAssistantMessages(chatReq.messages);
 
         const tenant = await unifiedTenantManager.getTenant(tenantId);
         const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};

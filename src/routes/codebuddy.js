@@ -18,7 +18,8 @@ import {
     createResponsesStreamState,
     chatChunkToResponsesEvents,
     compactRequestToChat,
-    chatResponseToCompact
+    chatResponseToCompact,
+    mergeConsecutiveAssistantMessages
 } from '../transformer/responses-translator.js';
 import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
 import {resolveCredential} from '../services/gateway/gateway-auth.js';
@@ -211,6 +212,15 @@ async function parseBody(req) {
     return Buffer.concat(chunks).toString('utf8');
 }
 
+function prepareCodebuddyOutboundChatRequest(chatRequest, {model, stream} = {}) {
+    if (model) chatRequest.model = model;
+    if (stream !== undefined) chatRequest.stream = stream;
+    chatRequest.messages = injectBehaviorRules(chatRequest.messages || [], chatRequest.model);
+    chatRequest.messages = stripDynamicReminders(chatRequest.messages);
+    mergeConsecutiveAssistantMessages(chatRequest.messages);
+    return chatRequest;
+}
+
 /**
  * 处理 OpenAI 格式的 /v1/chat/completions 请求 - 直接透传
  */
@@ -241,10 +251,7 @@ async function handleOpenAIChatCompletions(req, res) {
             openAIPayload.model = mapModelName(openAIPayload.model);
         }
 
-        // 注入行为规则（统一在路由层注入一次）
-        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages, openAIPayload.model);
-        // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
-        openAIPayload.messages = stripDynamicReminders(openAIPayload.messages);
+        prepareCodebuddyOutboundChatRequest(openAIPayload);
 
         // 从 messages 前缀推算稳定的 conversationId，确保同一对话的 prompt_cache_key 一致
         const conversationId = resolveConversationId(req, openAIPayload.messages, openAIPayload, {
@@ -334,6 +341,7 @@ async function handleOpenAIChatCompletions(req, res) {
                         message: {
                             role: 'assistant',
                             content: aggregated.content || null,
+                            reasoning_content: aggregated.reasoningContent || undefined,
                             tool_calls: aggregated.toolCalls.length > 0 ? aggregated.toolCalls : undefined
                         },
                         finish_reason: aggregated.finishReason || 'stop'
@@ -419,10 +427,7 @@ async function handleAnthropicMessages(req, res) {
             openAIPayload.model = mapModelName(openAIPayload.model);
         }
 
-        // 注入行为规则（translateMessages 不再内部注入，统一在路由层注入一次）
-        openAIPayload.messages = injectBehaviorRules(openAIPayload.messages, openAIPayload.model);
-        // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
-        openAIPayload.messages = stripDynamicReminders(openAIPayload.messages);
+        prepareCodebuddyOutboundChatRequest(openAIPayload);
 
         // 从 messages 前缀推算稳定的 conversationId，确保同一对话的 prompt_cache_key 一致
         const conversationId = resolveConversationId(req, openAIPayload.messages, openAIPayload, {
@@ -644,6 +649,7 @@ async function handleAnthropicMessages(req, res) {
                         message: {
                             role: 'assistant',
                             content: aggregated.content || null,
+                            reasoning_content: aggregated.reasoningContent || undefined,
                             tool_calls: aggregated.toolCalls.length > 0 ? aggregated.toolCalls : undefined
                         },
                         finish_reason: aggregated.finishReason || 'stop',
@@ -774,9 +780,7 @@ async function handleResponsesAPI(req, res) {
             chatReq.model = mapModelName(chatReq.model);
         }
 
-        chatReq.messages = injectBehaviorRules(chatReq.messages, chatReq.model);
-        // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
-        chatReq.messages = stripDynamicReminders(chatReq.messages);
+        prepareCodebuddyOutboundChatRequest(chatReq);
 
         // 从 messages 前缀推算稳定的 conversationId，确保同一对话的 prompt_cache_key 一致
         const conversationId = resolveConversationId(req, chatReq.messages, chatReq, {
@@ -992,9 +996,7 @@ async function handleResponsesCompact(req, res) {
             chatReq.model = mapModelName(chatReq.model);
         }
 
-        chatReq.messages = injectBehaviorRules(chatReq.messages, chatReq.model);
-        // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
-        chatReq.messages = stripDynamicReminders(chatReq.messages);
+        prepareCodebuddyOutboundChatRequest(chatReq);
 
         // 从 messages 前缀推算稳定的 conversationId，确保同一对话的 prompt_cache_key 一致
         const conversationId = resolveConversationId(req, chatReq.messages, chatReq, {
@@ -1249,8 +1251,7 @@ export function handleCodebuddyResponsesWS(clientWs, req) {
             // Responses → Chat Completions
             const chatReq = responsesRequestToChat(payload);
             if (chatReq.model) chatReq.model = mapModelName(chatReq.model);
-            chatReq.messages = injectBehaviorRules(chatReq.messages, chatReq.model);
-            chatReq.messages = stripDynamicReminders(chatReq.messages);
+            prepareCodebuddyOutboundChatRequest(chatReq);
             chatReq.stream = true;
 
             const conversationId = resolveConversationId(req, chatReq.messages, chatReq, {tenantId});
