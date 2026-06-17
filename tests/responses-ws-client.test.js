@@ -68,7 +68,7 @@ test('sendResponsesWebSocketRequest sanitizes previous response item ids and tra
 
     const events = [];
     for await (const event of sendResponsesWebSocketRequest(connection, {
-        model: 'gpt-5.4',
+        model: 'doubao-seed-1-6-251015',
         stream: true,
         input: [
             {
@@ -89,7 +89,8 @@ test('sendResponsesWebSocketRequest sanitizes previous response item ids and tra
     assert.deepEqual(socket.sent[0].input, [
         {
             role: 'assistant',
-            content: [{type: 'output_text', text: 'old text'}]
+            content: [{type: 'output_text', text: 'old text'}],
+            partial: true
         }
     ]);
 });

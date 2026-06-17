@@ -65,7 +65,10 @@ test('sanitizeResponsesInput removes nested reference fields that point to previ
     ]);
 });
 
-test('sanitizeResponsesInput does NOT inject partial for non-prefill models (e.g. glm-latest)', () => {
+test('sanitizeResponsesInput drops trailing assistant message for non-prefill models (e.g. glm-latest)', () => {
+    // 火山引擎 Responses API：不支持 prefill 的模型，input 最后一条不能是 assistant 角色，
+    // 否则上游 400 "The last message cannot be from the assistant for a model that does not support prefill"
+    // 故对非 doubao-seed 模型，尾部 assistant 消息需被移除，让 input 退回以 user 结尾。
     const input = [
         {role: 'user', content: 'Please write bubble sort code.'},
         {role: 'assistant', content: 'def bubble_sort(arr):'}
@@ -74,10 +77,8 @@ test('sanitizeResponsesInput does NOT inject partial for non-prefill models (e.g
     const sanitized = sanitizeResponsesInput(input, 'glm-latest');
 
     assert.deepEqual(sanitized, [
-        {role: 'user', content: 'Please write bubble sort code.'},
-        {role: 'assistant', content: 'def bubble_sort(arr):'}
+        {role: 'user', content: 'Please write bubble sort code.'}
     ]);
-    assert.equal(sanitized[1].partial, undefined);
 });
 
 test('sanitizeResponsesInput injects partial only for doubao-seed models with assistant tail', () => {
@@ -90,7 +91,9 @@ test('sanitizeResponsesInput injects partial only for doubao-seed models with as
     const doubao = sanitizeResponsesInput(input, 'doubao-seed-2-0-lite-260215');
     assert.equal(doubao[1].partial, true);
 
-    // codingplan 网关下的 glm：不注入 partial（不支持 prefill，会报 400）
+    // codingplan 网关下的 glm：移除尾部 assistant（不支持 prefill，保留会 400）
     const glm = sanitizeResponsesInput(input, 'glm-latest');
-    assert.equal(glm[1].partial, undefined);
+    assert.equal(glm.length, 1);
+    assert.equal(glm[0].role, 'user');
+    assert.equal(glm[0].partial, undefined);
 });
