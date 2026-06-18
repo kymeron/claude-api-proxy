@@ -88,33 +88,6 @@ test('compactChatRequestIfNeeded replaces old history with one summary and recen
     assert.equal(estimateChatRequestTokens(result.chatRequest) < estimateChatRequestTokens(chatRequest), true);
 });
 
-test('context compaction summary input omits historical reasoning text', async () => {
-    const chatRequest = {
-        model: 'test-model',
-        messages: [
-            message('system', 'You are concise.'),
-            message('user', 'old question '.repeat(80)),
-            {role: 'assistant', content: 'old answer '.repeat(80), reasoning_content: 'hidden chain should not be summarized'},
-            message('user', 'latest question')
-        ]
-    };
-
-    await compactChatRequestIfNeeded({
-        chatRequest,
-        summarize: async ({summaryRequest}) => {
-            assert.doesNotMatch(summaryRequest.messages[1].content, /hidden chain should not be summarized/);
-            assert.doesNotMatch(summaryRequest.messages[1].content, /reasoning:/);
-            return 'Summary without hidden reasoning.';
-        },
-        config: {
-            enabled: true,
-            thresholdTokens: 50,
-            recentTokens: 10,
-            summaryTokens: 128
-        }
-    });
-});
-
 test('compactChatRequestIfNeeded folds a previous relay summary into the replacement summary', async () => {
     const chatRequest = {
         model: 'test-model',

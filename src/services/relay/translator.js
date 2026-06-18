@@ -333,7 +333,7 @@ function translateTools(anthropicTools) {
  * 从 Anthropic 请求中解析 thinking 配置
  * 返回 { disabled: boolean, effort: string|null }
  *
- * 优先级：output_config.effort > thinking 配置推断；无显式配置则不设置
+ * 优先级：output_config.effort > thinking 配置推断 > 默认 high
  * 与 codebuddy 不同，relay 不做模型白名单过滤，只要请求中有 thinking 配置就转换
  */
 function resolveThinkingConfig(anthropicPayload) {
@@ -359,10 +359,11 @@ function resolveThinkingConfig(anthropicPayload) {
     // 2. 根据 thinking 配置推断
     if (!effort && thinking) {
         if (thinking.type === 'adaptive') {
-            effort = 'medium';
+            effort = 'high';
         } else if (thinking.type === 'enabled' && thinking.budget_tokens) {
             if (thinking.budget_tokens <= 4000) effort = 'low';
-            else effort = 'medium';
+            else if (thinking.budget_tokens <= 16000) effort = 'medium';
+            else effort = 'high';
         }
     }
 

@@ -254,7 +254,7 @@ export async function createChatCompletions(payload, upstream, meta = {}) {
     const url = buildProtocolAwareUrl(upstream, 'chat/completions');
 
     const proxyMode = upstream.proxy ? upstream.proxy : '直连';
-    const reasoningEffort = payload.reasoning_effort || 'medium';
+    const reasoningEffort = payload.reasoning_effort || 'high';
     const userInfo = meta.tenantName && meta.tenantUsername ? `${meta.tenantName}(${meta.tenantUsername})` : '';
     logger.info(
         `[${upstream.name}]: ${upstream.base_url}, model: ${payload.model || 'unknown'}, effort: ${reasoningEffort}, proxy: ${proxyMode}, ${userInfo}`

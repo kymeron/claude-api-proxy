@@ -52,7 +52,7 @@ export function anthropicToOpenAI(anthropicPayload, modelId) {
         } else if (thinkingConfig.effort) {
             openAIPayload.reasoning_effort = thinkingConfig.effort;
         }
-        // 否则不设置，避免无显式请求时推高隐藏思考预算
+        // 否则不设置，让 normalizePayload 默认注入 'high'
     }
 
     return openAIPayload;
@@ -80,10 +80,11 @@ function resolveThinkingConfig(anthropicPayload) {
 
     if (!effort && thinking) {
         if (thinking.type === 'adaptive') {
-            effort = 'medium';
+            effort = 'high';
         } else if (thinking.type === 'enabled' && thinking.budget_tokens) {
             if (thinking.budget_tokens <= 4000) effort = 'low';
-            else effort = 'medium';
+            else if (thinking.budget_tokens <= 16000) effort = 'medium';
+            else effort = 'high';
         }
     }
 
