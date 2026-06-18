@@ -442,7 +442,6 @@ export function extractStableContent(systemContent) {
 function normalizeDynamicLine(line) {
     // ── 仍然剥离的行（纯记账/模型不需要）──
     if (/^x-[a-z]/i.test(line)) return {action: 'drop'};
-    if (/^sessionId:/i.test(line)) return {action: 'drop'};
     if (/fingerprint[-:][a-f0-9]{6,}/i.test(line)) return {action: 'drop'};
     if (/^cc_version:/i.test(line)) return {action: 'drop'};
     // commit hash 行由 extractStableContent 的 isGitStatusLine 在 git 块上下文中处理，
@@ -461,7 +460,6 @@ function normalizeDynamicLine(line) {
 function isDynamicLine(line) {
     // 与 normalizeDynamicLine 的 drop 列表保持一致
     if (/^x-[a-z]/i.test(line)) return true;
-    if (/^sessionId:/i.test(line)) return true;
     if (/fingerprint[-:][a-f0-9]{6,}/i.test(line)) return true;
     if (/^cc_version:/i.test(line)) return true;
     // commit hash 不再全局匹配，避免误杀非 git 的十六进制内容
@@ -505,8 +503,10 @@ function normalizeAnchorIdentity(value) {
 function extractEmbeddedSessionId(value, depth = 0) {
     if (depth > 8 || value == null) return undefined;
     if (typeof value === 'string') {
-        const match = value.match(/<session-id>\s*([^<]+?)\s*<\/session-id>/i);
-        return normalizeAnchorIdentity(match?.[1]);
+        const tagMatch = value.match(/<session-id>\s*([^<]+?)\s*<\/session-id>/i);
+        if (tagMatch) return normalizeAnchorIdentity(tagMatch[1]);
+        const lineMatch = value.match(/(?:^|\n)\s*sessionId:\s*([^\n]+)/i);
+        return normalizeAnchorIdentity(lineMatch?.[1]);
     }
     if (Array.isArray(value)) {
         for (const item of value) {
@@ -527,19 +527,19 @@ function extractEmbeddedSessionId(value, depth = 0) {
 function extractPayloadConversationIdentity(payload) {
     const metadata = payload?.metadata && typeof payload.metadata === 'object' ? payload.metadata : {};
     const candidates = [
-        payload?.conversation_id,
-        payload?.conversationId,
         payload?.session_id,
         payload?.sessionId,
-        payload?.thread_id,
-        payload?.threadId,
-        metadata.conversation_id,
-        metadata.conversationId,
         metadata.session_id,
         metadata.sessionId,
+        extractEmbeddedSessionId(payload),
+        payload?.conversation_id,
+        payload?.conversationId,
+        metadata.conversation_id,
+        metadata.conversationId,
+        payload?.thread_id,
+        payload?.threadId,
         metadata.thread_id,
-        metadata.threadId,
-        extractEmbeddedSessionId(payload)
+        metadata.threadId
     ];
     for (const candidate of candidates) {
         const normalized = normalizeAnchorIdentity(candidate);
@@ -642,78 +642,36 @@ export function normalizePayload(payload, meta = {}) {
 }
 
 /**
- * 从 messages 中剥离纯记账性质的 <system-reminder> 块，
- * 并归一化会话身份相关的动态内容，保持缓存前缀稳定
+ * 仅剥离 Claude Code resume 文本中的 Last active 行。
  *
- * 参考 claude-code-cache-fix 的 content-strip + identity-normalization + fresh-session-sort 策略
- *
- * 处理以下动态内容（按执行顺序）：
- * 1. 剥离 <session_knowledge> 标签（每次会话不同）
- * 2. 归一化 SessionStart 输出（resume→startup，移除 session-id 和 Last active 行）
- * 3. 移除 "Continue from where you left off." 尾部块
- * 4. 将散落的 skills/deferred tools/MCP/hooks 块归位到第一条 user 消息
- * 5. 剥离纯记账性质的 system-reminder 块（token usage、budget 等）
- * 6. 归一化 microcompact 哨兵文本（移除时间戳抖动）
- * 7. 扩展处理 tool 消息中的 smooshed reminder
+ * 其它动态内容保留原位：session-id / sessionId、session_knowledge、
+ * SessionStart、Continue from where you left off、记账 reminder、MCP/skills/hooks
+ * reminder 以及 microcompact 时间戳都可能影响模型语义，不能为了前缀缓存过度清理。
  */
 export function stripDynamicReminders(messages) {
     if (!Array.isArray(messages)) return messages;
 
-    // ── 阶段1: 文本级归一化（对每条消息的文本内容做静态替换）──
-
-    let modified = false;
-    const normalized = messages.map((msg) => {
-        // 处理 user 和 tool 消息
+    let conservativeModified = false;
+    const stripLastActive = (text) => text.replace(/^Last active:.*$\n?/gm, '');
+    const conservative = messages.map((msg) => {
         if (msg.role !== 'user' && msg.role !== 'tool') return msg;
 
-        // 字符串形式的 content
         if (typeof msg.content === 'string') {
-            let content = msg.content;
-            const original = content;
-
-            // 1a. 保留 <session_knowledge> 标签——包含跨轮次上下文锚点，
-            //     剥离会导致模型丢失已建立的偏好和项目理解，幻觉增加
-
-            //    移除 <session-id>...</session-id> 标签
-            content = content.replace(/<session-id>[^<]*<\/session-id>\s*\n?/g, '');
-            //    移除 "Last active: ..." 行
-            content = content.replace(/^Last active:.*$\n?/gm, '');
-
-            // 1d. 归一化 microcompact 哨兵（移除时间戳）
-            //    "[Old tool result content cleared at 2026-04-30T13:42:11Z]" → "[Old tool result content cleared]"
-            content = content.replace(
-                /\[Old tool result content cleared at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z\]/g,
-                '[Old tool result content cleared]'
-            );
-
-            if (content !== original) {
-                modified = true;
+            const content = stripLastActive(msg.content);
+            if (content !== msg.content) {
+                conservativeModified = true;
                 if (!content.trim()) return null;
                 return {...msg, content};
             }
             return msg;
         }
 
-        // 数组形式的 content
         if (Array.isArray(msg.content)) {
             let changed = false;
-            const processed = msg.content.map((block) => {
+            const content = msg.content.map((block) => {
                 if (!block || block.type !== 'text' || typeof block.text !== 'string') return block;
-                let text = block.text;
-                const original = text;
-
-                // session_knowledge 保留——跨轮次上下文锚点，剥离会导致幻觉增加
-                // text = text.replace(/<session_knowledge[^>]*>[\\s\\S]*?<\\/session_knowledge>\\s*/g, '');
-                text = text.replace(/<session-id>[^<]*<\/session-id>\s*\n?/g, '');
-                text = text.replace(/^Last active:.*$\n?/gm, '');
-                // 保留 Continue from where you left off——强信号告诉模型"这是延续对话"
-                // text = text.replace(/\n*Continue from where you left off\.\s*$/m, '');
-                text = text.replace(
-                    /\[Old tool result content cleared at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z\]/g,
-                    '[Old tool result content cleared]'
-                );
-
-                if (text !== original) {
+                const text = stripLastActive(block.text);
+                if (text !== block.text) {
                     changed = true;
                     if (!text.trim()) return null;
                     return {...block, text};
@@ -722,270 +680,16 @@ export function stripDynamicReminders(messages) {
             }).filter(Boolean);
 
             if (changed) {
-                modified = true;
-                if (processed.length === 0) return null;
-                return {...msg, content: processed};
+                conservativeModified = true;
+                if (content.length === 0) return null;
+                return {...msg, content};
             }
-            return msg;
         }
 
         return msg;
     }).filter(Boolean);
 
-    // ── 阶段2: 剥离纯记账性质的 system-reminder 块 ──
-
-    const REMINDER_WRAP_REGEX = /^<system-reminder>\n([\s\S]*?)\n<\/system-reminder>\s*$/;
-    const BOOKKEEPING_PATTERNS = [
-        /Token usage:/i,
-        /Output tokens/i,
-        /USD budget:/i,
-        /cache_creation/i,
-        /cache_read/i,
-        /budget:\s*\$/i
-    ];
-
-    function isBookkeepingReminder(text) {
-        if (typeof text !== 'string') return false;
-        const m = text.match(REMINDER_WRAP_REGEX);
-        if (!m) return false;
-        return BOOKKEEPING_PATTERNS.some((rx) => rx.test(m[1]));
-    }
-
-    const SMOOSHED_REMINDER_REGEX = /\n\n<system-reminder>\n(?:[\s\S]*?)\n<\/system-reminder>\s*$/;
-
-    // 也匹配整条内容就是 reminder 的情况（没有前置正文）
-    const STANDALONE_REMINDER_REGEX = /^<system-reminder>\n(?:[\s\S]*?)\n<\/system-reminder>\s*$/;
-
-    let bookkeepingModified = false;
-    const result = normalized.map((msg) => {
-        // 处理 user 和 tool 消息中的记账 reminder
-        if (msg.role !== 'user' && msg.role !== 'tool') return msg;
-
-        if (typeof msg.content === 'string') {
-            let content = msg.content;
-            let changed = false;
-
-            // 先处理整条内容就是 bookkeeping reminder 的情况
-            if (isBookkeepingReminder(content)) {
-                bookkeepingModified = true;
-                return null;
-            }
-
-            // 再处理尾部 smooshed reminder
-            while (true) {
-                const m = content.match(SMOOSHED_REMINDER_REGEX);
-                if (!m) break;
-                const stripped = m[0].trim();
-                if (isBookkeepingReminder(stripped)) {
-                    content = content.slice(0, m.index);
-                    changed = true;
-                } else {
-                    break;
-                }
-            }
-            if (changed) {
-                bookkeepingModified = true;
-                if (!content.trim()) return null;
-                return {...msg, content};
-            }
-            return msg;
-        }
-
-        if (Array.isArray(msg.content)) {
-            const kept = msg.content.filter((block) => {
-                if (block && block.type === 'text' && isBookkeepingReminder(block.text)) {
-                    return false;
-                }
-                return true;
-            });
-            if (kept.length === msg.content.length) return msg;
-            bookkeepingModified = true;
-            if (kept.length === 0) return null;
-            return {...msg, content: kept};
-        }
-
-        return msg;
-    });
-
-    // 清除阶段2 产生的 null（被完全剥离的消息）
-    const cleaned = bookkeepingModified ? result.filter(Boolean) : result;
-
-    // ── 阶段3: 将散落的可重定位块归位到第一条 user 消息 ──
-
-    // 检测四类可重定位的 <system-reminder> 块
-    function classifyRelocatableBlock(text) {
-        if (typeof text !== 'string') return null;
-        const m = text.match(REMINDER_WRAP_REGEX);
-        if (!m) return null;
-        const inner = m[1];
-        if (/\bhook success\b/i.test(inner)) return 'hooks';
-        if (/\bavailable-skills\b/i.test(inner) || /<available-skills>/i.test(inner)) return 'skills';
-        if (/<deferred-tools>/i.test(inner)) return 'deferred';
-        if (/<mcp-resources>/i.test(inner) || /Available MCP servers:/i.test(inner)) return 'mcp';
-        return null;
-    }
-
-    // 对可重定位块的内部内容做确定性排序，确保不同轮次中相同内容产生相同字节
-    function stabilizeBlockContent(text, blockType) {
-        if (blockType === 'skills') {
-            // 对 skills 列表条目按字母序排序
-            return text.replace(/(<available-skills>)([\s\S]*?)(<\/available-skills>)/,
-                (match, open, inner, close) => {
-                    const entries = inner.split(/\n/).filter(l => l.trim());
-                    entries.sort();
-                    return open + '\n' + entries.join('\n') + '\n' + close;
-                });
-        }
-        if (blockType === 'deferred') {
-            // 对 deferred tools 条目按字母序排序
-            return text.replace(/(<deferred-tools>)([\s\S]*?)(<\/deferred-tools>)/,
-                (match, open, inner, close) => {
-                    const entries = inner.split('\n').map(t => t.trim()).filter(Boolean);
-                    entries.sort();
-                    return open + '\n' + entries.join('\n') + '\n' + close;
-                });
-        }
-        return text;
-    }
-
-    // 从字符串 content 中识别和提取可重定位块
-    // 返回 { cleaned, extracted: [{type, text}] }
-    function extractRelocatableFromString(content) {
-        const extracted = [];
-        let cleaned = content;
-        // 匹配独立的 <system-reminder> 块（前后可能有换行）
-        const BLOCK_REGEX = /\n*(<system-reminder>\n[\s\S]*?\n<\/system-reminder>)\s*/g;
-        let match;
-        while ((match = BLOCK_REGEX.exec(content)) !== null) {
-            const blockText = match[1];
-            const blockType = classifyRelocatableBlock(blockText);
-            if (blockType) {
-                const stabilizedText = stabilizeBlockContent(blockText, blockType);
-                // originalText 用于从原文中移除，stabilizedText 用于归位
-                extracted.push({type: blockType, text: stabilizedText, originalText: blockText});
-            }
-        }
-        // 从原文中移除所有可重定位块
-        for (const ext of extracted) {
-            // 使用原始文本匹配移除（stabilized 文本可能与原文不匹配）
-            cleaned = cleaned.replace(new RegExp(escapeRegExp('\n' + ext.originalText) + '\\s*'), '');
-            cleaned = cleaned.replace(new RegExp(escapeRegExp(ext.originalText) + '\\s*'), '');
-        }
-        return {cleaned, extracted};
-    }
-
-    // 按 cache-fix 的固定顺序排列
-    const RELOCATE_ORDER = ['deferred', 'mcp', 'skills', 'hooks'];
-
-    // 查找第一条 user 消息的索引
-    const firstUserIdx = cleaned.findIndex((msg) => msg.role === 'user');
-
-    if (firstUserIdx >= 0) {
-        // 只对前几条 user 消息做归位：这些消息位于缓存前缀范围内，归位能提高命中率
-        // 后续 user 消息中的块保持原位不动，避免拉远模型与工具/MCP 信息的上下文距离
-        const RELOCATE_USER_LIMIT = 2;
-        const allExtracted = [];
-
-        // 统计 user 消息的序号
-        let userSeq = 0;
-        const relocated = cleaned.map((msg, idx) => {
-            if (msg.role !== 'user') return msg;
-            userSeq++;
-            const shouldRelocate = userSeq <= RELOCATE_USER_LIMIT;
-
-            if (typeof msg.content === 'string') {
-                if (!shouldRelocate) return msg;
-                const {cleaned, extracted} = extractRelocatableFromString(msg.content);
-                if (extracted.length > 0) {
-                    allExtracted.push(...extracted);
-                    bookkeepingModified = true;
-                    if (!cleaned.trim()) return null;
-                    return {...msg, content: cleaned};
-                }
-                return msg;
-            }
-
-            if (Array.isArray(msg.content)) {
-                if (!shouldRelocate) return msg;
-                const extracted = [];
-                const kept = msg.content.filter((block) => {
-                    if (block && block.type === 'text') {
-                        const blockType = classifyRelocatableBlock(block.text);
-                        if (blockType) {
-                            const stabilizedText = stabilizeBlockContent(block.text, blockType);
-                            extracted.push({type: blockType, text: stabilizedText});
-                            return false;
-                        }
-                    }
-                    return true;
-                });
-                if (extracted.length > 0) {
-                    allExtracted.push(...extracted);
-                    bookkeepingModified = true;
-                    if (kept.length === 0) return null;
-                    return {...msg, content: kept};
-                }
-                return msg;
-            }
-
-            return msg;
-        });
-
-        // 如果提取到了可重定位块，按固定顺序排列后 prepend 到第一条 user 消息
-        if (allExtracted.length > 0) {
-            // 按 RELOCATE_ORDER 排序，同类型保持原顺序
-            const sorted = allExtracted.sort((a, b) => {
-                const orderA = RELOCATE_ORDER.indexOf(a.type);
-                const orderB = RELOCATE_ORDER.indexOf(b.type);
-                return orderA - orderB;
-            });
-
-            // pinBlockContent 去重：同一类型中内容 hash 相同的块只保留首次版本
-            // 避免不同轮次中同一块因微小空白差异导致前缀不匹配
-            const seenByType = new Map();
-            const deduped = [];
-            for (const ext of sorted) {
-                if (!seenByType.has(ext.type)) seenByType.set(ext.type, new Map());
-                const typeMap = seenByType.get(ext.type);
-                const normalizedText = ext.text.replace(/\s+(<\/system-reminder>)\s*$/, '\n$1');
-                const hash = createHash('sha256').update(normalizedText).digest('hex').slice(0, 16);
-                if (!typeMap.has(hash)) {
-                    typeMap.set(hash, ext.text);
-                    deduped.push(ext);
-                }
-            }
-
-            // 合并为文本
-            const relocateText = deduped.map((e) => e.text).join('\n\n');
-
-            // Prepend 到第一条 user 消息
-            const firstMsg = relocated[firstUserIdx];
-            if (firstMsg) {
-                if (typeof firstMsg.content === 'string') {
-                    relocated[firstUserIdx] = {...firstMsg, content: relocateText + '\n\n' + firstMsg.content};
-                } else if (Array.isArray(firstMsg.content)) {
-                    relocated[firstUserIdx] = {
-                        ...firstMsg,
-                        content: [{type: 'text', text: relocateText}, ...firstMsg.content]
-                    };
-                }
-            }
-
-            return relocated.filter(Boolean);
-        }
-    }
-
-    if (modified || bookkeepingModified) {
-        return cleaned.filter(Boolean);
-    }
-    return messages;
-}
-
-/**
- * 转义正则特殊字符
- */
-function escapeRegExp(string) {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return conservativeModified ? conservative : messages;
 }
 
 /**

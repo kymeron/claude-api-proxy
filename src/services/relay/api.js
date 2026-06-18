@@ -360,7 +360,9 @@ export async function createResponsesWebSocket(payload, upstream, meta = {}, end
     const url = buildResponsesWebSocketUrl(upstream, endpoint);
     const rejectUnauthorized = meta.rejectUnauthorized !== false;
     const agent = getProxyAgent(upstream);
-    const headers = buildResponsesWebSocketHeaders(upstream, meta.headers || {});
+    const extraHeaders = {...(meta.headers || {})};
+    if (meta.sessionId) extraHeaders['X-Session-ID'] = meta.sessionId;
+    const headers = buildResponsesWebSocketHeaders(upstream, extraHeaders);
     const proxyMode = upstream.proxy ? upstream.proxy : 'direct';
     const networkKey = `${url}:${proxyMode}:${rejectUnauthorized ? 'tls-verify' : 'tls-skip'}`;
     const userInfo = meta.tenantName && meta.tenantUsername ? `${meta.tenantName}(${meta.tenantUsername})` : '';

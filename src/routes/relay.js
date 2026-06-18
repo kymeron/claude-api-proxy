@@ -131,16 +131,16 @@ function extractConversationKeyFromPayload(payload) {
     if (!payload || typeof payload !== 'object') return undefined;
     const metadata = payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : undefined;
     const candidates = [
-        payload.conversation_id,
-        payload.conversationId,
         payload.session_id,
         payload.sessionId,
-        payload.thread_id,
-        payload.threadId,
-        metadata?.conversation_id,
-        metadata?.conversationId,
         metadata?.session_id,
         metadata?.sessionId,
+        payload.conversation_id,
+        payload.conversationId,
+        metadata?.conversation_id,
+        metadata?.conversationId,
+        payload.thread_id,
+        payload.threadId,
         metadata?.thread_id,
         metadata?.threadId
     ];
@@ -154,8 +154,8 @@ function extractConversationKeyFromPayload(payload) {
 
 function extractConversationKey(req, payload, meta = {}) {
     const headerCandidates = [
-        req.headers['x-conversation-id'],
         req.headers['x-session-id'],
+        req.headers['x-conversation-id'],
         req.headers['x-chat-id'],
         req.headers['x-thread-id']
     ];
@@ -371,7 +371,7 @@ async function generateRelayContextSummary({
         stream: false,
         originalModel,
         conversationKey: compactConversationKey,
-        sessionId: tenantId ? `session-${tenantId}` : compactConversationKey,
+        sessionId: compactConversationKey,
         ...tenantMeta
     };
 
@@ -637,7 +637,6 @@ async function handleOpenAIChatCompletions(req, res) {
         const baseConversationKey = extractConversationKey(req, openAIPayload, {tenantId});
 
         openAIPayload.messages = injectBehaviorRules(openAIPayload.messages, relayStatsModel);
-        // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         openAIPayload.messages = stripDynamicReminders(openAIPayload.messages);
         mergeConsecutiveAssistantMessages(openAIPayload.messages);
         relayConversationStore.saveChatRequest({
@@ -717,7 +716,8 @@ async function handleOpenAIChatCompletions(req, res) {
                 requestType: 'ChatCompletionsViaResponsesWS',
                 stream: openAIPayload.stream,
                 originalModel: openAIPayload.model,
-                contextKey: extractConversationKey(req, responsesPayload, {tenantId}),
+                contextKey: baseConversationKey,
+                sessionId: baseConversationKey,
                 rejectUnauthorized: !upstream.skip_tls_verify,
                 ...tenantMeta
             });
@@ -773,7 +773,7 @@ async function handleOpenAIChatCompletions(req, res) {
             const relayMeta = {
                 ...tenantMeta,
                 conversationKey,
-                sessionId: tenantId ? `session-${tenantId}` : conversationKey
+                sessionId: conversationKey
             };
             const {response} = await callUpstream(upstream, (up) =>
                 createResponses(responsesPayload, up, {
@@ -886,7 +886,7 @@ async function handleOpenAIChatCompletions(req, res) {
         const relayMeta = {
             ...tenantMeta,
             conversationKey,
-            sessionId: tenantId ? `session-${tenantId}` : conversationKey
+            sessionId: conversationKey
         };
         const {response} = await callUpstream(upstream, (up) => {
             const payload = {...openAIPayload, model: upstreamManager.resolveModel(openAIPayload.model, up.index)};
@@ -1079,7 +1079,8 @@ async function handleAnthropicMessages(req, res) {
                 requestType: 'AnthropicViaResponsesWebSocket',
                 stream: anthropicPayload.stream,
                 originalModel: anthropicPayload.model,
-                contextKey: extractConversationKey(req, responsesPayload, {tenantId}),
+                contextKey: baseConversationKey,
+                sessionId: baseConversationKey,
                 rejectUnauthorized: !upstream.skip_tls_verify,
                 ...tenantMeta
             });
@@ -1133,7 +1134,7 @@ async function handleAnthropicMessages(req, res) {
             const relayMeta = {
                 ...tenantMeta,
                 conversationKey,
-                sessionId: tenantId ? `session-${tenantId}` : conversationKey
+                sessionId: conversationKey
             };
             const {response} = await callUpstream(upstream, (up) =>
                 createResponses(responsesPayload, up, {
@@ -1181,12 +1182,11 @@ async function handleAnthropicMessages(req, res) {
         }
 
         if (anthropicPayload.stream) {
-            // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
             const conversationKey = extractConversationKey(req, openAIPayload, {tenantId});
             const relayMeta = {
                 ...tenantMeta,
                 conversationKey,
-                sessionId: tenantId ? `session-${tenantId}` : conversationKey
+                sessionId: conversationKey
             };
             const {response} = await callUpstream(upstream, (up) => {
                 const payload = {
@@ -1305,12 +1305,11 @@ async function handleAnthropicMessages(req, res) {
         } else {
             // 非流式：强制 stream=true 请求上游，用 aggregateStreamResponse 聚合
             openAIPayload.stream = true;
-            // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
             const conversationKey = extractConversationKey(req, openAIPayload, {tenantId});
             const relayMeta = {
                 ...tenantMeta,
                 conversationKey,
-                sessionId: tenantId ? `session-${tenantId}` : conversationKey
+                sessionId: conversationKey
             };
             const {response} = await callUpstream(upstream, (up) => {
                 const payload = {
@@ -1573,6 +1572,7 @@ async function handleResponsesAPI(req, res) {
                 stream: responsesReq.stream,
                 originalModel: responsesReq.model,
                 contextKey: stateConversationKey,
+                sessionId: stateConversationKey,
                 rejectUnauthorized: !upstream.skip_tls_verify,
                 autoLink: false,
                 ...tenantMeta
@@ -1633,7 +1633,7 @@ async function handleResponsesAPI(req, res) {
             const relayMeta = {
                 ...tenantMeta,
                 conversationKey: stateConversationKey,
-                sessionId: tenantId ? `session-${tenantId}` : stateConversationKey
+                sessionId: stateConversationKey
             };
             const {response} = await callUpstream(upstream, (up) =>
                 createResponses(
@@ -1727,7 +1727,7 @@ async function handleResponsesAPI(req, res) {
         const relayMeta = {
             ...tenantMeta,
             conversationKey,
-            sessionId: tenantId ? `session-${tenantId}` : conversationKey
+            sessionId: conversationKey
         };
         const compactOptions = {
             upstream,
@@ -1972,9 +1972,9 @@ async function handleResponsesCompact(req, res) {
         }
 
         if (isResponsesWebSocketUpstream(upstream)) {
+            const conversationKey = extractConversationKey(req, compactReq, {tenantId});
             const chatReq = compactRequestToChat(compactReq);
             chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
-            // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
             chatReq.messages = stripDynamicReminders(chatReq.messages);
             mergeConsecutiveAssistantMessages(chatReq.messages);
             const responsesPayload = chatRequestToResponses({
@@ -1988,7 +1988,8 @@ async function handleResponsesCompact(req, res) {
                 requestType: 'ResponsesCompactWebSocket',
                 stream: false,
                 originalModel: compactReq.model,
-                contextKey: extractConversationKey(req, responsesPayload, {tenantId}),
+                contextKey: conversationKey,
+                sessionId: conversationKey,
                 rejectUnauthorized: !upstream.skip_tls_verify,
                 ...tenantMeta
             });
@@ -2006,7 +2007,7 @@ async function handleResponsesCompact(req, res) {
             const relayMeta = {
                 ...tenantMeta,
                 conversationKey,
-                sessionId: tenantId ? `session-${tenantId}` : conversationKey
+                sessionId: conversationKey
             };
             const {response} = await callUpstream(upstream, (up) =>
                 createResponses(
@@ -2037,7 +2038,6 @@ async function handleResponsesCompact(req, res) {
 
         const chatReq = compactRequestToChat(compactReq);
         chatReq.messages = injectBehaviorRules(chatReq.messages, relayStatsModel);
-        // 剥离纯记账性质的 system-reminder 块，避免动态内容破坏缓存前缀匹配
         chatReq.messages = stripDynamicReminders(chatReq.messages);
         mergeConsecutiveAssistantMessages(chatReq.messages);
 
@@ -2047,7 +2047,7 @@ async function handleResponsesCompact(req, res) {
         const relayMeta = {
             ...tenantMeta,
             conversationKey,
-            sessionId: tenantId ? `session-${tenantId}` : conversationKey
+            sessionId: conversationKey
         };
 
         chatReq.stream = true;
@@ -2115,7 +2115,7 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
     const relayMeta = {
         ...tenantMeta,
         conversationKey,
-        sessionId: tenantId ? `session-${tenantId}` : conversationKey
+        sessionId: conversationKey
     };
 
     if (isAnthropicUpstream(upstream)) {
@@ -2198,6 +2198,7 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
             stream: true,
             originalModel: payload.model,
             contextKey: stateConversationKey,
+            sessionId: stateConversationKey,
             rejectUnauthorized: !upstream.skip_tls_verify,
             autoLink: false,
             ...tenantMeta

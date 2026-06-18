@@ -7,6 +7,7 @@ import {
     sendResponsesWebSocketRequest,
     ResponsesWebSocketError
 } from '../src/services/shared/responses-ws-client.js';
+import {createResponsesWebSocket, discardResponsesWebSocketConnection} from '../src/services/relay/api.js';
 import {
     acquire,
     connectionPoolKey,
@@ -200,9 +201,70 @@ test('responses ws pool does not reuse a bound connection for a different contex
     }
 });
 
-function createServer() {
+test('responses ws pool does not reuse previous_response_id across context keys', async () => {
+    const server = await createServer();
+    const port = server.address().port;
+    const url = `ws://127.0.0.1:${port}/v1/responses`;
+    let connA = null;
+    let connB = null;
+
+    try {
+        connA = await acquire({
+            url,
+            headers: {},
+            authKey: 'sk-test',
+            contextKey: 'session-a',
+            networkKey: `test-${port}`
+        });
+        connA.lastResponseId = 'resp_shared';
+        release(connA);
+
+        connB = await acquire({
+            url,
+            headers: {},
+            authKey: 'sk-test',
+            contextKey: 'session-b',
+            preferredPreviousResponseId: 'resp_shared',
+            networkKey: `test-${port}`
+        });
+
+        assert.notEqual(connA, connB);
+        assert.equal(connB.contextKey, 'session-b');
+    } finally {
+        if (connB) discard(connB);
+        if (connA && connA !== connB) discard(connA);
+        shutdown();
+        await new Promise((resolve) => server.close(resolve));
+    }
+});
+
+test('createResponsesWebSocket forwards sessionId as X-Session-ID header', async () => {
+    let seenSessionId;
+    const server = await createServer((req) => {
+        seenSessionId = req.headers['x-session-id'];
+    });
+    const port = server.address().port;
+    let result = null;
+
+    try {
+        result = await createResponsesWebSocket(
+            {model: 'glm-5.2', input: 'hello'},
+            {name: 'test-upstream', base_url: `http://127.0.0.1:${port}/v1`, api_key: 'sk-test'},
+            {sessionId: 'claude-session-1', contextKey: 'claude-session-1'}
+        );
+
+        assert.equal(seenSessionId, 'claude-session-1');
+    } finally {
+        if (result?.conn) discardResponsesWebSocketConnection(result.conn);
+        shutdown();
+        await new Promise((resolve) => server.close(resolve));
+    }
+});
+
+function createServer(onConnection) {
     return new Promise((resolve, reject) => {
         const server = new WebSocketServer({host: '127.0.0.1', port: 0});
+        server.on('connection', (_socket, req) => onConnection?.(req));
         server.once('error', reject);
         server.once('listening', () => {
             server.off('error', reject);

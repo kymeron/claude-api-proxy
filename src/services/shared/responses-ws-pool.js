@@ -127,7 +127,15 @@ export async function acquire({
 
     if (normalizedPreviousResponseId) {
         for (const connection of pool) {
-            if (!connection.busy && connection.ws.readyState === 1 && connection.lastResponseId === normalizedPreviousResponseId) {
+            const contextMatches = normalizedContextKey
+                ? connection.contextKey === normalizedContextKey
+                : !connection.contextKey;
+            if (
+                !connection.busy
+                && connection.ws.readyState === 1
+                && connection.lastResponseId === normalizedPreviousResponseId
+                && contextMatches
+            ) {
                 connection.busy = true;
                 connection.lastUsedAt = Date.now();
                 stopIdleTimer(connection);

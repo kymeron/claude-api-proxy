@@ -66,6 +66,28 @@ test('conversation anchor key uses embedded session-id even outside the first us
     assert.notEqual(keyA, keyB);
 });
 
+test('conversation anchor key uses system sessionId before weak first-user fallback', () => {
+    const payloadA = {
+        model: 'glm-5.2',
+        messages: [
+            {role: 'system', content: 'stable prompt\nsessionId: session-a'},
+            {role: 'user', content: 'Continue'}
+        ]
+    };
+    const payloadB = {
+        model: 'glm-5.2',
+        messages: [
+            {role: 'system', content: 'stable prompt\nsessionId: session-b'},
+            {role: 'user', content: 'Continue'}
+        ]
+    };
+
+    const keyA = buildConversationAnchorKey(payloadA, {tenantId: 'tenant_1'});
+    const keyB = buildConversationAnchorKey(payloadB, {tenantId: 'tenant_1'});
+
+    assert.notEqual(keyA, keyB);
+});
+
 test('conversation anchor key can include client connection id when no stable session id exists', () => {
     const payload = {
         model: 'glm-5.1',
