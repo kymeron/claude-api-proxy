@@ -291,8 +291,6 @@ src/
   templates/                控制台 HTML 模板
 ```
 
-模块职责、请求从入口到上游的数据流、鉴权与租户隔离机制、Relay 协议转换与会话状态、上下文压缩等实现细节，见 [业务架构说明](docs/business-architecture.md)。
-
 ## License
 
 MIT
