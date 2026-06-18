@@ -325,7 +325,7 @@ export function anthropicToOpenAI(anthropicPayload) {
  * 从 Anthropic 请求中解析 thinking 配置
  * 返回 { disabled: boolean, effort: string|null }
  *
- * 优先级：output_config.effort > thinking 配置推断 > 默认 high
+ * 优先级：output_config.effort > thinking 配置推断；无显式配置则不设置
  */
 function resolveThinkingConfig(anthropicPayload) {
     const thinking = anthropicPayload.thinking;
@@ -350,11 +350,10 @@ function resolveThinkingConfig(anthropicPayload) {
     // 2. 根据 thinking 配置推断
     if (!effort && thinking) {
         if (thinking.type === 'adaptive') {
-            effort = 'high';
+            effort = 'medium';
         } else if (thinking.type === 'enabled' && thinking.budget_tokens) {
             if (thinking.budget_tokens <= 4000) effort = 'low';
-            else if (thinking.budget_tokens <= 16000) effort = 'medium';
-            else effort = 'high';
+            else effort = 'medium';
         }
     }
 

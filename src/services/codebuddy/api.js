@@ -177,7 +177,7 @@ export async function createChatCompletions(payload, options = {}) {
     const url = getCodebuddyApiUrl(baseUrl);
     const userInfo = options.tenantName && options.tenantUsername ? `${options.tenantName}(${options.tenantUsername})` : '';
     logger.info(
-        `[CodeBuddy]: ${baseUrl}, model: ${payload.model}, effort: ${requestPayload.reasoning_effort || 'high'}, credential: ${userId}, ${userInfo}`
+        `[CodeBuddy]: ${baseUrl}, model: ${payload.model}, effort: ${requestPayload.reasoning_effort || 'medium'}, credential: ${userId}, ${userInfo}`
     );
 
     const response = await request(url, {

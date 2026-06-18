@@ -236,7 +236,6 @@ function formatMessagesForSummary(messages) {
             const parts = [`Turn ${index + 1}`, `role: ${message.role || 'unknown'}`];
             const text = contentToText(message.content);
             if (text) parts.push(`content:\n${text}`);
-            if (message.reasoning_content) parts.push(`reasoning:\n${message.reasoning_content}`);
             if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
                 parts.push(`tool_calls:\n${safeStringify(message.tool_calls)}`);
             }

@@ -616,15 +616,10 @@ export function normalizePayload(payload, meta = {}) {
         if (!(key in ordered)) ordered[key] = payload[key];
     }
 
-    // 空字符串 '' 表示用户明确关闭 thinking，不注入默认值，也不发送给上游
+    // 空字符串 '' 表示用户明确关闭 thinking，不发送给上游。
+    // 未显式请求 reasoning_effort 时不再默认补 high，避免推高隐藏思考预算。
     if (ordered.reasoning_effort === '') {
         delete ordered.reasoning_effort;
-    } else if (ordered.reasoning_effort === undefined) {
-        // haiku 系列不支持 reasoning_effort，跳过默认注入
-        const m = (ordered.model || '').toLowerCase();
-        if (!m.includes('haiku')) {
-            ordered.reasoning_effort = 'high';
-        }
     }
     if (ordered.stream && !ordered.stream_options) {
         ordered.stream_options = {include_usage: true};
