@@ -32,7 +32,9 @@ import {
     rewriteOpenAIStream,
     stripDynamicReminders,
     buildConversationAnchorKey,
-    sanitizeAnthropicPayload
+    sanitizeAnthropicPayload,
+    extractCacheHitTokens,
+    extractCacheCreationTokens
 } from '../transformer/shared-translator.js';
 import {
     responsesRequestToChat,
@@ -70,18 +72,6 @@ import {
 import {aggregateStreamResponse} from '../services/codebuddy/api.js';
 import {estimateMessageTokens} from '../utils/token-estimation.js';
 import logger from '../utils/logger.js';
-
-/**
- * 从上游 usage 中提取缓存命中 token 数
- * DeepSeek: prompt_cache_hit_tokens
- * OpenAI: prompt_tokens_details.cached_tokens
- */
-function extractCacheHitTokens(usage) {
-    if (!usage) return 0;
-    if (usage.prompt_cache_hit_tokens) return usage.prompt_cache_hit_tokens;
-    if (usage.prompt_tokens_details?.cached_tokens) return usage.prompt_tokens_details.cached_tokens;
-    return 0;
-}
 
 /* ==================== 工具函数 ==================== */
 
@@ -227,7 +217,10 @@ function recordResponsesUsage(tenantId, usage, model) {
         usage?.input_tokens || 0,
         usage?.output_tokens || 0,
         usage?.input_tokens_details?.cached_tokens || 0,
-        model
+        model,
+        null,
+        null,
+        extractCacheCreationTokens(usage)
     );
 }
 
@@ -260,11 +253,6 @@ async function readResponseBody(stream) {
         chunks.push(chunk);
     }
     return Buffer.concat(chunks).toString('utf8');
-}
-
-function extractAnthropicCacheHitTokens(usage) {
-    if (!usage) return 0;
-    return usage.cache_read_input_tokens || 0;
 }
 
 function parseSSEBlock(block) {
@@ -333,7 +321,8 @@ function handleAnthropicUsageEvent(eventName, payload, usageState) {
 
     if (usage.input_tokens !== undefined) usageState.inputTokens = usage.input_tokens;
     if (usage.output_tokens !== undefined) usageState.outputTokens = usage.output_tokens;
-    usageState.cacheHitTokens = Math.max(usageState.cacheHitTokens, extractAnthropicCacheHitTokens(usage));
+    usageState.cacheHitTokens = Math.max(usageState.cacheHitTokens, extractCacheHitTokens(usage));
+    usageState.cacheCreationTokens = Math.max(usageState.cacheCreationTokens || 0, extractCacheCreationTokens(usage));
     if (eventName === 'message_start' && payload?.message?.model) usageState.model = payload.message.model;
 }
 
@@ -393,7 +382,10 @@ async function generateRelayContextSummary({
             chatResponse.usage?.prompt_tokens || 0,
             chatResponse.usage?.completion_tokens || 0,
             chatResponse.usage?.prompt_tokens_details?.cached_tokens || 0,
-            model
+            model,
+            null,
+            null,
+            extractCacheCreationTokens(chatResponse.usage)
         );
         return chatResponse.choices?.[0]?.message?.content || '';
     }
@@ -597,11 +589,11 @@ async function callUpstream(upstream, fn) {
     throw new Error(`上游「${upstream.name}」返回 HTTP ${response.status}: ${errorBody.slice(0, 200)}`);
 }
 
-function recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens = 0, model = 'unknown', samplePayload = null, sampleResponse = null) {
+function recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens = 0, model = 'unknown', samplePayload = null, sampleResponse = null, cacheCreationTokens = 0) {
     if (!tenantId) return;
     unifiedTenantManager.incrementApiCallCount(tenantId, 'relay');
     unifiedTenantManager.incrementTokenUsage(tenantId, 'relay', inputTokens, outputTokens, cacheHitTokens);
-    unifiedTenantManager.recordDailyUsage(tenantId, 'relay', inputTokens, outputTokens, cacheHitTokens, 0, model);
+    unifiedTenantManager.recordDailyUsage(tenantId, 'relay', inputTokens, outputTokens, cacheHitTokens, 0, model, cacheCreationTokens);
 }
 
 /* ==================== 处理函数 ==================== */
@@ -680,7 +672,10 @@ async function handleOpenAIChatCompletions(req, res) {
                     finalUsage?.prompt_tokens || 0,
                     finalUsage?.completion_tokens || 0,
                     finalUsage?.prompt_tokens_details?.cached_tokens || 0,
-                    relayStatsModel
+                    relayStatsModel,
+                    null,
+                    null,
+                    finalUsage?.prompt_tokens_details?.cache_creation_tokens || 0
                 );
                 res.write('data: [DONE]\n\n');
                 res.end();
@@ -701,7 +696,10 @@ async function handleOpenAIChatCompletions(req, res) {
                 chatResponse.usage?.prompt_tokens || 0,
                 chatResponse.usage?.completion_tokens || 0,
                 cacheHitTokens,
-                relayStatsModel
+                relayStatsModel,
+                null,
+                null,
+                extractCacheCreationTokens(chatResponse.usage)
             );
             sendJson(res, 200, chatResponse);
             return;
@@ -911,12 +909,16 @@ async function handleOpenAIChatCompletions(req, res) {
                 return;
             }
             const cacheHitTokens = extractCacheHitTokens(parsed.usage);
+            const cacheCreationTokens = extractCacheCreationTokens(parsed.usage);
             recordUsage(
                 tenantId,
                 parsed.usage?.prompt_tokens || 0,
                 parsed.usage?.completion_tokens || 0,
                 cacheHitTokens,
-                relayStatsModel
+                relayStatsModel,
+                null,
+                null,
+                cacheCreationTokens
             );
             relayConversationStore.recordChatResponse({
                 tenantId,
@@ -1031,7 +1033,10 @@ async function handleAnthropicMessages(req, res) {
                         usageState.inputTokens || estimateAnthropicInputTokens(anthropicPayload),
                         usageState.outputTokens,
                         usageState.cacheHitTokens,
-                        usageState.model || anthropicPayload.model
+                        usageState.model || anthropicPayload.model,
+                        null,
+                        null,
+                        usageState.cacheCreationTokens
                     );
                     res.end();
                 });
@@ -1056,8 +1061,11 @@ async function handleAnthropicMessages(req, res) {
                 tenantId,
                 parsed.usage?.input_tokens || estimateAnthropicInputTokens(anthropicPayload),
                 parsed.usage?.output_tokens || 0,
-                extractAnthropicCacheHitTokens(parsed.usage),
-                parsed.model || relayStatsModel
+                extractCacheHitTokens(parsed.usage),
+                parsed.model || relayStatsModel,
+                null,
+                null,
+                extractCacheCreationTokens(parsed.usage)
             );
             relayConversationStore.recordChatResponse({
                 tenantId,
@@ -1214,6 +1222,7 @@ async function handleAnthropicMessages(req, res) {
             let streamInputTokens = 0;
             let streamOutputTokens = 0;
             let streamCacheHitTokens = 0;
+            let streamCacheCreationTokens = 0;
 
             response.body.on('data', (chunk) => {
                 buffer = Buffer.concat([buffer, chunk]);
@@ -1240,6 +1249,7 @@ async function handleAnthropicMessages(req, res) {
                         streamInputTokens = data.usage.prompt_tokens || 0;
                         streamOutputTokens = data.usage.completion_tokens || 0;
                         streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                        streamCacheCreationTokens = extractCacheCreationTokens(data.usage);
                     }
 
                     state.startMessage(data.model);
@@ -1291,7 +1301,16 @@ async function handleAnthropicMessages(req, res) {
                     partialTextBuffer = '';
                 }
                 state.endMessage(state.finalStopReason);
-                recordUsage(tenantId, streamInputTokens, streamOutputTokens, streamCacheHitTokens, relayStatsModel);
+                recordUsage(
+                    tenantId,
+                    streamInputTokens,
+                    streamOutputTokens,
+                    streamCacheHitTokens,
+                    relayStatsModel,
+                    null,
+                    null,
+                    streamCacheCreationTokens
+                );
                 res.end();
             });
 
@@ -1328,7 +1347,17 @@ async function handleAnthropicMessages(req, res) {
             const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
             const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
             const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-            recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, relayStatsModel);
+            const cacheCreationTokens = extractCacheCreationTokens(aggregated.usage);
+            recordUsage(
+                tenantId,
+                inputTokens,
+                outputTokens,
+                cacheHitTokens,
+                relayStatsModel,
+                null,
+                null,
+                cacheCreationTokens
+            );
 
             const openAIResponse = {
                 id: aggregated.id || `chatcmpl_${Date.now()}`,
@@ -1534,7 +1563,10 @@ async function handleResponsesAPI(req, res) {
                     finalUsage?.prompt_tokens || 0,
                     finalUsage?.completion_tokens || 0,
                     finalUsage?.prompt_tokens_details?.cached_tokens || 0,
-                    relayStatsModel
+                    relayStatsModel,
+                    null,
+                    null,
+                    finalUsage?.prompt_tokens_details?.cache_creation_tokens || 0
                 );
                 res.end();
                 return;
@@ -1548,7 +1580,10 @@ async function handleResponsesAPI(req, res) {
                 chatResponse.usage?.prompt_tokens || 0,
                 chatResponse.usage?.completion_tokens || 0,
                 chatResponse.usage?.prompt_tokens_details?.cached_tokens || 0,
-                relayStatsModel
+                relayStatsModel,
+                null,
+                null,
+                extractCacheCreationTokens(chatResponse.usage)
             );
             const responsesResponse = chatResponseToResponses(chatResponse);
             recordCompletedResponseState(tenantId, hydrated.conversationKey || conversationKey, responsesResponse);
@@ -1965,7 +2000,10 @@ async function handleResponsesCompact(req, res) {
                 chatResponse.usage?.prompt_tokens || 0,
                 chatResponse.usage?.completion_tokens || 0,
                 chatResponse.usage?.prompt_tokens_details?.cached_tokens || 0,
-                relayStatsModel
+                relayStatsModel,
+                null,
+                null,
+                extractCacheCreationTokens(chatResponse.usage)
             );
             sendJson(res, 200, chatResponseToCompact(chatResponse));
             return;
@@ -2384,8 +2422,17 @@ export async function handleRelayResponsesWS(clientWs, req) {
 
             yield* _relayWSHandleRequest(payload, upstream, upstreamManager, tenantId, tenantMeta, signal, req);
         },
-        onUsage: (inputTokens, outputTokens, cacheHitTokens, model) => {
-            recordUsage(req.tenantId, inputTokens, outputTokens, cacheHitTokens, req.relayResolvedModel || model);
+        onUsage: (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens, model) => {
+            recordUsage(
+                req.tenantId,
+                inputTokens,
+                outputTokens,
+                cacheHitTokens,
+                req.relayResolvedModel || model,
+                null,
+                null,
+                cacheCreationTokens
+            );
         }
     });
 }
