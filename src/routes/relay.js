@@ -395,12 +395,16 @@ async function generateRelayContextSummary({
     );
     const responseBody = await readResponseBody(response.body);
     const parsed = JSON.parse(responseBody);
+    const cacheCreationTokens = extractCacheCreationTokens(parsed.usage);
     recordUsage(
         tenantId,
         parsed.usage?.prompt_tokens || 0,
         parsed.usage?.completion_tokens || 0,
         extractCacheHitTokens(parsed.usage),
-        model
+        model,
+        null,
+        null,
+        cacheCreationTokens
     );
     return parsed.choices?.[0]?.message?.content || '';
 }
@@ -830,7 +834,10 @@ async function handleOpenAIChatCompletions(req, res) {
                                 usage?.input_tokens || 0,
                                 usage?.output_tokens || 0,
                                 usage?.input_tokens_details?.cached_tokens || 0,
-                                relayStatsModel
+                                relayStatsModel,
+                                null,
+                                null,
+                                extractCacheCreationTokens(usage)
                             );
                             res.write('data: [DONE]\n\n');
                         }
@@ -873,7 +880,10 @@ async function handleOpenAIChatCompletions(req, res) {
                 parsed.usage?.input_tokens || 0,
                 parsed.usage?.output_tokens || 0,
                 parsed.usage?.input_tokens_details?.cached_tokens || 0,
-                relayStatsModel
+                relayStatsModel,
+                null,
+                null,
+                extractCacheCreationTokens(parsed.usage)
             );
             recordCompletedResponseState(tenantId, conversationKey, parsed);
             sendJson(res, 200, responsesResponseToChat(parsed));
@@ -1720,7 +1730,10 @@ async function handleResponsesAPI(req, res) {
                         usage?.input_tokens || 0,
                         usage?.output_tokens || 0,
                         usage?.input_tokens_details?.cached_tokens || 0,
-                        relayStatsModel
+                        relayStatsModel,
+                        null,
+                        null,
+                        extractCacheCreationTokens(usage)
                     );
                     res.end();
                 });
@@ -1740,7 +1753,10 @@ async function handleResponsesAPI(req, res) {
                 parsed.usage?.input_tokens || 0,
                 parsed.usage?.output_tokens || 0,
                 parsed.usage?.input_tokens_details?.cached_tokens || 0,
-                relayStatsModel
+                relayStatsModel,
+                null,
+                null,
+                extractCacheCreationTokens(parsed.usage)
             );
             sendJson(res, 200, parsed);
             return;
@@ -1806,6 +1822,7 @@ async function handleResponsesAPI(req, res) {
             let streamInputTokens = 0;
             let streamOutputTokens = 0;
             let streamCacheHitTokens = 0;
+            let streamCacheCreationTokens = 0;
             let streamModel = '';
 
             response.body.on('data', (chunk) => {
@@ -1827,6 +1844,7 @@ async function handleResponsesAPI(req, res) {
                         streamInputTokens = data.usage.prompt_tokens || 0;
                         streamOutputTokens = data.usage.completion_tokens || 0;
                         streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                        streamCacheCreationTokens = extractCacheCreationTokens(data.usage);
                     }
                     if (data.model) streamModel = data.model;
 
@@ -1874,7 +1892,7 @@ async function handleResponsesAPI(req, res) {
                         recordCompletedResponseState(tenantId, conversationKey, completedResponse);
                     }
                 }
-                recordUsage(tenantId, streamInputTokens, streamOutputTokens, streamCacheHitTokens, relayStatsModel);
+                recordUsage(tenantId, streamInputTokens, streamOutputTokens, streamCacheHitTokens, relayStatsModel, null, null, streamCacheCreationTokens);
                 res.end();
             });
 
@@ -1907,7 +1925,8 @@ async function handleResponsesAPI(req, res) {
             const inputTokens = aggregated.usage?.prompt_tokens || 0;
             const outputTokens = aggregated.usage?.completion_tokens || 0;
             const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-            recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, relayStatsModel);
+            const cacheCreationTokens = extractCacheCreationTokens(aggregated.usage);
+            recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, relayStatsModel, null, null, cacheCreationTokens);
 
             const chatResponse = {
                 id: aggregated.id || `chatcmpl_${Date.now()}`,
@@ -2068,7 +2087,10 @@ async function handleResponsesCompact(req, res) {
                 parsed.usage?.input_tokens || 0,
                 parsed.usage?.output_tokens || 0,
                 parsed.usage?.input_tokens_details?.cached_tokens || 0,
-                relayStatsModel
+                relayStatsModel,
+                null,
+                null,
+                extractCacheCreationTokens(parsed.usage)
             );
             sendJson(res, 200, parsed);
             return;
@@ -2103,7 +2125,8 @@ async function handleResponsesCompact(req, res) {
         const inputTokens = aggregated.usage?.prompt_tokens || 0;
         const outputTokens = aggregated.usage?.completion_tokens || 0;
         const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-        recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, relayStatsModel);
+        const cacheCreationTokens = extractCacheCreationTokens(aggregated.usage);
+        recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, relayStatsModel, null, null, cacheCreationTokens);
 
         const chatResponse = {
             id: aggregated.id || `chatcmpl_${Date.now()}`,
