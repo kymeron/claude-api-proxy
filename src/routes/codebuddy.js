@@ -461,6 +461,7 @@ async function handleAnthropicMessages(req, res) {
             let streamInputTokens = 0;
             let streamOutputTokens = 0;
             let streamCacheHitTokens = 0;
+            let streamCacheCreationTokens = 0;
             let streamCredit = 0;
             let streamModel = '';
 
@@ -496,6 +497,7 @@ async function handleAnthropicMessages(req, res) {
                         streamInputTokens = data.usage.prompt_tokens || 0;
                         streamOutputTokens = data.usage.completion_tokens || 0;
                         streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                        streamCacheCreationTokens = extractCacheCreationTokens(data.usage);
                         streamCredit = data.usage.credit || 0;
                     }
                     if (data.model) streamModel = data.model;
@@ -595,7 +597,8 @@ async function handleAnthropicMessages(req, res) {
                         streamOutputTokens,
                         streamCacheHitTokens,
                         streamCredit,
-                        pickModelName(streamModel, anthropicPayload.model)
+                        pickModelName(streamModel, anthropicPayload.model),
+                        streamCacheCreationTokens
                     );
                 }
                 res.end();
@@ -617,6 +620,7 @@ async function handleAnthropicMessages(req, res) {
                 const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
                 const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
                 const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+                const cacheCreationTokens = extractCacheCreationTokens(aggregated.usage);
                 const credit = aggregated.usage ? aggregated.usage.credit || 0 : 0;
                 unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
                 unifiedTenantManager.incrementTokenUsage(
@@ -634,7 +638,8 @@ async function handleAnthropicMessages(req, res) {
                     outputTokens,
                     cacheHitTokens,
                     credit,
-                    pickModelName(aggregated.model, anthropicPayload.model)
+                    pickModelName(aggregated.model, anthropicPayload.model),
+                    cacheCreationTokens
                 );
             }
 
@@ -811,6 +816,7 @@ async function handleResponsesAPI(req, res) {
             let streamInputTokens = 0;
             let streamOutputTokens = 0;
             let streamCacheHitTokens = 0;
+            let streamCacheCreationTokens = 0;
             let streamCredit = 0;
             let streamModel = '';
 
@@ -837,6 +843,7 @@ async function handleResponsesAPI(req, res) {
                         streamInputTokens = data.usage.prompt_tokens || 0;
                         streamOutputTokens = data.usage.completion_tokens || 0;
                         streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                        streamCacheCreationTokens = extractCacheCreationTokens(data.usage);
                         streamCredit = data.usage.credit || 0;
                     }
                     if (data.model) streamModel = data.model;
@@ -905,7 +912,8 @@ async function handleResponsesAPI(req, res) {
                         streamOutputTokens,
                         streamCacheHitTokens,
                         streamCredit,
-                        pickModelName(streamModel, responsesReq.model)
+                        pickModelName(streamModel, responsesReq.model),
+                        streamCacheCreationTokens
                     );
                 }
                 res.end();
@@ -924,6 +932,7 @@ async function handleResponsesAPI(req, res) {
                 const inputTokens = aggregated.usage?.prompt_tokens || 0;
                 const outputTokens = aggregated.usage?.completion_tokens || 0;
                 const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+                const cacheCreationTokens = extractCacheCreationTokens(aggregated.usage);
                 const credit = aggregated.usage?.credit || 0;
                 unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
                 unifiedTenantManager.incrementTokenUsage(
@@ -941,7 +950,8 @@ async function handleResponsesAPI(req, res) {
                     outputTokens,
                     cacheHitTokens,
                     credit,
-                    pickModelName(aggregated.model, responsesReq.model)
+                    pickModelName(aggregated.model, responsesReq.model),
+                    cacheCreationTokens
                 );
             }
 
@@ -1017,6 +1027,7 @@ async function handleResponsesCompact(req, res) {
             const inputTokens = aggregated.usage?.prompt_tokens || 0;
             const outputTokens = aggregated.usage?.completion_tokens || 0;
             const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+            const cacheCreationTokens = extractCacheCreationTokens(aggregated.usage);
             const credit = aggregated.usage?.credit || 0;
             unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
             unifiedTenantManager.incrementTokenUsage(
@@ -1034,7 +1045,8 @@ async function handleResponsesCompact(req, res) {
                 outputTokens,
                 cacheHitTokens,
                 credit,
-                pickModelName(aggregated.model, compactReq.model)
+                pickModelName(aggregated.model, compactReq.model),
+                cacheCreationTokens
             );
         }
 
@@ -1297,7 +1309,7 @@ export function handleCodebuddyResponsesWS(clientWs, req) {
                 if (start > 0) buffer = buffer.subarray(start);
             }
         },
-        onUsage: (inputTokens, outputTokens, cacheHitTokens, model) => {
+        onUsage: (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens, model) => {
             const tenantId = req.tenantId;
             if (!tenantId) return;
             unifiedTenantManager.incrementApiCallCount(tenantId, 'codebuddy');
@@ -1309,7 +1321,8 @@ export function handleCodebuddyResponsesWS(clientWs, req) {
                 outputTokens,
                 cacheHitTokens,
                 0,
-                model
+                model,
+                cacheCreationTokens
             );
         }
     });

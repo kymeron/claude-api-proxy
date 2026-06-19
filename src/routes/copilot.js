@@ -35,7 +35,7 @@ import {
     estimateMessageTokens,
     estimateContentBlockTokens
 } from '../utils/token-estimation.js';
-import {sanitizeAnthropicPayload} from '../transformer/shared-translator.js';
+import {sanitizeAnthropicPayload, extractCacheHitTokens, extractCacheCreationTokens} from '../transformer/shared-translator.js';
 import {aggregateStreamResponse} from '../services/codebuddy/api.js';
 import {ResponsesWebSocketError} from '../services/shared/responses-ws-client.js';
 import {handleWSConnection} from '../services/shared/responses-ws-server.js';
@@ -47,16 +47,6 @@ import {
 import logger from '../utils/logger.js';
 
 /* ==================== 工具函数 ==================== */
-
-/**
- * 从上游 usage 中提取缓存命中 token 数
- */
-function extractCacheHitTokens(usage) {
-    if (!usage) return 0;
-    if (usage.prompt_cache_hit_tokens) return usage.prompt_cache_hit_tokens;
-    if (usage.prompt_tokens_details?.cached_tokens) return usage.prompt_tokens_details.cached_tokens;
-    return 0;
-}
 
 function extractProxyFromHeaders(req) {
     // 优先从 store 读取代理配置
@@ -269,6 +259,7 @@ async function handleOpenAIChatCompletions(req, res) {
                 let streamInputTokens = 0;
                 let streamOutputTokens = 0;
                 let streamCacheHitTokens = 0;
+                let streamCacheCreationTokens = 0;
 
                 try {
                     for await (const event of wsResult.eventStream) {
@@ -277,6 +268,7 @@ async function handleOpenAIChatCompletions(req, res) {
                             streamInputTokens = chatUsage.prompt_tokens || 0;
                             streamOutputTokens = chatUsage.completion_tokens || 0;
                             streamCacheHitTokens = extractCacheHitTokens(chatUsage);
+                            streamCacheCreationTokens = extractCacheCreationTokens(chatUsage);
                         }
                         const chatChunks = responsesEventToChatChunks(event.type, event.data, chatState);
                         for (const chunk of chatChunks) {
@@ -293,7 +285,7 @@ async function handleOpenAIChatCompletions(req, res) {
                 if (streamInputTokens > 0 || streamOutputTokens > 0) {
                     copilotStore.incrementApiCallCount();
                     copilotStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
-                    copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                    copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, undefined, streamCacheCreationTokens);
                 } else {
                     copilotStore.incrementApiCallCount();
                     const estimated = estimateMessageTokens(openAIPayload.messages || []);
@@ -320,9 +312,10 @@ async function handleOpenAIChatCompletions(req, res) {
                     const inputTokens = chatResponse.usage?.prompt_tokens || 0;
                     const outputTokens = chatResponse.usage?.completion_tokens || 0;
                     const cacheHitTokens = extractCacheHitTokens(chatResponse.usage);
+                    const cacheCreationTokens = extractCacheCreationTokens(chatResponse.usage);
                     copilotStore.incrementApiCallCount();
                     copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-                    copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+                    copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, undefined, cacheCreationTokens);
                     sendJson(res, 200, chatResponse);
                 } else {
                     sendOpenAIError(res, 502, 'No response.completed event received from upstream');
@@ -364,6 +357,7 @@ async function handleOpenAIChatCompletions(req, res) {
                 let streamInputTokens = 0;
                 let streamOutputTokens = 0;
                 let streamCacheHitTokens = 0;
+                let streamCacheCreationTokens = 0;
                 let lineBuffer = '';
 
                 response.body.on('data', (chunk) => {
@@ -382,6 +376,7 @@ async function handleOpenAIChatCompletions(req, res) {
                                 streamInputTokens = data.usage.prompt_tokens || 0;
                                 streamOutputTokens = data.usage.completion_tokens || 0;
                                 streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                                streamCacheCreationTokens = extractCacheCreationTokens(data.usage);
                             }
                         } catch {}
                     }
@@ -394,7 +389,7 @@ async function handleOpenAIChatCompletions(req, res) {
                     if (streamInputTokens > 0 || streamOutputTokens > 0) {
                         copilotStore.incrementApiCallCount();
                         copilotStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
-                        copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                        copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, undefined, streamCacheCreationTokens);
                     } else {
                         copilotStore.incrementApiCallCount();
                         const estimated = estimateMessageTokens(openAIPayload.messages || []);
@@ -426,10 +421,11 @@ async function handleOpenAIChatCompletions(req, res) {
                 const inputTokens = parsed.usage?.prompt_tokens || 0;
                 const outputTokens = parsed.usage?.completion_tokens || 0;
                 const cacheHitTokens = extractCacheHitTokens(parsed.usage);
+                const cacheCreationTokens = extractCacheCreationTokens(parsed.usage);
                 copilotStore.incrementApiCallCount();
                 if (inputTokens > 0 || outputTokens > 0) {
                     copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-                    copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+                    copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, undefined, cacheCreationTokens);
                 } else {
                     const estimated = estimateMessageTokens(openAIPayload.messages || []);
                     copilotStore.incrementTokenUsage(estimated, 0, 0);
@@ -527,6 +523,7 @@ async function handleAnthropicMessages(req, res) {
                 let streamInputTokens = 0;
                 let streamOutputTokens = 0;
                 let streamCacheHitTokens = 0;
+                let streamCacheCreationTokens = 0;
 
                 try {
                     for await (const event of wsResult.eventStream) {
@@ -535,6 +532,7 @@ async function handleAnthropicMessages(req, res) {
                             streamInputTokens = chatUsage.prompt_tokens || 0;
                             streamOutputTokens = chatUsage.completion_tokens || 0;
                             streamCacheHitTokens = extractCacheHitTokens(chatUsage);
+                            streamCacheCreationTokens = extractCacheCreationTokens(chatUsage);
                         }
                         const anthropicEvents = responsesEventToAnthropicEvents(
                             event.type, event.data, chatState, anthropicState
@@ -554,7 +552,7 @@ async function handleAnthropicMessages(req, res) {
                 if (streamInputTokens > 0 || streamOutputTokens > 0) {
                     copilotStore.incrementApiCallCount();
                     copilotStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
-                    copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                    copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, undefined, streamCacheCreationTokens);
                 } else {
                     copilotStore.incrementApiCallCount();
                     const estimated = estimateMessageTokens(anthropicPayload.messages || []);
@@ -582,10 +580,11 @@ async function handleAnthropicMessages(req, res) {
                     const inputTokens = chatResponse.usage?.prompt_tokens || 0;
                     const outputTokens = chatResponse.usage?.completion_tokens || 0;
                     const cacheHitTokens = extractCacheHitTokens(chatResponse.usage);
+                    const cacheCreationTokens = extractCacheCreationTokens(chatResponse.usage);
                     copilotStore.incrementApiCallCount();
                     if (inputTokens > 0 || outputTokens > 0) {
                         copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-                        copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+                        copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, undefined, cacheCreationTokens);
                     } else {
                         const estimated = estimateMessageTokens(anthropicPayload.messages || []);
                         copilotStore.incrementTokenUsage(estimated, 0, 0);
@@ -635,6 +634,7 @@ async function handleAnthropicMessages(req, res) {
                 let streamInputTokens = 0;
                 let streamOutputTokens = 0;
                 let streamCacheHitTokens = 0;
+                let streamCacheCreationTokens = 0;
 
                 const processLines = (lines) => {
                     for (const line of lines) {
@@ -656,6 +656,7 @@ async function handleAnthropicMessages(req, res) {
                                     streamInputTokens = openAIChunk.usage.prompt_tokens || streamInputTokens;
                                     streamOutputTokens = openAIChunk.usage.completion_tokens || streamOutputTokens;
                                     streamCacheHitTokens = extractCacheHitTokens(openAIChunk.usage) || streamCacheHitTokens;
+                                    streamCacheCreationTokens = extractCacheCreationTokens(openAIChunk.usage) || streamCacheCreationTokens;
                                 }
 
                                 for (const event of anthropicEvents) {
@@ -696,7 +697,7 @@ async function handleAnthropicMessages(req, res) {
                     if (streamInputTokens > 0 || streamOutputTokens > 0) {
                         copilotStore.incrementApiCallCount();
                         copilotStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
-                        copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                        copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, undefined, streamCacheCreationTokens);
                     } else {
                         copilotStore.incrementApiCallCount();
                         const estimated = estimateMessageTokens(openAIPayload.messages || []);
@@ -727,10 +728,11 @@ async function handleAnthropicMessages(req, res) {
                 const inputTokens = openAIResponse.usage?.prompt_tokens || 0;
                 const outputTokens = openAIResponse.usage?.completion_tokens || 0;
                 const cacheHitTokens = extractCacheHitTokens(openAIResponse.usage);
+                const cacheCreationTokens = extractCacheCreationTokens(openAIResponse.usage);
                 copilotStore.incrementApiCallCount();
                 if (inputTokens > 0 || outputTokens > 0) {
                     copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-                    copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+                    copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, undefined, cacheCreationTokens);
                 } else {
                     const estimated = estimateMessageTokens(anthropicPayload.messages || []);
                     copilotStore.incrementTokenUsage(estimated, 0, 0);
@@ -883,6 +885,7 @@ async function handleResponsesAPI(req, res) {
                 let streamInputTokens = 0;
                 let streamOutputTokens = 0;
                 let streamCacheHitTokens = 0;
+                let streamCacheCreationTokens = 0;
 
                 try {
                     for await (const event of wsResult.eventStream) {
@@ -891,6 +894,7 @@ async function handleResponsesAPI(req, res) {
                             streamInputTokens = chatUsage.prompt_tokens || 0;
                             streamOutputTokens = chatUsage.completion_tokens || 0;
                             streamCacheHitTokens = extractCacheHitTokens(chatUsage);
+                            streamCacheCreationTokens = extractCacheCreationTokens(chatUsage);
                         }
                         const responseEvents = responsesEventToResponsesEvents(event.type, event.data, chatState, responsesState);
                         for (const ev of responseEvents) {
@@ -905,7 +909,7 @@ async function handleResponsesAPI(req, res) {
 
                 copilotStore.incrementApiCallCount();
                 copilotStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
-                copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, undefined, streamCacheCreationTokens);
                 res.end();
             } else {
                 let completedData = null;
@@ -927,9 +931,10 @@ async function handleResponsesAPI(req, res) {
                     const inputTokens = chatUsage.prompt_tokens || 0;
                     const outputTokens = chatUsage.completion_tokens || 0;
                     const cacheHitTokens = extractCacheHitTokens(chatUsage);
+                    const cacheCreationTokens = extractCacheCreationTokens(chatUsage);
                     copilotStore.incrementApiCallCount();
                     copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-                    copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+                    copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, undefined, cacheCreationTokens);
                     sendJson(res, 200, completedData.response);
                 } else {
                     sendOpenAIError(res, 502, 'No response.completed event received from upstream');
@@ -980,6 +985,7 @@ async function handleResponsesAPI(req, res) {
                 let streamInputTokens = 0;
                 let streamOutputTokens = 0;
                 let streamCacheHitTokens = 0;
+                let streamCacheCreationTokens = 0;
                 let streamModel = '';
 
                 response.body.on('data', (chunk) => {
@@ -1001,6 +1007,7 @@ async function handleResponsesAPI(req, res) {
                             streamInputTokens = data.usage.prompt_tokens || 0;
                             streamOutputTokens = data.usage.completion_tokens || 0;
                             streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                            streamCacheCreationTokens = extractCacheCreationTokens(data.usage);
                         }
                         if (data.model) streamModel = data.model;
 
@@ -1031,7 +1038,7 @@ async function handleResponsesAPI(req, res) {
                     }
                     copilotStore.incrementApiCallCount();
                     copilotStore.incrementTokenUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
-                    copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens);
+                    copilotStore.recordDailyUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, undefined, streamCacheCreationTokens);
                     res.end();
                 });
 
@@ -1046,9 +1053,10 @@ async function handleResponsesAPI(req, res) {
                 const inputTokens = chatResponse.usage?.prompt_tokens || 0;
                 const outputTokens = chatResponse.usage?.completion_tokens || 0;
                 const cacheHitTokens = extractCacheHitTokens(chatResponse.usage);
+                const cacheCreationTokens = extractCacheCreationTokens(chatResponse.usage);
                 copilotStore.incrementApiCallCount();
                 copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-                copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+                copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, undefined, cacheCreationTokens);
 
                 sendJson(res, 200, chatResponseToResponses(chatResponse));
             }
@@ -1101,9 +1109,10 @@ async function handleResponsesCompact(req, res) {
         const inputTokens = chatResponse.usage?.prompt_tokens || 0;
         const outputTokens = chatResponse.usage?.completion_tokens || 0;
         const cacheHitTokens = extractCacheHitTokens(chatResponse.usage);
+        const cacheCreationTokens = extractCacheCreationTokens(chatResponse.usage);
         copilotStore.incrementApiCallCount();
         copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-        copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+        copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, undefined, cacheCreationTokens);
 
         sendJson(res, 200, chatResponseToCompact(chatResponse));
     } catch (error) {
@@ -1241,10 +1250,10 @@ function handleCopilotResponsesWSInContext(clientWs, req) {
                 throw error;
             }
         },
-        onUsage: (inputTokens, outputTokens, cacheHitTokens, model) => {
+        onUsage: (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens, model) => {
             copilotStore.incrementApiCallCount();
             copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-            copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens);
+            copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, model, cacheCreationTokens);
         }
     });
 }

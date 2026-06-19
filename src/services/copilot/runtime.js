@@ -57,7 +57,7 @@ export const copilotStore = {
             cacheHitTokens
         );
     },
-    recordDailyUsage(inputTokens, outputTokens, cacheHitTokens = 0, model = 'unknown') {
+    recordDailyUsage(inputTokens, outputTokens, cacheHitTokens = 0, model = 'unknown', cacheCreationTokens = 0) {
         const {tenantId} = currentCopilotContext();
         unifiedTenantManager.recordDailyUsage(
             tenantId,
@@ -66,7 +66,8 @@ export const copilotStore = {
             outputTokens,
             cacheHitTokens,
             0,
-            model
+            model,
+            cacheCreationTokens
         );
     }
 };
