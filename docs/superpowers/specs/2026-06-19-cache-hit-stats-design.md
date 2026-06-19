@@ -25,6 +25,9 @@
 | D4 | copilotStore.recordDailyUsage 签名无 cacheCreation 入参 | 结构缺失 | copilot 全部入口 |
 | D5 | copilot.js:648 `extractCacheHitTokens(...) || streamCacheHitTokens` 的 `||` 短路 | 确定性 bug | copilot anthropic HTTP 回退流式 |
 | D6 | Responses 通路转换器 `convertUsage`/`convertResponsesUsageToChat` 不映射 cache_creation | 结构缺失 | relay 的 Anthropic→Responses 交叉通路 |
+| D7 | relay openai 直通支（chat 非流式 908 + 流式 `_streamOpenAIPassthrough`/`rewriteOpenAIStream`）与 anthropic 直通支（1295/1332）未提取 cacheCreation | 结构缺失 | relay 的 openai/anthropic 直通支（自嵌套 A→B 场景下被 B 对应接口触发，平时连真实模型也触发） |
+
+D6 与 D7 合起来覆盖自嵌套场景：A 的 relay 上游可配置成 B 的四种协议接口（chat/responses/responses_ws/anthropic），A 端 4 个上游分支的 cacheCreation 提取覆盖度为——openai 支(D7)、responses 支(D2)、responses_ws 支(D1)、anthropic 支(D7)。修齐 D1/D2/D7 后 16 支在自嵌套下 cacheCreation 全可采集。
 
 ## 设计
 
@@ -57,7 +60,15 @@ cache_creation_input_tokens || prompt_tokens_details?.cache_creation_tokens || i
 
 - `recordResponsesUsage`（第 214 行）：补第 8 参 `extractCacheCreationTokens(usage)`（D2）。
 - relay WS onUsage 闭包（第 2397 行）：接收第 5 参 cacheCreationTokens 透传给 `recordUsage`。
+- **openai 直通支（D7）**：chat 非流式分支（第 908 行 recordUsage）补第 8 参 `extractCacheCreationTokens(parsed.usage)`。
+- **anthropic 直通支（D7）**：anthropic 流式（第 1295 行）与非流式（第 1332 行）recordUsage 补第 8 参 `extractCacheCreationTokens(aggregated.usage / data.usage)`。
 - 其余 `recordUsage` 调用点已含 cacheCreationTokens 入参，无需改。
+
+#### `rewriteOpenAIStream` — `src/transformer/shared-translator.js`
+
+- 第 953-954 行附近：新增 `streamCacheCreationTokens` 累加变量，从 `data.usage` 提取 `extractCacheCreationTokens(data.usage)`。
+- onUsage 回调签名扩展为 `(inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens, credit, model)`（cacheCreation 插在第 4 位，credit/model 顺延）。
+- 两个调用方同步更新：relay `_streamOpenAIPassthrough`（[relay.js:1375](src/routes/relay.js#L1375)）与 codebuddy 流式分支（[codebuddy.js:278](src/routes/codebuddy.js#L278)），回调接收第 4 参 cacheCreationTokens 并透传给各自 recordUsage。codebuddy 上游恒为 OpenAI Chat，cacheCreation 自然为 0。
 
 #### copilot — `src/routes/copilot.js`
 
@@ -100,13 +111,14 @@ cache_creation_input_tokens || prompt_tokens_details?.cache_creation_tokens || i
 
 ## 改动文件清单
 
-1. `src/transformer/shared-translator.js` — extractCacheCreationTokens/extractCacheMetrics 扩展
+1. `src/transformer/shared-translator.js` — extractCacheCreationTokens/extractCacheMetrics 扩展 + rewriteOpenAIStream 补 cacheCreation 提取与回调用参
 2. `src/transformer/responses-translator.js` — convertUsage/convertResponsesUsageToChat 补 cache_creation
 3. `src/services/shared/responses-ws-server.js` — D1 修复 + onUsage 扩参
-4. `src/routes/relay.js` — recordResponsesUsage 补参 + WS onUsage 透传
-5. `src/routes/copilot.js` — D5 修复 + recordDailyUsage 调用点补 cacheCreation
-6. `src/services/copilot/runtime.js` — copilotStore 签名扩展
-7. `src/db/models/tenant-daily-usage.js` — 加 input_cache_creation 列
-8. `src/db/index.js` — ensureTenantDailyUsageColumns 钩子
-9. `src/services/gateway/tenant-manager.js` — recordDailyUsage increment 新字段
-10. `tests/cache-metrics.test.js` — 扩展用例
+4. `src/routes/relay.js` — recordResponsesUsage 补参 + WS onUsage 透传 + openai/anthropic 直通支补 cacheCreation（D7）+ `_streamOpenAIPassthrough` 接 cacheCreation
+5. `src/routes/codebuddy.js` — 流式分支回调接第 4 参 cacheCreationTokens 并传给 recordDailyUsage（上游 OpenAI Chat 自然为 0）
+6. `src/routes/copilot.js` — D5 修复 + recordDailyUsage 调用点补 cacheCreation
+7. `src/services/copilot/runtime.js` — copilotStore 签名扩展
+8. `src/db/models/tenant-daily-usage.js` — 加 input_cache_creation 列
+9. `src/db/index.js` — ensureTenantDailyUsageColumns 钩子
+10. `src/services/gateway/tenant-manager.js` — recordDailyUsage increment 新字段
+11. `tests/cache-metrics.test.js` — 扩展用例
