@@ -900,6 +900,7 @@ export function rewriteOpenAIStream(res, responseBody, onUsage) {
     let streamInputTokens = 0;
     let streamOutputTokens = 0;
     let streamCacheHitTokens = 0;
+    let streamCacheCreationTokens = 0;
     let streamCredit = 0;
     let streamModel = '';
 
@@ -957,8 +958,8 @@ export function rewriteOpenAIStream(res, responseBody, onUsage) {
             if (data.usage) {
                 streamInputTokens = data.usage.prompt_tokens || 0;
                 streamOutputTokens = data.usage.completion_tokens || 0;
-                streamCacheHitTokens =
-                    data.usage.prompt_cache_hit_tokens || data.usage.prompt_tokens_details?.cached_tokens || 0;
+                streamCacheHitTokens = extractCacheHitTokens(data.usage);
+                streamCacheCreationTokens = extractCacheCreationTokens(data.usage);
                 streamCredit = data.usage.credit || 0;
             }
             if (data.model) streamModel = data.model;
@@ -1002,7 +1003,7 @@ export function rewriteOpenAIStream(res, responseBody, onUsage) {
             res.write(lineBuffer + '\n');
         }
         if (onUsage) {
-            onUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, streamCredit, streamModel);
+            onUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, streamCacheCreationTokens, streamCredit, streamModel);
         }
         res.end();
     });

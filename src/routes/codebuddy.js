@@ -10,7 +10,9 @@ import {
     buildConversationAnchorKey,
     injectBehaviorRules,
     stripDynamicReminders,
-    sanitizeAnthropicPayload
+    sanitizeAnthropicPayload,
+    extractCacheHitTokens,
+    extractCacheCreationTokens
 } from '../transformer/shared-translator.js';
 import {
     responsesRequestToChat,
@@ -27,18 +29,6 @@ import {BLOCKED_DOMAINS, getCodebuddyBaseUrl, isPersonalHost} from '../services/
 import {handleWSConnection} from '../services/shared/responses-ws-server.js';
 import logger from '../utils/logger.js';
 import {isNetworkError} from '../utils/http-client.js';
-
-/**
- * 从上游 usage 中提取缓存命中 token 数
- * DeepSeek: prompt_cache_hit_tokens
- * OpenAI: prompt_tokens_details.cached_tokens
- */
-function extractCacheHitTokens(usage) {
-    if (!usage) return 0;
-    if (usage.prompt_cache_hit_tokens) return usage.prompt_cache_hit_tokens;
-    if (usage.prompt_tokens_details?.cached_tokens) return usage.prompt_tokens_details.cached_tokens;
-    return 0;
-}
 
 /**
  * 基于规则映射 Codex 传入的模型名到 CodeBuddy 实际可用模型
@@ -286,7 +276,7 @@ async function handleOpenAIChatCompletions(req, res) {
                 Connection: 'keep-alive'
             });
 
-            rewriteOpenAIStream(res, response.body, (inputTokens, outputTokens, cacheHitTokens, credit, model) => {
+            rewriteOpenAIStream(res, response.body, (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens, credit, model) => {
                 if (authResult.tenantId) {
                     unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
                     unifiedTenantManager.incrementTokenUsage(
@@ -304,7 +294,8 @@ async function handleOpenAIChatCompletions(req, res) {
                         outputTokens,
                         cacheHitTokens,
                         credit,
-                        pickModelName(model, openAIPayload.model)
+                        pickModelName(model, openAIPayload.model),
+                        cacheCreationTokens
                     );
                 }
             });
@@ -316,6 +307,7 @@ async function handleOpenAIChatCompletions(req, res) {
                 const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
                 const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
                 const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
+                const cacheCreationTokens = extractCacheCreationTokens(aggregated.usage);
                 const credit = aggregated.usage ? aggregated.usage.credit || 0 : 0;
                 unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
                 unifiedTenantManager.incrementTokenUsage(
@@ -333,7 +325,8 @@ async function handleOpenAIChatCompletions(req, res) {
                     outputTokens,
                     cacheHitTokens,
                     credit,
-                    pickModelName(aggregated.model, openAIPayload.model)
+                    pickModelName(aggregated.model, openAIPayload.model),
+                    cacheCreationTokens
                 );
             }
 

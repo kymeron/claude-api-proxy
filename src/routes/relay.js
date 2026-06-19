@@ -1400,8 +1400,8 @@ async function handleAnthropicMessages(req, res) {
 
 /** OpenAI 上游流式透传（OpenAI 端点 → OpenAI 上游），对 reasoning_content 做缓冲合并 */
 function _streamOpenAIPassthrough(response, res, tenantId, tenantInfo = '', model = 'unknown') {
-    rewriteOpenAIStream(res, response.body, (inputTokens, outputTokens, cacheHitTokens) => {
-        recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, model);
+    rewriteOpenAIStream(res, response.body, (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens) => {
+        recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, model, null, null, cacheCreationTokens);
     });
 }
 
