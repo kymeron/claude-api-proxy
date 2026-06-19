@@ -6,6 +6,7 @@
  */
 
 import logger from '../../utils/logger.js';
+import {extractCacheHitTokens, extractCacheCreationTokens} from '../../transformer/shared-translator.js';
 
 // 客户端 WS 心跳间隔，防止中间代理（Nginx/ALB）因空闲超时静默切断连接
 const PING_INTERVAL = 25000;
@@ -29,7 +30,7 @@ const CLEANUP_TIMEOUT = 5000;
  * @param {function} options.handleRequest - 请求处理函数
  *   签名: async (payload, authResult, {signal}) => AsyncIterable<{type, data}> | {eventStream: AsyncIterable, conn?: object}
  * @param {import('http').IncomingMessage} options.req - 原始 HTTP 请求（用于鉴权）
- * @param {function} [options.onUsage] - 用量记录回调 (inputTokens, outputTokens, cacheHitTokens, model) => void
+ * @param {function} [options.onUsage] - 用量记录回调 (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens, model) => void
  * @param {function} [options.onClose] - 连接关闭回调
  */
 export function handleWSConnection(clientWs, options) {
@@ -197,6 +198,7 @@ async function _processRequest(clientWs, message, authResult, handleRequest, ctx
     let inputTokens = 0;
     let outputTokens = 0;
     let cacheHitTokens = 0;
+    let cacheCreationTokens = 0;
     let model = 'unknown';
     let responseCompleted = false;
 
@@ -230,7 +232,8 @@ async function _processRequest(clientWs, message, authResult, handleRequest, ctx
                 const usage = event.data.response.usage;
                 inputTokens = usage.input_tokens || 0;
                 outputTokens = usage.output_tokens || 0;
-                cacheHitTokens = usage.input_tokens_details?.cached_tokens || 0;
+                cacheHitTokens = extractCacheHitTokens(usage);
+                cacheCreationTokens = extractCacheCreationTokens(usage);
             }
             if (event.type === 'response.created' && event.data?.response?.model) {
                 model = event.data.response.model;
@@ -285,7 +288,7 @@ async function _processRequest(clientWs, message, authResult, handleRequest, ctx
 
         // 记录用量
         if (ctx.onUsage && (inputTokens > 0 || outputTokens > 0)) {
-            const recordUsage = () => ctx.onUsage(inputTokens, outputTokens, cacheHitTokens, model);
+            const recordUsage = () => ctx.onUsage(inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens, model);
             if (ctx.runInContext) ctx.runInContext(recordUsage);
             else recordUsage();
         }
