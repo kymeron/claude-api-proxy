@@ -9,15 +9,47 @@ import logger from '../utils/logger.js';
 import {getBehaviorRules} from '../config/system-prompts.js';
 
 /**
- * 从 OpenAI 格式 usage 中提取缓存命中 token 数
- * DeepSeek: prompt_cache_hit_tokens
- * OpenAI: prompt_tokens_details.cached_tokens
+ * 从上游 usage 中统一提取缓存命中与缓存写入 token 数
+ * 覆盖四种上游协议的字段：
+ * - DeepSeek Chat: prompt_cache_hit_tokens
+ * - OpenAI Chat: prompt_tokens_details.cached_tokens
+ * - Anthropic: cache_read_input_tokens（命中读取）/ cache_creation_input_tokens（写入成本）
+ * - Responses: input_tokens_details.cached_tokens
+ * @param {object} usage
+ * @returns {{cacheHit: number, cacheCreation: number}}
+ */
+export function extractCacheMetrics(usage) {
+    if (!usage) return {cacheHit: 0, cacheCreation: 0};
+    const cacheHit =
+        usage.prompt_cache_hit_tokens
+        || usage.prompt_tokens_details?.cached_tokens
+        || usage.cache_read_input_tokens
+        || usage.input_tokens_details?.cached_tokens
+        || 0;
+    const cacheCreation =
+        usage.cache_creation_input_tokens
+        || usage.prompt_tokens_details?.cache_creation_tokens
+        || usage.input_tokens_details?.cache_creation_tokens
+        || 0;
+    return {cacheHit, cacheCreation};
+}
+
+/**
+ * 从上游 usage 中提取缓存命中 token 数（向后兼容，委托统一函数）
  */
 export function extractCacheHitTokens(usage) {
+    return extractCacheMetrics(usage).cacheHit;
+}
+
+/**
+ * 从上游 usage 中提取缓存写入 token 数
+ * 覆盖三种协议字段：Anthropic cache_creation_input_tokens、
+ * Chat prompt_tokens_details.cache_creation_tokens、
+ * Responses input_tokens_details.cache_creation_tokens
+ */
+export function extractCacheCreationTokens(usage) {
     if (!usage) return 0;
-    if (usage.prompt_cache_hit_tokens) return usage.prompt_cache_hit_tokens;
-    if (usage.prompt_tokens_details?.cached_tokens) return usage.prompt_tokens_details.cached_tokens;
-    return 0;
+    return extractCacheMetrics(usage).cacheCreation;
 }
 
 /**
