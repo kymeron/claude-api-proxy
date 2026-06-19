@@ -892,7 +892,7 @@ export function openAIToAnthropic(openAIResponse) {
  *
  * @param {http.ServerResponse} res - 客户端响应
  * @param {ReadableStream} responseBody - 上游流
- * @param {Function} onUsage - usage 统计回调 (inputTokens, outputTokens, cacheHitTokens, credit, model)
+ * @param {Function} onUsage - usage 统计回调 (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens, credit, model)
  */
 export function rewriteOpenAIStream(res, responseBody, onUsage) {
     let reasoningBuffer = ''; // 缓冲 reasoning_content 片段

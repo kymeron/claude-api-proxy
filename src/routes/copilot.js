@@ -655,8 +655,8 @@ async function handleAnthropicMessages(req, res) {
                                 if (openAIChunk.usage) {
                                     streamInputTokens = openAIChunk.usage.prompt_tokens || streamInputTokens;
                                     streamOutputTokens = openAIChunk.usage.completion_tokens || streamOutputTokens;
-                                    streamCacheHitTokens = extractCacheHitTokens(openAIChunk.usage) || streamCacheHitTokens;
-                                    streamCacheCreationTokens = extractCacheCreationTokens(openAIChunk.usage) || streamCacheCreationTokens;
+                                    streamCacheHitTokens = extractCacheHitTokens(openAIChunk.usage);
+                                    streamCacheCreationTokens = extractCacheCreationTokens(openAIChunk.usage);
                                 }
 
                                 for (const event of anthropicEvents) {
