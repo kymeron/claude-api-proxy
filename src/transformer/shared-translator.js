@@ -374,25 +374,10 @@ export function extractStableContent(systemContent) {
     const normalized = systemContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const lines = normalized.split('\n');
     const stableLines = [];
-    let insideProxyTag = false;
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const trimmed = line.trim();
-        if (trimmed.startsWith('<proxy:') && trimmed.endsWith('>')) {
-            insideProxyTag = true;
-            stableLines.push(line);
-            continue;
-        }
-        if (insideProxyTag && trimmed.startsWith('</proxy:')) {
-            insideProxyTag = false;
-            stableLines.push(line);
-            continue;
-        }
-        if (insideProxyTag) {
-            stableLines.push(line);
-            continue;
-        }
         if (trimmed === '') {
             stableLines.push(line);
             continue;
