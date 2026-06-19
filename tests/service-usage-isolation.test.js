@@ -80,6 +80,8 @@ test('records daily usage with service and schema field names', async () => {
             input_tokens: 11,
             output_tokens: 12,
             input_cache_hit: 4,
+            input_cache_miss: 7,
+            input_cache_creation: 0,
             credit: 1.5
         });
     } finally {

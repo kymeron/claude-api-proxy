@@ -195,7 +195,7 @@ class UnifiedTenantManager {
         delta.cache_hit_tokens += cacheHitTokens || 0;
     }
 
-    async recordDailyUsage(tenantId, serviceType, inputTokens, outputTokens, cacheHitTokens = 0, credit = 0, model = 'unknown') {
+    async recordDailyUsage(tenantId, serviceType, inputTokens, outputTokens, cacheHitTokens = 0, credit = 0, model = 'unknown', cacheCreationTokens = 0) {
         const id = typeof tenantId === 'string' ? parseInt(tenantId, 10) : tenantId;
         try {
             const today = new Date().toISOString().slice(0, 10);
@@ -204,16 +204,25 @@ class UnifiedTenantManager {
                 defaults: {
                     tenant_id: id, service_type: serviceType, date: today, model: model || 'unknown',
                     api_calls: 0, input_tokens: 0, output_tokens: 0,
-                    input_cache_hit: 0, input_cache_miss: 0, credit: 0
+                    input_cache_hit: 0, input_cache_miss: 0, input_cache_creation: 0, credit: 0
                 }
             });
+            const effectiveInput = inputTokens || 0;
+            const effectiveHit = cacheHitTokens || 0;
+            const cacheMiss = Math.max(0, effectiveInput - effectiveHit);
             await record.increment({
                 api_calls: 1,
-                input_tokens: inputTokens || 0,
+                input_tokens: effectiveInput,
                 output_tokens: outputTokens || 0,
-                input_cache_hit: cacheHitTokens || 0,
+                input_cache_hit: effectiveHit,
+                input_cache_miss: cacheMiss,
+                input_cache_creation: cacheCreationTokens || 0,
                 credit: credit || 0
             });
+            // 缓存可观测性诊断日志：cacheCreationTokens 仅 Anthropic 上游提供，
+            // 用于观测缓存写入成本与命中率。
+            const cacheHitRate = effectiveInput > 0 ? (effectiveHit / effectiveInput) : 0;
+            logger.info(`cache usage: tenant=${id} service=${serviceType} model=${model || 'unknown'} input=${effectiveInput} output=${outputTokens || 0} cacheHit=${effectiveHit} cacheCreation=${cacheCreationTokens || 0} cacheHitRate=${cacheHitRate.toFixed(4)}`);
         } catch (error) {
             logger.error(`Failed to record daily usage for tenant ${id}: ${error.message}`);
         }
