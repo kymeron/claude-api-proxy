@@ -273,7 +273,7 @@ async function readResponseBody(stream) {
 
 function parseSSEBlock(block) {
     const lines = block.split(/\r?\n/);
-    let event = 'message';
+    let event;
     const dataLines = [];
 
     for (const line of lines) {
@@ -285,6 +285,10 @@ function parseSSEBlock(block) {
     }
 
     return {event, data: dataLines.join('\n')};
+}
+
+function getSSEEventType(event, parsed) {
+    return event || parsed?.type;
 }
 
 async function* parseResponsesSSEEvents(stream, signal) {
@@ -300,7 +304,7 @@ async function* parseResponsesSSEEvents(stream, signal) {
             if (!data || data === '[DONE]') continue;
             let parsed;
             try { parsed = JSON.parse(data); } catch { continue; }
-            yield {type: event || parsed.type, data: parsed};
+            yield {type: getSSEEventType(event, parsed), data: parsed};
         }
     }
 }
@@ -399,7 +403,7 @@ async function generateRelayContextSummary({
             tenantId,
             chatResponse.usage?.prompt_tokens || 0,
             chatResponse.usage?.completion_tokens || 0,
-            chatResponse.usage?.prompt_tokens_details?.cached_tokens || 0,
+            extractCacheHitTokens(chatResponse.usage),
             model,
             null,
             null,
@@ -693,7 +697,7 @@ async function handleOpenAIChatCompletions(req, res) {
                     tenantId,
                     finalUsage?.prompt_tokens || 0,
                     finalUsage?.completion_tokens || 0,
-                    finalUsage?.prompt_tokens_details?.cached_tokens || 0,
+                    extractCacheHitTokens(finalUsage),
                     relayStatsModel,
                     null,
                     null,
@@ -838,22 +842,23 @@ async function handleOpenAIChatCompletions(req, res) {
                         } catch {
                             continue;
                         }
+                        const eventType = getSSEEventType(event, parsed);
 
-                        if (event === 'response.created' && parsed.response?.model) {
+                        if (eventType === 'response.created' && parsed.response?.model) {
                             streamState.model = parsed.response.model;
                         }
 
-                        if (event === 'response.completed') {
+                        if (eventType === 'response.completed') {
                             usage = parsed.response?.usage || usage;
                             completedResponse = parsed.response || completedResponse;
                         }
 
-                        const chunks = responsesEventToChatChunks(event, parsed, streamState);
+                        const chunks = responsesEventToChatChunks(eventType, parsed, streamState);
                         for (const chatChunk of chunks) {
                             res.write(`data: ${JSON.stringify(chatChunk)}\n\n`);
                         }
 
-                        if (event === 'response.completed') {
+                        if (eventType === 'response.completed') {
                             recordCompletedResponseState(tenantId, conversationKey, completedResponse);
                             recordUsage(
                                 tenantId,
@@ -1756,9 +1761,12 @@ async function handleResponsesAPI(req, res) {
 
                     for (const part of parts) {
                         const {event, data} = parseSSEBlock(part);
-                        if (event !== 'response.completed' || !data || data === '[DONE]') continue;
+                        if (!data || data === '[DONE]') continue;
                         try {
-                            const completed = JSON.parse(data).response;
+                            const parsed = JSON.parse(data);
+                            const eventType = getSSEEventType(event, parsed);
+                            if (eventType !== 'response.completed') continue;
+                            const completed = parsed.response;
                             usage = completed?.usage || usage;
                             completedResponse = completed || completedResponse;
                         } catch {
@@ -2377,10 +2385,11 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
                 if (!data || data === '[DONE]') continue;
                 let parsed;
                 try { parsed = JSON.parse(data); } catch { continue; }
-                if ((event || parsed.type) === 'response.completed') {
+                const eventType = getSSEEventType(event, parsed);
+                if (eventType === 'response.completed') {
                     recordCompletedResponseState(tenantId, stateConversationKey, parsed.response);
                 }
-                yield {type: event || parsed.type, data: parsed};
+                yield {type: eventType, data: parsed};
             }
         }
         return;

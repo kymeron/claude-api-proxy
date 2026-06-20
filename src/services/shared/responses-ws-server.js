@@ -178,6 +178,12 @@ function safeClientSend(ws, data) {
     }
 }
 
+function getResponseEventType(event) {
+    if (!event || typeof event !== 'object') return undefined;
+    if (event.type && event.type !== 'message') return event.type;
+    return event.data?.type || event.type;
+}
+
 /**
  * 处理单个 response.create 请求
  */
@@ -226,16 +232,17 @@ async function _processRequest(clientWs, message, authResult, handleRequest, ctx
 
         for await (const event of bindAsyncIterableContext(eventStream, ctx.runInContext)) {
             if (ctx.isClosed() || abortController.signal.aborted) break;
+            const eventType = getResponseEventType(event);
 
             // 追踪 usage
-            if (event.type === 'response.completed' && event.data?.response?.usage) {
+            if (eventType === 'response.completed' && event.data?.response?.usage) {
                 const usage = event.data.response.usage;
                 inputTokens = usage.input_tokens || 0;
                 outputTokens = usage.output_tokens || 0;
                 cacheHitTokens = extractCacheHitTokens(usage);
                 cacheCreationTokens = extractCacheCreationTokens(usage);
             }
-            if (event.type === 'response.created' && event.data?.response?.model) {
+            if (eventType === 'response.created' && event.data?.response?.model) {
                 model = event.data.response.model;
             }
 
@@ -245,7 +252,7 @@ async function _processRequest(clientWs, message, authResult, handleRequest, ctx
                 break;
             }
 
-            if (event.type === 'response.completed') {
+            if (eventType === 'response.completed') {
                 responseCompleted = true;
                 break;
             }

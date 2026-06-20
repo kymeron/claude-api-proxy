@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {EventEmitter} from 'node:events';
 import {
     createChatCompletionsStreamState,
     createResponsesStreamState,
     responsesEventToResponsesEvents
 } from '../src/transformer/responses-translator.js';
-import {bindAsyncIterableContext} from '../src/services/shared/responses-ws-server.js';
+import {bindAsyncIterableContext, handleWSConnection} from '../src/services/shared/responses-ws-server.js';
 import {RelayStateMissingError} from '../src/services/relay/conversation-state.js';
 
 test('responsesEventToResponsesEvents adds ordinary Responses scaffold before text deltas', () => {
@@ -142,3 +143,58 @@ test('RelayStateMissingError exposes state_missing code for Responses WS errors'
     assert.equal(error.code, 'state_missing');
     assert.equal(error.previousResponseId, 'resp_missing');
 });
+
+test('handleWSConnection accepts response.completed from data.type when wrapper event is message', async () => {
+    const ws = new FakeClientWebSocket();
+
+    try {
+        handleWSConnection(ws, {
+            req: {},
+            authenticate: () => ({tenantId: 1}),
+            handleRequest: async function* () {
+                yield {
+                    type: 'message',
+                    data: {
+                        type: 'response.completed',
+                        response: {
+                            id: 'resp_1',
+                            model: 'glm-5.2',
+                            usage: {input_tokens: 1, output_tokens: 2, total_tokens: 3}
+                        }
+                    }
+                };
+            }
+        });
+
+        ws.emit('message', Buffer.from(JSON.stringify({
+            type: 'response.create',
+            response: {model: 'glm-5.2', input: 'hello'}
+        })));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        assert.deepEqual(ws.sent.map(event => event.type), ['response.completed']);
+    } finally {
+        ws.close();
+    }
+});
+
+class FakeClientWebSocket extends EventEmitter {
+    constructor() {
+        super();
+        this.readyState = 1;
+        this.sent = [];
+    }
+
+    send(raw) {
+        this.sent.push(JSON.parse(raw));
+        return true;
+    }
+
+    ping() {}
+
+    close() {
+        if (this.readyState === 3) return;
+        this.readyState = 3;
+        this.emit('close');
+    }
+}
