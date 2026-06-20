@@ -221,7 +221,7 @@ test('unified admin console includes all service management surfaces', () => {
     assert.doesNotMatch(refreshStats, /loadMyTenant|renderTenant|loadServiceStats/);
     assert.match(adminHtml, /function updateCustomStatsCard\(type, serviceProfile\)/);
     assert.match(adminHtml, /\/service-profile\?service=/);
-    assert.match(adminHtml, /stats-grid-\$\{type==='codebuddy'\?'6':'5'\}/);
+    assert.match(adminHtml, /stats-grid-\$\{type==='codebuddy'\?'7':'6'\}/);
     assert.match(adminHtml, /moveCodebuddyCredential/);
     assert.match(adminHtml, /moveCopilotCredential/);
     assert.match(adminHtml, /id="feedbackDetailModal"/);
