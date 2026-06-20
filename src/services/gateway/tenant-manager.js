@@ -185,7 +185,7 @@ class UnifiedTenantManager {
         delta.api_calls++;
     }
 
-    incrementTokenUsage(tenantId, serviceType, inputTokens, outputTokens, cacheHitTokens = 0) {
+    incrementTokenUsage(tenantId, serviceType, inputTokens, outputTokens, cacheHitTokens = 0, cacheCreationTokens = 0) {
         const id = typeof tenantId === 'string' ? parseInt(tenantId, 10) : tenantId;
         const key = this._usageKey(id, serviceType);
         this._dirtyTenants.add(key);
@@ -193,6 +193,7 @@ class UnifiedTenantManager {
         delta.input_tokens += inputTokens || 0;
         delta.output_tokens += outputTokens || 0;
         delta.cache_hit_tokens += cacheHitTokens || 0;
+        delta.cache_creation_tokens += cacheCreationTokens || 0;
     }
 
     async recordDailyUsage(tenantId, serviceType, inputTokens, outputTokens, cacheHitTokens = 0, credit = 0, model = 'unknown', cacheCreationTokens = 0) {
@@ -258,7 +259,7 @@ class UnifiedTenantManager {
         if (!this._deltaTenants.has(key)) {
             this._deltaTenants.set(key, {
                 api_calls: 0, input_tokens: 0, output_tokens: 0,
-                cache_hit_tokens: 0, credit: 0
+                cache_hit_tokens: 0, cache_creation_tokens: 0, credit: 0
             });
         }
         return this._deltaTenants.get(key);
@@ -322,6 +323,7 @@ class UnifiedTenantManager {
                 total_input_tokens: 0,
                 total_output_tokens: 0,
                 total_cache_hit_tokens: 0,
+                total_cache_creation_tokens: 0,
                 total_credit: 0
             }, {where: {tenant_id: id}});
         }
@@ -336,6 +338,7 @@ class UnifiedTenantManager {
             total_input_tokens: 0,
             total_output_tokens: 0,
             total_cache_hit_tokens: 0,
+            total_cache_creation_tokens: 0,
             total_credit: 0
         }, {where: {tenant_id: id, service_type: serviceType}});
         await this._loadFromDb();
@@ -357,16 +360,18 @@ class UnifiedTenantManager {
                 total_input_tokens: delta.input_tokens || 0,
                 total_output_tokens: delta.output_tokens || 0,
                 total_cache_hit_tokens: delta.cache_hit_tokens || 0,
+                total_cache_creation_tokens: delta.cache_creation_tokens || 0,
                 total_credit: delta.credit || 0
             };
             delta.api_calls = 0;
             delta.input_tokens = 0;
             delta.output_tokens = 0;
             delta.cache_hit_tokens = 0;
+            delta.cache_creation_tokens = 0;
             delta.credit = 0;
             if (d.total_api_calls === 0 && d.total_input_tokens === 0 &&
                 d.total_output_tokens === 0 && d.total_cache_hit_tokens === 0 &&
-                d.total_credit === 0) continue;
+                d.total_cache_creation_tokens === 0 && d.total_credit === 0) continue;
 
             try {
                 await TenantServiceProfile.increment(d, {

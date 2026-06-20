@@ -30,6 +30,7 @@ test('flushes usage deltas to the matching tenant service profile', async () => 
                     total_input_tokens: 10,
                     total_output_tokens: 20,
                     total_cache_hit_tokens: 3,
+                    total_cache_creation_tokens: 0,
                     total_credit: 0
                 },
                 where: {tenant_id: 42, service_type: 'relay'}
@@ -40,6 +41,7 @@ test('flushes usage deltas to the matching tenant service profile', async () => 
                     total_input_tokens: 7,
                     total_output_tokens: 8,
                     total_cache_hit_tokens: 1,
+                    total_cache_creation_tokens: 0,
                     total_credit: 0
                 },
                 where: {tenant_id: 42, service_type: 'copilot'}
