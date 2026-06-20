@@ -137,32 +137,62 @@ test('truncateResponsesInputItems moves forward instead of keeping an orphaned t
     assert.equal(result.input[0].content, 'new question');
 });
 
-test('limitResponsesInputItems only truncates when a continuation response id is available', () => {
+test('limitResponsesInputItems truncates without injecting previous_response_id unless continuation exists', () => {
     const input = Array.from({length: 600}, (_, i) => ({role: 'user', content: `message ${i}`}));
-    const unchanged = limitResponsesInputItems({model: 'glm-5.2', input}, {limit: 500});
+    const truncatedWithoutState = limitResponsesInputItems({model: 'glm-5.2', input}, {limit: 500});
 
-    assert.equal(unchanged.truncated, false);
-    assert.equal(unchanged.payload.input.length, 600);
-    assert.equal('previous_response_id' in unchanged.payload, false);
+    assert.equal(truncatedWithoutState.truncated, true);
+    assert.equal(truncatedWithoutState.payload.input.length, 500);
+    assert.equal('previous_response_id' in truncatedWithoutState.payload, false);
+    assert.equal(truncatedWithoutState.payload.input[0].content, 'message 100');
 
-    const truncated = limitResponsesInputItems(
+    const truncatedWithState = limitResponsesInputItems(
         {model: 'glm-5.2', input},
         {limit: 500, previousResponseId: 'resp_prev'}
     );
 
-    assert.equal(truncated.truncated, true);
-    assert.equal(truncated.payload.input.length, 500);
-    assert.equal(truncated.payload.previous_response_id, 'resp_prev');
-    assert.equal(truncated.payload.input[0].content, 'message 100');
+    assert.equal(truncatedWithState.truncated, true);
+    assert.equal(truncatedWithState.payload.input.length, 500);
+    assert.equal(truncatedWithState.payload.previous_response_id, 'resp_prev');
+    assert.equal(truncatedWithState.payload.input[0].content, 'message 100');
 });
 
-test('limitResponsesInputItems applies provider hard cap even without continuation state', () => {
+test('limitResponsesInputItems respects explicit limit even without continuation state', () => {
     const input = Array.from({length: 1200}, (_, i) => ({role: 'user', content: `message ${i}`}));
     const result = limitResponsesInputItems({model: 'glm-5.2', input}, {limit: 500});
 
     assert.equal(result.truncated, true);
     assert.equal(result.previousResponseId, null);
     assert.equal('previous_response_id' in result.payload, false);
+    assert.equal(result.payload.input.length, 500);
+    assert.equal(result.payload.input[0].content, 'message 700');
+});
+
+test('limitResponsesInputItems preserves leading instructions when truncating without continuation state', () => {
+    const input = [
+        {role: 'system', content: 'Always answer in JSON.'},
+        {role: 'developer', content: 'Prefer concise output.'},
+        ...Array.from({length: 600}, (_, i) => ({role: 'user', content: `message ${i}`}))
+    ];
+    const result = limitResponsesInputItems({model: 'glm-5.2', input}, {limit: 500});
+
+    assert.equal(result.truncated, true);
+    assert.equal(result.previousResponseId, null);
+    assert.equal('previous_response_id' in result.payload, false);
+    assert.equal(result.payload.input.length, 500);
+    assert.deepEqual(result.payload.input.slice(0, 2), input.slice(0, 2));
+    assert.equal(result.payload.input[2].content, 'message 102');
+});
+
+test('limitResponsesInputItems clamps oversized explicit limit to provider hard cap', () => {
+    const input = Array.from({length: 1200}, (_, i) => ({role: 'user', content: `message ${i}`}));
+    const result = limitResponsesInputItems(
+        {model: 'glm-5.2', input},
+        {limit: 1200, previousResponseId: 'resp_prev'}
+    );
+
+    assert.equal(result.truncated, true);
+    assert.equal(result.payload.previous_response_id, 'resp_prev');
     assert.equal(result.payload.input.length, 950);
     assert.equal(result.payload.input[0].content, 'message 250');
 });

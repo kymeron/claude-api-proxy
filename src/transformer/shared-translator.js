@@ -67,8 +67,11 @@ export function openAIUsageToAnthropicUsage(usage) {
     const promptTokens = usage?.prompt_tokens || 0;
     const cacheReadTokens = extractCacheHitTokens(usage);
     const cacheCreationTokens = extractCacheCreationTokens(usage);
+    const promptDetails = usage?.prompt_tokens_details || {};
+    const cacheReadInsidePrompt = promptDetails.cached_tokens || 0;
+    const cacheCreationInsidePrompt = promptDetails.cache_creation_tokens || 0;
     return {
-        input_tokens: Math.max(0, promptTokens - cacheReadTokens - cacheCreationTokens),
+        input_tokens: Math.max(0, promptTokens - cacheReadInsidePrompt - cacheCreationInsidePrompt),
         output_tokens: usage?.completion_tokens || 0,
         cache_read_input_tokens: cacheReadTokens,
         cache_creation_input_tokens: cacheCreationTokens

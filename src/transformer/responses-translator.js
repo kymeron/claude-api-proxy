@@ -1503,7 +1503,7 @@ export function resolveResponsesInputItemsLimit(value = process.env.RELAY_RESPON
     return Math.min(MAX_RESPONSES_INPUT_ITEMS_LIMIT, Math.max(MIN_RESPONSES_INPUT_ITEMS_LIMIT, parsed));
 }
 
-export function truncateResponsesInputItems(input, {limit} = {}) {
+export function truncateResponsesInputItems(input, {limit, preserveLeadingInstructions = false} = {}) {
     if (!Array.isArray(input)) {
         return {
             input,
@@ -1531,6 +1531,30 @@ export function truncateResponsesInputItems(input, {limit} = {}) {
     }
 
     const rawStart = originalLength - resolvedLimit;
+    if (preserveLeadingInstructions) {
+        const leadingInstructionsEnd = findLeadingInstructionPrefixEnd(input);
+        if (leadingInstructionsEnd > 0 && leadingInstructionsEnd < resolvedLimit) {
+            const tailLimit = resolvedLimit - leadingInstructionsEnd;
+            const tailRawStart = Math.max(leadingInstructionsEnd, originalLength - tailLimit);
+            const tailStartIndex = findResponsesInputCutIndex(input, tailRawStart);
+            const truncatedInput = [
+                ...input.slice(0, leadingInstructionsEnd),
+                ...input.slice(tailStartIndex)
+            ];
+
+            return {
+                input: truncatedInput,
+                truncated: true,
+                originalLength,
+                retainedLength: truncatedInput.length,
+                droppedCount: originalLength - truncatedInput.length,
+                startIndex: tailStartIndex,
+                preservedPrefixLength: leadingInstructionsEnd,
+                limit: resolvedLimit
+            };
+        }
+    }
+
     const startIndex = findResponsesInputCutIndex(input, rawStart);
     const truncatedInput = input.slice(startIndex);
 
@@ -1561,7 +1585,7 @@ export function limitResponsesInputItems(payload, {limit, previousResponseId} = 
     const explicitPreviousResponseId = normalizeResponseId(payload.previous_response_id);
     const continuationResponseId = explicitPreviousResponseId || normalizeResponseId(previousResponseId);
     if (!continuationResponseId) {
-        const hardCapped = truncateResponsesInputItems(payload.input, {limit: MAX_RESPONSES_INPUT_ITEMS_LIMIT});
+        const hardCapped = truncateResponsesInputItems(payload.input, {limit, preserveLeadingInstructions: true});
         if (hardCapped.truncated) {
             return {
                 ...hardCapped,
@@ -1607,7 +1631,16 @@ export function limitResponsesInputItems(payload, {limit, previousResponseId} = 
 function normalizeExplicitInputItemsLimit(value) {
     if (value === undefined || value === null) return resolveResponsesInputItemsLimit();
     const parsed = Number.parseInt(value, 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : resolveResponsesInputItemsLimit();
+    if (!Number.isFinite(parsed) || parsed <= 0) return resolveResponsesInputItemsLimit();
+    return Math.min(MAX_RESPONSES_INPUT_ITEMS_LIMIT, parsed);
+}
+
+function findLeadingInstructionPrefixEnd(input) {
+    let end = 0;
+    while (end < input.length && isLeadingInstructionItem(input[end])) {
+        end++;
+    }
+    return end;
 }
 
 function findResponsesInputCutIndex(input, rawStart) {
@@ -1619,6 +1652,10 @@ function findResponsesInputCutIndex(input, rawStart) {
         if (isSafeResponsesInputBoundary(input[i])) return i;
     }
     return start;
+}
+
+function isLeadingInstructionItem(item) {
+    return item?.role === 'system' || item?.role === 'developer';
 }
 
 function isPreferredResponsesInputBoundary(item) {

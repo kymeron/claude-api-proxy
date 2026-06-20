@@ -357,3 +357,12 @@ test('relay Responses passthrough paths limit oversized input before upstream tr
     assert.equal(limitCalls.length >= 5, true);
     assert.match(source, /lastResponseId/);
 });
+
+test('relay Anthropic passthrough non-stream stats use split input token helper', () => {
+    const source = readFileSync(join(root, 'src/routes/relay.js'), 'utf8');
+
+    assert.match(
+        source,
+        /recordUsage\(\s*tenantId,\s*extractInputTokens\(parsed\.usage\)\s*\|\|\s*estimateAnthropicInputTokens\(anthropicPayload\),\s*parsed\.usage\?\.output_tokens/
+    );
+});

@@ -1095,7 +1095,7 @@ async function handleAnthropicMessages(req, res) {
 
             recordUsage(
                 tenantId,
-                parsed.usage?.input_tokens || estimateAnthropicInputTokens(anthropicPayload),
+                extractInputTokens(parsed.usage) || estimateAnthropicInputTokens(anthropicPayload),
                 parsed.usage?.output_tokens || 0,
                 extractCacheHitTokens(parsed.usage),
                 parsed.model || relayStatsModel,

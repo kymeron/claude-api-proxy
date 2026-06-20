@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
     extractCacheHitTokens,
     extractCacheCreationTokens,
-    extractCacheMetrics
+    extractCacheMetrics,
+    openAIUsageToAnthropicUsage
 } from '../src/transformer/shared-translator.js';
 import {anthropicUsageToChatUsage} from '../src/routes/relay-protocol-converters.js';
 
@@ -131,4 +132,44 @@ test('extractCacheMetrics 同步返回三协议 cacheCreation', () => {
     assert.equal(extractCacheMetrics({prompt_tokens_details: {cache_creation_tokens: 500}}).cacheCreation, 500);
     assert.equal(extractCacheMetrics({input_tokens_details: {cache_creation_tokens: 700}}).cacheCreation, 700);
     assert.equal(extractCacheMetrics({cache_creation_input_tokens: 900}).cacheCreation, 900);
+});
+
+test('openAIUsageToAnthropicUsage 不从 provider 自定义 cache 命中字段扣减 prompt_tokens', () => {
+    const usage = openAIUsageToAnthropicUsage({
+        prompt_tokens: 1000,
+        completion_tokens: 50,
+        prompt_cache_hit_tokens: 300
+    });
+
+    assert.equal(usage.input_tokens, 1000);
+    assert.equal(usage.cache_read_input_tokens, 300);
+    assert.equal(usage.cache_creation_input_tokens, 0);
+    assert.equal(usage.output_tokens, 50);
+});
+
+test('openAIUsageToAnthropicUsage only subtracts cache tokens reported inside prompt_tokens_details', () => {
+    const usage = openAIUsageToAnthropicUsage({
+        prompt_tokens: 1000,
+        completion_tokens: 50,
+        prompt_cache_hit_tokens: 300,
+        prompt_tokens_details: {cached_tokens: 200, cache_creation_tokens: 100}
+    });
+
+    assert.equal(usage.input_tokens, 700);
+    assert.equal(usage.cache_read_input_tokens, 300);
+    assert.equal(usage.cache_creation_input_tokens, 100);
+    assert.equal(usage.output_tokens, 50);
+});
+
+test('openAIUsageToAnthropicUsage subtracts prompt detail cache creation without cached token details', () => {
+    const usage = openAIUsageToAnthropicUsage({
+        prompt_tokens: 1000,
+        completion_tokens: 50,
+        prompt_tokens_details: {cache_creation_tokens: 100}
+    });
+
+    assert.equal(usage.input_tokens, 900);
+    assert.equal(usage.cache_read_input_tokens, 0);
+    assert.equal(usage.cache_creation_input_tokens, 100);
+    assert.equal(usage.output_tokens, 50);
 });
