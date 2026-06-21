@@ -11,8 +11,7 @@ import {
     injectBehaviorRules,
     stripDynamicReminders,
     sanitizeAnthropicPayload,
-    extractCacheHitTokens,
-    extractCacheCreationTokens
+    extractCacheHitTokens
 } from '../transformer/shared-translator.js';
 import {
     responsesRequestToChat,
@@ -276,7 +275,7 @@ async function handleOpenAIChatCompletions(req, res) {
                 Connection: 'keep-alive'
             });
 
-            rewriteOpenAIStream(res, response.body, (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens, credit, model) => {
+            rewriteOpenAIStream(res, response.body, (inputTokens, outputTokens, cacheHitTokens, credit, model) => {
                 if (authResult.tenantId) {
                     unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
                     unifiedTenantManager.incrementTokenUsage(
@@ -284,8 +283,7 @@ async function handleOpenAIChatCompletions(req, res) {
                         'codebuddy',
                         inputTokens,
                         outputTokens,
-                        cacheHitTokens,
-                        cacheCreationTokens
+                        cacheHitTokens
                     );
                     unifiedTenantManager.incrementCreditUsage(authResult.tenantId, 'codebuddy', credit);
                     unifiedTenantManager.recordDailyUsage(
@@ -295,8 +293,7 @@ async function handleOpenAIChatCompletions(req, res) {
                         outputTokens,
                         cacheHitTokens,
                         credit,
-                        pickModelName(model, openAIPayload.model),
-                        cacheCreationTokens
+                        pickModelName(model, openAIPayload.model)
                     );
                 }
             });
@@ -308,7 +305,6 @@ async function handleOpenAIChatCompletions(req, res) {
                 const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
                 const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
                 const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-                const cacheCreationTokens = extractCacheCreationTokens(aggregated.usage);
                 const credit = aggregated.usage ? aggregated.usage.credit || 0 : 0;
                 unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
                 unifiedTenantManager.incrementTokenUsage(
@@ -316,8 +312,7 @@ async function handleOpenAIChatCompletions(req, res) {
                     'codebuddy',
                     inputTokens,
                     outputTokens,
-                    cacheHitTokens,
-                    cacheCreationTokens
+                    cacheHitTokens
                 );
                 unifiedTenantManager.incrementCreditUsage(authResult.tenantId, 'codebuddy', credit);
                 unifiedTenantManager.recordDailyUsage(
@@ -327,8 +322,7 @@ async function handleOpenAIChatCompletions(req, res) {
                     outputTokens,
                     cacheHitTokens,
                     credit,
-                    pickModelName(aggregated.model, openAIPayload.model),
-                    cacheCreationTokens
+                    pickModelName(aggregated.model, openAIPayload.model)
                 );
             }
 
@@ -463,7 +457,6 @@ async function handleAnthropicMessages(req, res) {
             let streamInputTokens = 0;
             let streamOutputTokens = 0;
             let streamCacheHitTokens = 0;
-            let streamCacheCreationTokens = 0;
             let streamCredit = 0;
             let streamModel = '';
 
@@ -499,7 +492,6 @@ async function handleAnthropicMessages(req, res) {
                         streamInputTokens = data.usage.prompt_tokens || 0;
                         streamOutputTokens = data.usage.completion_tokens || 0;
                         streamCacheHitTokens = extractCacheHitTokens(data.usage);
-                        streamCacheCreationTokens = extractCacheCreationTokens(data.usage);
                         streamCredit = data.usage.credit || 0;
                     }
                     if (data.model) streamModel = data.model;
@@ -589,8 +581,7 @@ async function handleAnthropicMessages(req, res) {
                         'codebuddy',
                         streamInputTokens,
                         streamOutputTokens,
-                        streamCacheHitTokens,
-                        streamCacheCreationTokens
+                        streamCacheHitTokens
                     );
                     unifiedTenantManager.incrementCreditUsage(authResult.tenantId, 'codebuddy', streamCredit);
                     unifiedTenantManager.recordDailyUsage(
@@ -600,8 +591,7 @@ async function handleAnthropicMessages(req, res) {
                         streamOutputTokens,
                         streamCacheHitTokens,
                         streamCredit,
-                        pickModelName(streamModel, anthropicPayload.model),
-                        streamCacheCreationTokens
+                        pickModelName(streamModel, anthropicPayload.model)
                     );
                 }
                 res.end();
@@ -623,7 +613,6 @@ async function handleAnthropicMessages(req, res) {
                 const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
                 const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
                 const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-                const cacheCreationTokens = extractCacheCreationTokens(aggregated.usage);
                 const credit = aggregated.usage ? aggregated.usage.credit || 0 : 0;
                 unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
                 unifiedTenantManager.incrementTokenUsage(
@@ -631,8 +620,7 @@ async function handleAnthropicMessages(req, res) {
                     'codebuddy',
                     inputTokens,
                     outputTokens,
-                    cacheHitTokens,
-                    cacheCreationTokens
+                    cacheHitTokens
                 );
                 unifiedTenantManager.incrementCreditUsage(authResult.tenantId, 'codebuddy', credit);
                 unifiedTenantManager.recordDailyUsage(
@@ -642,8 +630,7 @@ async function handleAnthropicMessages(req, res) {
                     outputTokens,
                     cacheHitTokens,
                     credit,
-                    pickModelName(aggregated.model, anthropicPayload.model),
-                    cacheCreationTokens
+                    pickModelName(aggregated.model, anthropicPayload.model)
                 );
             }
 
@@ -820,7 +807,6 @@ async function handleResponsesAPI(req, res) {
             let streamInputTokens = 0;
             let streamOutputTokens = 0;
             let streamCacheHitTokens = 0;
-            let streamCacheCreationTokens = 0;
             let streamCredit = 0;
             let streamModel = '';
 
@@ -847,7 +833,6 @@ async function handleResponsesAPI(req, res) {
                         streamInputTokens = data.usage.prompt_tokens || 0;
                         streamOutputTokens = data.usage.completion_tokens || 0;
                         streamCacheHitTokens = extractCacheHitTokens(data.usage);
-                        streamCacheCreationTokens = extractCacheCreationTokens(data.usage);
                         streamCredit = data.usage.credit || 0;
                     }
                     if (data.model) streamModel = data.model;
@@ -896,7 +881,7 @@ async function handleResponsesAPI(req, res) {
                         streamState.output.push(item);
                     }
                     res.write(
-                        `event: response.completed\ndata: ${JSON.stringify({type: 'response.completed', response: {id: streamState.responseId, object: 'response', created_at: Math.floor(Date.now() / 1000), status: 'completed', model: streamModel || 'unknown', output: streamState.output, usage: {input_tokens: streamInputTokens, output_tokens: streamOutputTokens, total_tokens: streamInputTokens + streamOutputTokens, input_tokens_details: {cached_tokens: streamCacheHitTokens, cache_creation_tokens: streamCacheCreationTokens}}}})}\n\n`
+                        `event: response.completed\ndata: ${JSON.stringify({type: 'response.completed', response: {id: streamState.responseId, object: 'response', created_at: Math.floor(Date.now() / 1000), status: 'completed', model: streamModel || 'unknown', output: streamState.output, usage: {input_tokens: streamInputTokens, output_tokens: streamOutputTokens, total_tokens: streamInputTokens + streamOutputTokens, input_tokens_details: {cached_tokens: streamCacheHitTokens}}}})}\n\n`
                     );
                 }
                 if (authResult.tenantId) {
@@ -906,8 +891,7 @@ async function handleResponsesAPI(req, res) {
                         'codebuddy',
                         streamInputTokens,
                         streamOutputTokens,
-                        streamCacheHitTokens,
-                        streamCacheCreationTokens
+                        streamCacheHitTokens
                     );
                     unifiedTenantManager.incrementCreditUsage(authResult.tenantId, 'codebuddy', streamCredit);
                     unifiedTenantManager.recordDailyUsage(
@@ -917,8 +901,7 @@ async function handleResponsesAPI(req, res) {
                         streamOutputTokens,
                         streamCacheHitTokens,
                         streamCredit,
-                        pickModelName(streamModel, responsesReq.model),
-                        streamCacheCreationTokens
+                        pickModelName(streamModel, responsesReq.model)
                     );
                 }
                 res.end();
@@ -937,7 +920,6 @@ async function handleResponsesAPI(req, res) {
                 const inputTokens = aggregated.usage?.prompt_tokens || 0;
                 const outputTokens = aggregated.usage?.completion_tokens || 0;
                 const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-                const cacheCreationTokens = extractCacheCreationTokens(aggregated.usage);
                 const credit = aggregated.usage?.credit || 0;
                 unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
                 unifiedTenantManager.incrementTokenUsage(
@@ -945,8 +927,7 @@ async function handleResponsesAPI(req, res) {
                     'codebuddy',
                     inputTokens,
                     outputTokens,
-                    cacheHitTokens,
-                    cacheCreationTokens
+                    cacheHitTokens
                 );
                 unifiedTenantManager.incrementCreditUsage(authResult.tenantId, 'codebuddy', credit);
                 unifiedTenantManager.recordDailyUsage(
@@ -956,8 +937,7 @@ async function handleResponsesAPI(req, res) {
                     outputTokens,
                     cacheHitTokens,
                     credit,
-                    pickModelName(aggregated.model, responsesReq.model),
-                    cacheCreationTokens
+                    pickModelName(aggregated.model, responsesReq.model)
                 );
             }
 
@@ -1033,7 +1013,6 @@ async function handleResponsesCompact(req, res) {
             const inputTokens = aggregated.usage?.prompt_tokens || 0;
             const outputTokens = aggregated.usage?.completion_tokens || 0;
             const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-            const cacheCreationTokens = extractCacheCreationTokens(aggregated.usage);
             const credit = aggregated.usage?.credit || 0;
             unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
             unifiedTenantManager.incrementTokenUsage(
@@ -1041,8 +1020,7 @@ async function handleResponsesCompact(req, res) {
                 'codebuddy',
                 inputTokens,
                 outputTokens,
-                cacheHitTokens,
-                cacheCreationTokens
+                cacheHitTokens
             );
             unifiedTenantManager.incrementCreditUsage(authResult.tenantId, 'codebuddy', credit);
             unifiedTenantManager.recordDailyUsage(
@@ -1052,8 +1030,7 @@ async function handleResponsesCompact(req, res) {
                 outputTokens,
                 cacheHitTokens,
                 credit,
-                pickModelName(aggregated.model, compactReq.model),
-                cacheCreationTokens
+                pickModelName(aggregated.model, compactReq.model)
             );
         }
 
@@ -1316,11 +1293,11 @@ export function handleCodebuddyResponsesWS(clientWs, req) {
                 if (start > 0) buffer = buffer.subarray(start);
             }
         },
-        onUsage: (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens, model) => {
+        onUsage: (inputTokens, outputTokens, cacheHitTokens, model) => {
             const tenantId = req.tenantId;
             if (!tenantId) return;
             unifiedTenantManager.incrementApiCallCount(tenantId, 'codebuddy');
-            unifiedTenantManager.incrementTokenUsage(tenantId, 'codebuddy', inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens);
+            unifiedTenantManager.incrementTokenUsage(tenantId, 'codebuddy', inputTokens, outputTokens, cacheHitTokens);
             unifiedTenantManager.recordDailyUsage(
                 tenantId,
                 'codebuddy',
@@ -1328,8 +1305,7 @@ export function handleCodebuddyResponsesWS(clientWs, req) {
                 outputTokens,
                 cacheHitTokens,
                 0,
-                model,
-                cacheCreationTokens
+                model
             );
         }
     });

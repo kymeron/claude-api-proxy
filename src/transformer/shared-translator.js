@@ -9,47 +9,20 @@ import logger from '../utils/logger.js';
 import {getBehaviorRules} from '../config/system-prompts.js';
 
 /**
- * 从上游 usage 中统一提取缓存命中与缓存写入 token 数
+ * 从上游 usage 中提取缓存命中 token 数
  * 覆盖四种上游协议的字段：
  * - DeepSeek Chat: prompt_cache_hit_tokens
  * - OpenAI Chat: prompt_tokens_details.cached_tokens
- * - Anthropic: cache_read_input_tokens（命中读取）/ cache_creation_input_tokens（写入成本）
+ * - Anthropic: cache_read_input_tokens
  * - Responses: input_tokens_details.cached_tokens
- * @param {object} usage
- * @returns {{cacheHit: number, cacheCreation: number}}
  */
-export function extractCacheMetrics(usage) {
-    if (!usage) return {cacheHit: 0, cacheCreation: 0};
-    const cacheHit =
-        usage.prompt_cache_hit_tokens
+export function extractCacheHitTokens(usage) {
+    if (!usage) return 0;
+    return usage.prompt_cache_hit_tokens
         || usage.prompt_tokens_details?.cached_tokens
         || usage.cache_read_input_tokens
         || usage.input_tokens_details?.cached_tokens
         || 0;
-    const cacheCreation =
-        usage.cache_creation_input_tokens
-        || usage.prompt_tokens_details?.cache_creation_tokens
-        || usage.input_tokens_details?.cache_creation_tokens
-        || 0;
-    return {cacheHit, cacheCreation};
-}
-
-/**
- * 从上游 usage 中提取缓存命中 token 数（向后兼容，委托统一函数）
- */
-export function extractCacheHitTokens(usage) {
-    return extractCacheMetrics(usage).cacheHit;
-}
-
-/**
- * 从上游 usage 中提取缓存写入 token 数
- * 覆盖三种协议字段：Anthropic cache_creation_input_tokens、
- * Chat prompt_tokens_details.cache_creation_tokens、
- * Responses input_tokens_details.cache_creation_tokens
- */
-export function extractCacheCreationTokens(usage) {
-    if (!usage) return 0;
-    return extractCacheMetrics(usage).cacheCreation;
 }
 
 export function extractInputTokens(usage) {
@@ -66,15 +39,12 @@ export function extractInputTokens(usage) {
 export function openAIUsageToAnthropicUsage(usage) {
     const promptTokens = usage?.prompt_tokens || 0;
     const cacheReadTokens = extractCacheHitTokens(usage);
-    const cacheCreationTokens = extractCacheCreationTokens(usage);
     const promptDetails = usage?.prompt_tokens_details || {};
     const cacheReadInsidePrompt = promptDetails.cached_tokens || 0;
-    const cacheCreationInsidePrompt = promptDetails.cache_creation_tokens || 0;
     return {
-        input_tokens: Math.max(0, promptTokens - cacheReadInsidePrompt - cacheCreationInsidePrompt),
+        input_tokens: Math.max(0, promptTokens - cacheReadInsidePrompt),
         output_tokens: usage?.completion_tokens || 0,
-        cache_read_input_tokens: cacheReadTokens,
-        cache_creation_input_tokens: cacheCreationTokens
+        cache_read_input_tokens: cacheReadTokens
     };
 }
 
@@ -910,7 +880,7 @@ export function openAIToAnthropic(openAIResponse) {
  *
  * @param {http.ServerResponse} res - 客户端响应
  * @param {ReadableStream} responseBody - 上游流
- * @param {Function} onUsage - usage 统计回调 (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens, credit, model)
+ * @param {Function} onUsage - usage 统计回调 (inputTokens, outputTokens, cacheHitTokens, credit, model)
  */
 export function rewriteOpenAIStream(res, responseBody, onUsage) {
     let reasoningBuffer = ''; // 缓冲 reasoning_content 片段
@@ -918,7 +888,6 @@ export function rewriteOpenAIStream(res, responseBody, onUsage) {
     let streamInputTokens = 0;
     let streamOutputTokens = 0;
     let streamCacheHitTokens = 0;
-    let streamCacheCreationTokens = 0;
     let streamCredit = 0;
     let streamModel = '';
 
@@ -977,7 +946,6 @@ export function rewriteOpenAIStream(res, responseBody, onUsage) {
                 streamInputTokens = data.usage.prompt_tokens || 0;
                 streamOutputTokens = data.usage.completion_tokens || 0;
                 streamCacheHitTokens = extractCacheHitTokens(data.usage);
-                streamCacheCreationTokens = extractCacheCreationTokens(data.usage);
                 streamCredit = data.usage.credit || 0;
             }
             if (data.model) streamModel = data.model;
@@ -1021,7 +989,7 @@ export function rewriteOpenAIStream(res, responseBody, onUsage) {
             res.write(lineBuffer + '\n');
         }
         if (onUsage) {
-            onUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, streamCacheCreationTokens, streamCredit, streamModel);
+            onUsage(streamInputTokens, streamOutputTokens, streamCacheHitTokens, streamCredit, streamModel);
         }
         res.end();
     });

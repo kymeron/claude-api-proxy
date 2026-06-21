@@ -42,6 +42,7 @@ export class RelayConversationStore {
             conversationKey,
             chatRequest: cloneChatRequest(request),
             responses: new Set(existing?.responses || []),
+            lastResponseId: existing?.lastResponseId || null,
             updatedAt: this.now()
         };
         this.conversations.set(key, state);
@@ -102,11 +103,13 @@ export class RelayConversationStore {
             conversationKey,
             chatRequest: nextRequest,
             responses: new Set(existing?.responses || []),
+            lastResponseId: existing?.lastResponseId || null,
             updatedAt: this.now()
         };
 
         if (response.id) {
             state.responses.add(response.id);
+            state.lastResponseId = response.id;
             this.responseIndex.set(this._responseKey(tenantId, response.id), key);
         }
 
@@ -219,11 +222,7 @@ function normalizeId(value) {
 }
 
 function getLatestResponseId(state) {
-    let latest = null;
-    for (const responseId of state?.responses || []) {
-        latest = responseId;
-    }
-    return latest;
+    return state?.lastResponseId || null;
 }
 
 function clone(value) {
@@ -238,7 +237,8 @@ function cloneState(state) {
     return {
         ...state,
         chatRequest: cloneChatRequest(state.chatRequest),
-        responses: new Set(state.responses || [])
+        responses: new Set(state.responses || []),
+        lastResponseId: state.lastResponseId || null
     };
 }
 

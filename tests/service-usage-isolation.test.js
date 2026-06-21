@@ -30,7 +30,6 @@ test('flushes usage deltas to the matching tenant service profile', async () => 
                     total_input_tokens: 10,
                     total_output_tokens: 20,
                     total_cache_hit_tokens: 3,
-                    total_cache_creation_tokens: 0,
                     total_credit: 0
                 },
                 where: {tenant_id: 42, service_type: 'relay'}
@@ -41,45 +40,9 @@ test('flushes usage deltas to the matching tenant service profile', async () => 
                     total_input_tokens: 7,
                     total_output_tokens: 8,
                     total_cache_hit_tokens: 1,
-                    total_cache_creation_tokens: 0,
                     total_credit: 0
                 },
                 where: {tenant_id: 42, service_type: 'copilot'}
-            }
-        ]);
-    } finally {
-        TenantServiceProfile.increment = originalIncrement;
-        unifiedTenantManager._dirtyTenants.clear();
-        unifiedTenantManager._deltaTenants.clear();
-    }
-});
-
-test('flushes non-zero cache creation deltas to tenant service profile', async () => {
-    const originalIncrement = TenantServiceProfile.increment;
-    const writes = [];
-
-    TenantServiceProfile.increment = async (values, options) => {
-        writes.push({values, where: options.where});
-    };
-
-    unifiedTenantManager._dirtyTenants.clear();
-    unifiedTenantManager._deltaTenants.clear();
-
-    try {
-        unifiedTenantManager.incrementTokenUsage(42, 'relay', 10, 20, 3, 5);
-        await unifiedTenantManager._flushDirtyTenants();
-
-        assert.deepEqual(writes, [
-            {
-                values: {
-                    total_api_calls: 0,
-                    total_input_tokens: 10,
-                    total_output_tokens: 20,
-                    total_cache_hit_tokens: 3,
-                    total_cache_creation_tokens: 5,
-                    total_credit: 0
-                },
-                where: {tenant_id: 42, service_type: 'relay'}
             }
         ]);
     } finally {
@@ -118,7 +81,6 @@ test('records daily usage with service and schema field names', async () => {
             output_tokens: 12,
             input_cache_hit: 4,
             input_cache_miss: 7,
-            input_cache_creation: 0,
             credit: 1.5
         });
     } finally {

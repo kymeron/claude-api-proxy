@@ -137,13 +137,12 @@ test('openAIToAnthropic splits cached prompt tokens from Anthropic input_tokens'
         usage: {
             prompt_tokens: 1000,
             completion_tokens: 5,
-            prompt_tokens_details: {cached_tokens: 300, cache_creation_tokens: 200}
+            prompt_tokens_details: {cached_tokens: 300}
         }
     });
 
-    assert.equal(converted.usage.input_tokens, 500);
+    assert.equal(converted.usage.input_tokens, 700);
     assert.equal(converted.usage.cache_read_input_tokens, 300);
-    assert.equal(converted.usage.cache_creation_input_tokens, 200);
     assert.equal(converted.usage.output_tokens, 5);
 });
 
@@ -159,7 +158,7 @@ test('OpenAI to Anthropic stream chunks transmit complete split usage fields', (
         usage: {
             prompt_tokens: 1000,
             completion_tokens: 5,
-            prompt_tokens_details: {cached_tokens: 300, cache_creation_tokens: 200}
+            prompt_tokens_details: {cached_tokens: 300}
         }
     };
 
@@ -172,16 +171,14 @@ test('OpenAI to Anthropic stream chunks transmit complete split usage fields', (
         const messageDelta = events.find(event => event.type === 'message_delta');
 
         assert.deepEqual(messageStart.message.usage, {
-            input_tokens: 500,
+            input_tokens: 700,
             output_tokens: 0,
-            cache_read_input_tokens: 300,
-            cache_creation_input_tokens: 200
+            cache_read_input_tokens: 300
         });
         assert.deepEqual(messageDelta.usage, {
-            input_tokens: 500,
+            input_tokens: 700,
             output_tokens: 5,
-            cache_read_input_tokens: 300,
-            cache_creation_input_tokens: 200
+            cache_read_input_tokens: 300
         });
     }
 });
@@ -200,22 +197,13 @@ test('Claude stream states transmit zero-valued cache usage fields', () => {
         assert.deepEqual(start.data.message.usage, {
             input_tokens: 0,
             output_tokens: 0,
-            cache_read_input_tokens: 0,
-            cache_creation_input_tokens: 0
+            cache_read_input_tokens: 0
         });
         assert.deepEqual(delta.data.usage, {
             input_tokens: 0,
             output_tokens: 0,
-            cache_read_input_tokens: 0,
-            cache_creation_input_tokens: 0
+            cache_read_input_tokens: 0
         });
-    }
-});
-
-test('Responses fallback completed events transmit cache usage details', () => {
-    for (const file of ['src/routes/codebuddy.js', 'src/routes/copilot.js']) {
-        const source = readFileSync(join(root, file), 'utf8');
-        assert.match(source, /input_tokens_details:\s*\{\s*cached_tokens:\s*streamCacheHitTokens,\s*cache_creation_tokens:\s*streamCacheCreationTokens\s*\}/);
     }
 });
 
@@ -364,5 +352,14 @@ test('relay Anthropic passthrough non-stream stats use split input token helper'
     assert.match(
         source,
         /recordUsage\(\s*tenantId,\s*extractInputTokens\(parsed\.usage\)\s*\|\|\s*estimateAnthropicInputTokens\(anthropicPayload\),\s*parsed\.usage\?\.output_tokens/
+    );
+});
+
+test('relay Anthropic stream stats keep the maximum cache hit tokens across usage events', () => {
+    const source = readFileSync(join(root, 'src/routes/relay.js'), 'utf8');
+
+    assert.match(
+        source,
+        /usageState\.cacheHitTokens\s*=\s*Math\.max\(\s*usageState\.cacheHitTokens,\s*extractCacheHitTokens\(usage\)\s*\)/
     );
 });

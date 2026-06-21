@@ -47,18 +47,17 @@ export const copilotStore = {
         const {tenantId} = currentCopilotContext();
         unifiedTenantManager.incrementApiCallCount(tenantId, 'copilot');
     },
-    incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens = 0, cacheCreationTokens = 0) {
+    incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens = 0) {
         const {tenantId} = currentCopilotContext();
         unifiedTenantManager.incrementTokenUsage(
             tenantId,
             'copilot',
             inputTokens,
             outputTokens,
-            cacheHitTokens,
-            cacheCreationTokens
+            cacheHitTokens
         );
     },
-    recordDailyUsage(inputTokens, outputTokens, cacheHitTokens = 0, model = 'unknown', cacheCreationTokens = 0) {
+    recordDailyUsage(inputTokens, outputTokens, cacheHitTokens = 0, model = 'unknown') {
         const {tenantId} = currentCopilotContext();
         unifiedTenantManager.recordDailyUsage(
             tenantId,
@@ -67,8 +66,7 @@ export const copilotStore = {
             outputTokens,
             cacheHitTokens,
             0,
-            model,
-            cacheCreationTokens
+            model
         );
     }
 };
