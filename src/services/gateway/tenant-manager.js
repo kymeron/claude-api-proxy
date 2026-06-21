@@ -185,7 +185,7 @@ class UnifiedTenantManager {
         delta.api_calls++;
     }
 
-    incrementTokenUsage(tenantId, serviceType, inputTokens, outputTokens, cacheHitTokens = 0, cacheCreationTokens = 0) {
+    incrementTokenUsage(tenantId, serviceType, inputTokens, outputTokens, cacheHitTokens = 0) {
         const id = typeof tenantId === 'string' ? parseInt(tenantId, 10) : tenantId;
         const key = this._usageKey(id, serviceType);
         this._dirtyTenants.add(key);
@@ -193,10 +193,9 @@ class UnifiedTenantManager {
         delta.input_tokens += inputTokens || 0;
         delta.output_tokens += outputTokens || 0;
         delta.cache_hit_tokens += cacheHitTokens || 0;
-        delta.cache_creation_tokens += cacheCreationTokens || 0;
     }
 
-    async recordDailyUsage(tenantId, serviceType, inputTokens, outputTokens, cacheHitTokens = 0, credit = 0, model = 'unknown', cacheCreationTokens = 0) {
+    async recordDailyUsage(tenantId, serviceType, inputTokens, outputTokens, cacheHitTokens = 0, credit = 0, model = 'unknown') {
         const id = typeof tenantId === 'string' ? parseInt(tenantId, 10) : tenantId;
         try {
             const today = new Date().toISOString().slice(0, 10);
@@ -205,7 +204,7 @@ class UnifiedTenantManager {
                 defaults: {
                     tenant_id: id, service_type: serviceType, date: today, model: model || 'unknown',
                     api_calls: 0, input_tokens: 0, output_tokens: 0,
-                    input_cache_hit: 0, input_cache_miss: 0, input_cache_creation: 0, credit: 0
+                    input_cache_hit: 0, input_cache_miss: 0, credit: 0
                 }
             });
             const effectiveInput = inputTokens || 0;
@@ -217,13 +216,10 @@ class UnifiedTenantManager {
                 output_tokens: outputTokens || 0,
                 input_cache_hit: effectiveHit,
                 input_cache_miss: cacheMiss,
-                input_cache_creation: cacheCreationTokens || 0,
                 credit: credit || 0
             });
-            // 缓存可观测性诊断日志：cacheCreationTokens 仅 Anthropic 上游提供，
-            // 用于观测缓存写入成本与命中率。
             const cacheHitRate = effectiveInput > 0 ? (effectiveHit / effectiveInput) : 0;
-            logger.info(`cache usage: tenant=${id} service=${serviceType} model=${model || 'unknown'} input=${effectiveInput} output=${outputTokens || 0} cacheHit=${effectiveHit} cacheCreation=${cacheCreationTokens || 0} cacheHitRate=${cacheHitRate.toFixed(4)}`);
+            logger.info(`cache usage: tenant=${id} service=${serviceType} model=${model || 'unknown'} input=${effectiveInput} output=${outputTokens || 0} cacheHit=${effectiveHit} cacheHitRate=${cacheHitRate.toFixed(4)}`);
         } catch (error) {
             logger.error(`Failed to record daily usage for tenant ${id}: ${error.message}`);
         }
@@ -259,7 +255,7 @@ class UnifiedTenantManager {
         if (!this._deltaTenants.has(key)) {
             this._deltaTenants.set(key, {
                 api_calls: 0, input_tokens: 0, output_tokens: 0,
-                cache_hit_tokens: 0, cache_creation_tokens: 0, credit: 0
+                cache_hit_tokens: 0, credit: 0
             });
         }
         return this._deltaTenants.get(key);
@@ -323,7 +319,6 @@ class UnifiedTenantManager {
                 total_input_tokens: 0,
                 total_output_tokens: 0,
                 total_cache_hit_tokens: 0,
-                total_cache_creation_tokens: 0,
                 total_credit: 0
             }, {where: {tenant_id: id}});
         }
@@ -338,7 +333,6 @@ class UnifiedTenantManager {
             total_input_tokens: 0,
             total_output_tokens: 0,
             total_cache_hit_tokens: 0,
-            total_cache_creation_tokens: 0,
             total_credit: 0
         }, {where: {tenant_id: id, service_type: serviceType}});
         await this._loadFromDb();
@@ -360,18 +354,16 @@ class UnifiedTenantManager {
                 total_input_tokens: delta.input_tokens || 0,
                 total_output_tokens: delta.output_tokens || 0,
                 total_cache_hit_tokens: delta.cache_hit_tokens || 0,
-                total_cache_creation_tokens: delta.cache_creation_tokens || 0,
                 total_credit: delta.credit || 0
             };
             delta.api_calls = 0;
             delta.input_tokens = 0;
             delta.output_tokens = 0;
             delta.cache_hit_tokens = 0;
-            delta.cache_creation_tokens = 0;
             delta.credit = 0;
             if (d.total_api_calls === 0 && d.total_input_tokens === 0 &&
                 d.total_output_tokens === 0 && d.total_cache_hit_tokens === 0 &&
-                d.total_cache_creation_tokens === 0 && d.total_credit === 0) continue;
+                d.total_credit === 0) continue;
 
             try {
                 await TenantServiceProfile.increment(d, {

@@ -187,7 +187,6 @@ async function getMonthlyStats(serviceType = 'codebuddy', tenantId, startDate, e
                 [fn('SUM', col('input_tokens')), 'inputTokens'],
                 [fn('SUM', col('output_tokens')), 'outputTokens'],
                 [fn('SUM', col('input_cache_hit')), 'cacheHitTokens'],
-                [fn('SUM', col('input_cache_creation')), 'cacheCreationTokens'],
                 [fn('SUM', col('input_cache_miss')), 'inputMissTokens'],
                 [fn('SUM', col('credit')), 'credit']
             ],
@@ -202,7 +201,6 @@ async function getMonthlyStats(serviceType = 'codebuddy', tenantId, startDate, e
                 inputTokens: parseInt(row.inputTokens) || 0,
                 outputTokens: parseInt(row.outputTokens) || 0,
                 cacheHitTokens: parseInt(row.cacheHitTokens) || 0,
-                cacheCreationTokens: parseInt(row.cacheCreationTokens) || 0,
                 inputMissTokens: parseInt(row.inputMissTokens) || 0,
                 credit: parseFloat(row.credit) || 0
             };
@@ -255,7 +253,6 @@ async function getModelCacheStats(serviceType = 'codebuddy', startDate, endDate,
                 [fn('SUM', col('input_tokens')), 'inputTokens'],
                 [fn('SUM', col('output_tokens')), 'outputTokens'],
                 [fn('SUM', col('input_cache_hit')), 'cacheHitTokens'],
-                [fn('SUM', col('input_cache_creation')), 'cacheCreationTokens'],
                 [fn('SUM', col('input_cache_miss')), 'inputMissTokens'],
                 [fn('SUM', col('credit')), 'credit']
             ],
@@ -278,7 +275,6 @@ async function getModelCacheStats(serviceType = 'codebuddy', startDate, endDate,
                 outputTokens,
                 totalTokens: inputTokens + outputTokens,
                 cacheHitTokens,
-                cacheCreationTokens: parseInt(row.cacheCreationTokens) || 0,
                 cacheHitRate: inputTokens > 0 ? Math.round((cacheHitTokens / inputTokens) * 100) : 0,
                 credit: parseFloat(row.credit) || 0
             };
@@ -310,7 +306,6 @@ async function getModelCacheDailyTrend(serviceType = 'codebuddy', model, startDa
                 [fn('SUM', col('api_calls')), 'apiCalls'],
                 [fn('SUM', col('input_tokens')), 'inputTokens'],
                 [fn('SUM', col('input_cache_hit')), 'cacheHitTokens'],
-                [fn('SUM', col('input_cache_creation')), 'cacheCreationTokens']
             ],
             where,
             group: ['date'],
@@ -326,7 +321,6 @@ async function getModelCacheDailyTrend(serviceType = 'codebuddy', model, startDa
                 apiCalls: parseInt(row.apiCalls) || 0,
                 inputTokens,
                 cacheHitTokens,
-                cacheCreationTokens: parseInt(row.cacheCreationTokens) || 0,
                 cacheHitRate: inputTokens > 0 ? Math.round((cacheHitTokens / inputTokens) * 100) : 0
             };
         });
@@ -353,7 +347,6 @@ async function getDailyTrendData(serviceType = 'codebuddy', tenantId) {
                 [fn('SUM', col('input_tokens')), 'inputTokens'],
                 [fn('SUM', col('output_tokens')), 'outputTokens'],
                 [fn('SUM', col('input_cache_hit')), 'cacheHitTokens'],
-                [fn('SUM', col('input_cache_creation')), 'cacheCreationTokens'],
                 [fn('SUM', col('credit')), 'credit']
             ],
             where: await buildStatsUsageWhere(service, undefined, undefined, tenantId ? {tenant_id: tenantId} : {}),
@@ -369,7 +362,6 @@ async function getDailyTrendData(serviceType = 'codebuddy', tenantId) {
             outputTokens: parseInt(row.outputTokens) || 0,
             totalTokens: (parseInt(row.inputTokens) || 0) + (parseInt(row.outputTokens) || 0),
             cacheHitTokens: parseInt(row.cacheHitTokens) || 0,
-            cacheCreationTokens: parseInt(row.cacheCreationTokens) || 0,
             cacheHitRate:
                 parseInt(row.inputTokens) > 0
                     ? Math.round((parseInt(row.cacheHitTokens) / parseInt(row.inputTokens)) * 100)
@@ -474,7 +466,6 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate, t
                 [fn('SUM', col('input_tokens')), 'inputTokens'],
                 [fn('SUM', col('output_tokens')), 'outputTokens'],
                 [fn('SUM', col('input_cache_hit')), 'cacheHitTokens'],
-                [fn('SUM', col('input_cache_creation')), 'cacheCreationTokens'],
                 [fn('SUM', col('input_cache_miss')), 'inputMissTokens'],
                 [fn('SUM', col('credit')), 'credit']
             ],
@@ -488,7 +479,6 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate, t
                 inputTokens: parseInt(row.inputTokens) || 0,
                 outputTokens: parseInt(row.outputTokens) || 0,
                 cacheHitTokens: parseInt(row.cacheHitTokens) || 0,
-                cacheCreationTokens: parseInt(row.cacheCreationTokens) || 0,
                 inputMissTokens: parseInt(row.inputMissTokens) || 0,
                 credit: parseFloat(row.credit) || 0
             };
@@ -517,7 +507,6 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate, t
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
     let totalCacheHitTokens = 0;
-    let totalCacheCreationTokens = 0;
     let totalCredit = 0;
     let activeUsers = 0;
     let cacheHitRateUsers = 0;
@@ -529,7 +518,6 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate, t
             inputTokens: 0,
             outputTokens: 0,
             cacheHitTokens: 0,
-            cacheCreationTokens: 0,
             inputMissTokens: 0,
             credit: 0
         };
@@ -546,7 +534,6 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate, t
         totalInputTokens += usage.inputTokens;
         totalOutputTokens += usage.outputTokens;
         totalCacheHitTokens += usage.cacheHitTokens;
-        totalCacheCreationTokens += usage.cacheCreationTokens;
         totalCredit += usage.credit;
         if (usage.apiCalls > 0) activeUsers++;
         if (usage.inputTokens > 0 && usage.cacheHitTokens > 0) {
@@ -565,7 +552,6 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate, t
             outputTokens: usage.outputTokens,
             inputHitTokens: usage.cacheHitTokens,
             inputMissTokens: usage.inputMissTokens,
-            cacheCreationTokens: usage.cacheCreationTokens,
             totalTokens,
             cacheHitTokens: usage.cacheHitTokens,
             cacheHitRate: usage.inputTokens > 0 ? Math.round((usage.cacheHitTokens / usage.inputTokens) * 100) : 0,
@@ -590,7 +576,6 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate, t
         totalOutputTokens,
         totalTokens: totalInputTokens + totalOutputTokens,
         totalCacheHitTokens,
-        totalCacheCreationTokens,
         cacheHitRate: cacheHitRateUsers > 0 ? Math.round(cacheHitRateTotal / cacheHitRateUsers) : 0,
         cacheHitRateUsers,
         totalCredit,
@@ -604,7 +589,6 @@ async function getOverviewStats(serviceType = 'codebuddy', startDate, endDate, t
             inputTokens: u.inputTokens,
             inputHitTokens: u.inputHitTokens,
             inputMissTokens: u.inputMissTokens,
-            cacheCreationTokens: u.cacheCreationTokens,
             outputTokens: u.outputTokens,
             totalTokens: u.totalTokens,
             cacheHitTokens: u.cacheHitTokens,
@@ -647,7 +631,6 @@ async function handleApiRequest(req, res) {
                 totalApiCalls: stats.totalApiCalls,
                 totalTokens: stats.totalTokens,
                 totalCacheHitTokens: stats.totalCacheHitTokens,
-                totalCacheCreationTokens: stats.totalCacheCreationTokens,
                 cacheHitRate: stats.cacheHitRate,
                 totalCredit: stats.totalCredit,
                 avgTokensPerCall,
@@ -660,7 +643,6 @@ async function handleApiRequest(req, res) {
                     inputTokens: u.inputTokens,
                     inputHitTokens: u.inputHitTokens,
                     inputMissTokens: u.inputMissTokens,
-                    cacheCreationTokens: u.cacheCreationTokens,
                     outputTokens: u.outputTokens,
                     totalTokens: u.totalTokens,
                     cacheHitTokens: u.cacheHitTokens,
@@ -926,7 +908,6 @@ async function getUserDetail(serviceType = 'codebuddy', username) {
                     input_tokens: 0,
                     output_tokens: 0,
                     cache_hit_tokens: 0,
-                    cache_creation_tokens: 0,
                     cache_miss_tokens: 0,
                     credit: 0
                 };
@@ -935,7 +916,6 @@ async function getUserDetail(serviceType = 'codebuddy', username) {
             dailyData[month][day].input_tokens += row.input_tokens || 0;
             dailyData[month][day].output_tokens += row.output_tokens || 0;
             dailyData[month][day].cache_hit_tokens += row.input_cache_hit || 0;
-            dailyData[month][day].cache_creation_tokens += row.input_cache_creation || 0;
             dailyData[month][day].cache_miss_tokens += row.input_cache_miss || 0;
             dailyData[month][day].credit += row.credit || 0;
             totalApiCalls += row.api_calls || 0;

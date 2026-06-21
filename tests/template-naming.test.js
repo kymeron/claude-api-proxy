@@ -17,6 +17,8 @@ test('unified admin console includes all service management surfaces', () => {
     assert.equal(existsSync(join(root, 'src/templates/404.html')), true);
     const frontendRoute = readFileSync(join(root, 'src/routes/dashboard-frontend.js'), 'utf8');
     const codebuddyRoute = readFileSync(join(root, 'src/routes/dashboard-codebuddy.js'), 'utf8');
+    const codebuddyApiRoute = readFileSync(join(root, 'src/routes/codebuddy.js'), 'utf8');
+    const relayApiRoute = readFileSync(join(root, 'src/routes/relay.js'), 'utf8');
     const adminUsersRoute = readFileSync(join(root, 'src/routes/dashboard-users.js'), 'utf8');
     const upstreamManager = readFileSync(join(root, 'src/services/relay/upstream-manager.js'), 'utf8');
     const upstreamModel = readFileSync(join(root, 'src/db/models/tenant-upstream.js'), 'utf8');
@@ -180,6 +182,7 @@ test('unified admin console includes all service management surfaces', () => {
     assert.doesNotMatch(adminHtml, /写缓存 Tokens|写缓存成本|CustomCacheCreation/);
     assert.doesNotMatch(adminHtml, /input_cache_creation|total_cache_creation_tokens|CustomCacheCreation/);
     assert.doesNotMatch(frontendRoute, /input_cache_creation|total_cache_creation_tokens|cacheCreationTokens/);
+    assert.doesNotMatch(codebuddyApiRoute + relayApiRoute, /streamCacheCreationTokens/);
     assert.match(adminHtml, /total_credit|CodeBuddy/);
     assert.match(adminHtml, /echarts\.init/);
     assert.match(adminHtml, /\.service-status\s*\{[\s\S]*position: absolute/);
