@@ -6,7 +6,7 @@
  */
 
 import logger from '../../utils/logger.js';
-import {extractCacheHitTokens} from '../../core/protocol/index.js';
+import {extractCacheHitTokens} from './protocol-adapter.js';
 
 // 客户端 WS 心跳间隔，防止中间代理（Nginx/ALB）因空闲超时静默切断连接
 const PING_INTERVAL = 25000;

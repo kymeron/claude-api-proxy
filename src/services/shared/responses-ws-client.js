@@ -3,7 +3,7 @@ import logger from '../../utils/logger.js';
 import {
     limitResponsesInputItems,
     sanitizeResponsesInput
-} from '../../core/protocol/index.js';
+} from './protocol-adapter.js';
 
 const CONNECT_TIMEOUT = 30000;
 // 上游 WS 心跳间隔，防止中间代理因空闲超时切断连接

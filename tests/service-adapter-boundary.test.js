@@ -8,6 +8,7 @@ import {fileURLToPath} from 'node:url';
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const servicesRoot = path.join(repoRoot, 'src', 'services');
 const routesRoot = path.join(repoRoot, 'src', 'routes');
+const sharedServicesRoot = path.join(servicesRoot, 'shared');
 
 async function listJsFiles(dir) {
     const entries = await readdir(dir, {withFileTypes: true});
@@ -117,6 +118,22 @@ test('product services centralize protocol core imports in protocol adapters', a
     const productRoots = ['codebuddy', 'copilot', 'relay']
         .map((name) => path.join(servicesRoot, name));
     const files = (await Promise.all(productRoots.map(listJsFiles))).flat();
+    const violations = [];
+
+    for (const file of files) {
+        if (path.basename(file) === 'protocol-adapter.js') continue;
+
+        const source = await readFile(file, 'utf8');
+        if (/from\s+['"][^'"]*core\/protocol\/index\.js['"]/.test(source.replaceAll('\\', '/'))) {
+            violations.push(path.relative(repoRoot, file).replaceAll('\\', '/'));
+        }
+    }
+
+    assert.deepEqual(violations, []);
+});
+
+test('shared services centralize protocol core imports in their protocol adapter', async () => {
+    const files = await listJsFiles(sharedServicesRoot);
     const violations = [];
 
     for (const file of files) {
