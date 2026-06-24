@@ -47,6 +47,7 @@ import {
     mapAnthropicModelsToOpenAI,
     mapOpenAIModelsToAnthropic
 } from '../services/relay/model-metadata.js';
+import {prepareRelayOutboundChatRequest} from '../services/relay/outbound-chat.js';
 import {
     anthropicResponseToChat,
     rewriteOpenAIStream,
@@ -367,19 +368,6 @@ async function invokeWithRelayContextCompaction({
     }
 }
 
-function prepareRelayOutboundChatRequest(chatRequest, {model, stream} = {}) {
-    const outbound = cloneJson(chatRequest || {});
-    outbound.model = model || outbound.model;
-    if (stream !== undefined) outbound.stream = stream;
-    outbound.messages = injectBehaviorRules(outbound.messages || [], outbound.model);
-    outbound.messages = stripDynamicReminders(outbound.messages);
-    mergeConsecutiveAssistantMessages(outbound.messages);
-    return outbound;
-}
-
-function cloneJson(value) {
-    return value == null ? value : JSON.parse(JSON.stringify(value));
-}
 
 
 /* ==================== 鉴权 ==================== */
