@@ -55,6 +55,7 @@ import {
     mapAnthropicModelsToOpenAI,
     mapOpenAIModelsToAnthropic
 } from '../services/relay/model-metadata.js';
+import {createRelayMetadataHandlers} from '../services/relay/metadata-endpoints.js';
 import {prepareRelayOutboundChatRequest} from '../services/relay/outbound-chat.js';
 import {createRelayContextCompaction} from '../services/relay/context-compaction.js';
 import {
@@ -133,6 +134,31 @@ const {invokeWithRelayContextCompaction} = createRelayContextCompaction({
 const streamOpenAIPassthrough = createRelayOpenAIStreamPassthrough({
     conversationStore: relayConversationStore,
     recordUsage,
+    logger
+});
+const {
+    handleOpenAIModels,
+    handleAnthropicModels,
+    handleAnthropicCountTokens
+} = createRelayMetadataHandlers({
+    authenticateAndGetUpstream,
+    getUpstreamModels,
+    getAnthropicRequestHeaders,
+    isAnthropicUpstream,
+    isResponsesUpstream,
+    isResponsesWebSocketUpstream,
+    createAnthropicCountTokens,
+    callUpstream,
+    readResponseBody,
+    parseBody,
+    sanitizeAnthropicPayload,
+    mapAnthropicModelsToOpenAI,
+    mapOpenAIModelsToAnthropic,
+    getProtocolErrorMessage,
+    upstreamErrorStatus,
+    sendJson,
+    sendOpenAIError,
+    sendAnthropicError,
     logger
 });
 
@@ -950,69 +976,6 @@ async function handleAnthropicMessages(req, res) {
 
 /** OpenAI 上游流式透传（OpenAI 端点 �?OpenAI 上游），�?reasoning_content 做缓冲合�?*/
 /* ==================== 其他端点 ==================== */
-
-async function handleOpenAIModels(req, res) {
-    try {
-        const authResult = await authenticateAndGetUpstream(req);
-        if (authResult.error) {
-            sendOpenAIError(res, authResult.error.status, authResult.error.message);
-            return;
-        }
-        const modelsData = await getUpstreamModels(authResult.upstream, getAnthropicRequestHeaders(req));
-        sendJson(res, 200, isAnthropicUpstream(authResult.upstream) ? mapAnthropicModelsToOpenAI(modelsData) : modelsData);
-    } catch (error) {
-        logger.error('Relay: Failed to get OpenAI models:', error);
-        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
-    }
-}
-
-async function handleAnthropicModels(req, res) {
-    try {
-        const authResult = await authenticateAndGetUpstream(req);
-        if (authResult.error) {
-            sendAnthropicError(res, authResult.error.status, authResult.error.message);
-            return;
-        }
-        const modelsData = await getUpstreamModels(authResult.upstream, getAnthropicRequestHeaders(req));
-        sendJson(res, 200, isAnthropicUpstream(authResult.upstream) ? modelsData : mapOpenAIModelsToAnthropic(modelsData));
-    } catch (error) {
-        logger.error('Relay: Failed to get Anthropic models:', error);
-        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
-    }
-}
-
-async function handleAnthropicCountTokens(req, res) {
-    try {
-        const authResult = await authenticateAndGetUpstream(req);
-        if (authResult.error) {
-            sendAnthropicError(res, authResult.error.status, authResult.error.message);
-            return;
-        }
-        const body = await parseBody(req);
-        const anthropicPayload = sanitizeAnthropicPayload(JSON.parse(body));
-
-        if (isAnthropicUpstream(authResult.upstream)) {
-            const {response} = await callUpstream(authResult.upstream, (up) =>
-                createAnthropicCountTokens(anthropicPayload, up, getAnthropicRequestHeaders(req))
-            );
-            const responseBody = await readResponseBody(response.body);
-            sendJson(res, 200, JSON.parse(responseBody));
-            return;
-        }
-
-        if (isResponsesUpstream(authResult.upstream) || isResponsesWebSocketUpstream(authResult.upstream)) {
-            sendAnthropicError(res, 400, getProtocolErrorMessage(authResult.upstream, 'anthropic', '/relay/v1/responses'));
-            return;
-        }
-
-        const text = JSON.stringify(anthropicPayload.messages);
-        const estimatedTokens = Math.ceil(text.length / 4);
-        sendJson(res, 200, {input_tokens: estimatedTokens});
-    } catch (error) {
-        logger.error('Relay: Failed to count tokens:', error);
-        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
-    }
-}
 
 /* ==================== Responses API ==================== */
 
