@@ -145,9 +145,9 @@ test('legacy transformer directory no longer owns protocol engine files', async 
     );
 });
 
-test('legacy core protocol directory no longer owns protocol engine files', async () => {
+test('legacy core directory no longer owns protocol engine files', async () => {
     await assert.rejects(
-        stat(path.join(repoRoot, 'src', 'core', 'protocol')),
+        stat(path.join(repoRoot, 'src', 'core')),
         {code: 'ENOENT'}
     );
 });
