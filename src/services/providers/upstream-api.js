@@ -9,7 +9,7 @@ import {request, readBody} from '../../utils/http-client.js';
 import {HttpsProxyAgent} from 'https-proxy-agent';
 import {SocksProxyAgent} from 'socks-proxy-agent';
 import {buildUrl} from '../../utils/helpers.js';
-import {normalizePayload, normalizeResponsesPayload} from '../../core/protocol/index.js';
+import {normalizePayload, normalizeResponsesPayload} from './protocol-adapter.js';
 import {interceptAndSerialize} from '../../utils/payload-interceptor.js';
 import {
     acquire as acquireResponsesWS,
