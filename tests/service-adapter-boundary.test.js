@@ -402,6 +402,24 @@ test('codebuddy route delegates metadata handlers to codebuddy services', async 
     assert.deepEqual(violations, []);
 });
 
+test('codebuddy route delegates handler composition to codebuddy runtime service', async () => {
+    const source = await readFile(path.join(repoRoot, 'src/routes/codebuddy.js'), 'utf8');
+    const normalized = source.replaceAll('\\', '/');
+    const forbiddenPatterns = [
+        /\basync\s+function\s+parseBody\b/,
+        /\basync\s+function\s+handleCredentials\b/,
+        /\bfunction\s+handleRoot\b/,
+        /from\s+['"][^'"]*services\/providers\/index\.js['"]/,
+        /from\s+['"][^'"]*services\/shared\/index\.js['"]/,
+        /from\s+['"][^'"]*services\/codebuddy\/(?:api|anthropic-adapter|protocol-adapter|config|response-writer|conversation-key|outbound-chat|credential-context|usage|model-mapping|.*-handler|metadata-handler)\.js['"]/
+    ];
+    const violations = forbiddenPatterns
+        .filter((pattern) => pattern.test(normalized))
+        .map((pattern) => pattern.source);
+
+    assert.deepEqual(violations, []);
+});
+
 test('relay and codebuddy anthropic adapters delegate request conversion to core protocol', async () => {
     const checkedAdapters = [
         'src/services/relay/anthropic-adapter.js',
