@@ -466,6 +466,11 @@ test('copilot route delegates Responses API handler to copilot services', async 
     assert.equal(/\basync\s+function\s+handleResponsesAPI\b/.test(source), false);
 });
 
+test('copilot route delegates Responses WebSocket handler to copilot services', async () => {
+    const source = await readFile(path.join(repoRoot, 'src/routes/copilot.js'), 'utf8');
+    assert.equal(/\bfunction\s+handleCopilotResponsesWSInContext\b/.test(source), false);
+});
+
 test('copilot route delegates Anthropic Messages handler to copilot services', async () => {
     const source = await readFile(path.join(repoRoot, 'src/routes/copilot.js'), 'utf8');
     assert.equal(/\basync\s+function\s+handleAnthropicMessages\b/.test(source), false);

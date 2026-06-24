@@ -60,6 +60,7 @@ import {createCopilotChatCompletionsHandler} from '../services/copilot/chat-comp
 import {createCopilotResponsesCompactHandler} from '../services/copilot/responses-compact-handler.js';
 import {createCopilotAnthropicMessagesHandler} from '../services/copilot/anthropic-messages-handler.js';
 import {createCopilotResponsesAPIHandler} from '../services/copilot/responses-api-handler.js';
+import {createCopilotResponsesWebSocketHandler} from '../services/copilot/responses-websocket-handler.js';
 import logger from '../utils/logger.js';
 
 const getCopilotNetworkOptions = createCopilotNetworkOptionsResolver({store: copilotStore});
@@ -202,147 +203,27 @@ const handleAnthropicMessages = createCopilotAnthropicMessagesHandler({
     logger
 });
 
-/* ==================== WebSocket 端点 ==================== */
-
-/**
- * 处理 Copilot Responses API WebSocket 连接
- * 客户端通过 WS 连接 /copilot/v1/responses，发送标准 Responses API WS 协议
- * @param {import('ws').WebSocket} clientWs - 客户端 WebSocket 连接
- * @param {http.IncomingMessage} req - 原始 HTTP 请求
- */
-function handleCopilotResponsesWSInContext(clientWs, req) {
-    const tenantContext = currentCopilotContext();
-    handleWSConnection(clientWs, {
-        authenticate: () => true,
-        runInContext: callback => runWithCopilotContext(tenantContext, callback),
-        req,
-        handleRequest: async function* (payload, authResult, {signal}) {
-            // Copilot 认证
-            if (!isAuthenticated()) {
-                throw Object.assign(new Error('Not authenticated. Open the Copilot tab in /dashboard to connect GitHub.'), {
-                    name: 'ResponsesWSError',
-                    event: {type: 'error', error: {message: 'Not authenticated', code: 'unauthorized'}}
-                });
-            }
-
-            const networkOptions = getCopilotNetworkOptions(req);
-            const proxyUrl = networkOptions.proxyUrl;
-
-            try {
-                const copilotToken = await ensureCopilotToken(proxyUrl, networkOptions);
-                const conversationKey = extractConversationKey(req, payload);
-
-                // 净化 input
-                if (Array.isArray(payload.input)) {
-                    payload = {...payload, input: sanitizeResponsesInput(payload.input, payload.model)};
-                }
-
-                // 尝试 WS 模式（GPT 系列模型）
-                if (supportsResponsesWebSocket(payload.model)) {
-                    try {
-                        const wsResult = await createResponsesWS(
-                            copilotToken,
-                            copilotState.vsCodeVersion,
-                            payload,
-                            copilotState.accountType,
-                            proxyUrl,
-                            {contextKey: conversationKey, rejectUnauthorized: networkOptions.rejectUnauthorized}
-                        );
-
-                        const eventStream = wsResult.eventStream;
-                        const conn = wsResult.conn;
-
-                        // 注意：必须用 finally 释放连接
-                        // 否则 WS server 在收到 response.completed 后 break，会触发 generator return()，
-                        // try 块尾部的 releaseWSConnection 永远到不了，连接将一直 busy 烂在池里
-                        let connHandled = false;
-                        try {
-                            for await (const event of eventStream) {
-                                if (signal?.aborted) {
-                                    discardWSConnection(conn);
-                                    connHandled = true;
-                                    return;
-                                }
-                                yield event;
-                            }
-                        } catch (err) {
-                            discardWSConnection(conn);
-                            connHandled = true;
-                            throw err;
-                        } finally {
-                            if (!connHandled) releaseWSConnection(conn);
-                        }
-                        return;
-                    } catch (wsError) {
-                        logger.warn(`Copilot WS: WS failed, falling back to HTTP: ${wsError.message}`);
-                    }
-                }
-
-                // HTTP 回退：Responses → Chat Completions → Responses 事件转换
-                const chatReq = responsesRequestToChat(payload);
-                chatReq.stream = true;
-
-                const response = await createChatCompletions(
-                    copilotToken,
-                    copilotState.vsCodeVersion,
-                    chatReq,
-                    copilotState.accountType,
-                    proxyUrl,
-                    networkOptions
-                );
-
-                if (response.status >= 400) {
-                    const errorBody = await readBody(response.body);
-                    throw Object.assign(new Error(`Upstream error: ${errorBody.slice(0, 500)}`), {
-                        name: 'ResponsesWSError',
-                        event: {type: 'error', error: {message: `Upstream error: ${response.status}`, code: 'upstream_error'}}
-                    });
-                }
-
-                // 将 Chat SSE 流转换为 Responses WS 事件
-                const chatToResponsesBridge = createChatToResponsesStreamBridge({model: payload.model});
-                let buffer = Buffer.alloc(0);
-
-                for await (const chunk of response.body) {
-                    if (signal?.aborted) break;
-                    buffer = Buffer.concat([buffer, chunk]);
-                    let start = 0;
-                    let newLineIndex;
-                    while ((newLineIndex = buffer.indexOf(10, start)) !== -1) {
-                        const line = buffer.toString('utf8', start, newLineIndex).trim();
-                        start = newLineIndex + 1;
-                        if (!line || line.startsWith(':') || !line.startsWith('data: ')) continue;
-                        const raw = line.slice(6).trim();
-                        if (raw === '[DONE]') continue;
-
-                        let data;
-                        try { data = JSON.parse(raw); } catch { continue; }
-
-                        const events = chatToResponsesBridge.feed(data);
-                        for (const ev of events) {
-                            yield {type: ev.event, data: ev.data};
-                        }
-                    }
-                    if (start > 0) buffer = buffer.subarray(start);
-                }
-
-                if (!chatToResponsesBridge.finished) {
-                    for (const ev of chatToResponsesBridge.finish()) {
-                        yield {type: ev.event, data: ev.data};
-                    }
-                }
-            } catch (error) {
-                logger.error('Copilot WS: handleRequest error:', error);
-                throw error;
-            }
-        },
-        onUsage: (inputTokens, outputTokens, cacheHitTokens, model) => {
-            copilotStore.incrementApiCallCount();
-            copilotStore.incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens);
-            copilotStore.recordDailyUsage(inputTokens, outputTokens, cacheHitTokens, model);
-        }
-    });
-}
+const handleCopilotResponsesWSInContext = createCopilotResponsesWebSocketHandler({
+    handleWSConnection,
+    currentCopilotContext,
+    runWithCopilotContext,
+    isAuthenticated,
+    getCopilotNetworkOptions,
+    ensureCopilotToken,
+    extractConversationKey,
+    sanitizeResponsesInput,
+    supportsResponsesWebSocket,
+    createResponsesWS,
+    copilotState,
+    discardWSConnection,
+    releaseWSConnection,
+    responsesRequestToChat,
+    createChatCompletions,
+    readBody,
+    createChatToResponsesStreamBridge,
+    copilotStore,
+    logger
+});
 
 /* ==================== 根路径 ==================== */
 
