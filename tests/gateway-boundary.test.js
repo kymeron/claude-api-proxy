@@ -39,6 +39,11 @@ test('gateway service exposes auth session and tenant APIs from its public bound
     assert.equal(typeof gateway.requireApiAuth, 'function');
     assert.equal(typeof gateway.getSessionUser, 'function');
     assert.equal(typeof gateway.createSessionToken, 'function');
+    assert.equal(typeof gateway.initAuthMode, 'function');
+    assert.equal(typeof gateway.getAuthMode, 'function');
+    assert.equal(typeof gateway.localAuthenticate, 'function');
+    assert.equal(typeof gateway.ldapAuthenticate, 'function');
+    assert.equal(typeof gateway.ensureAdminFromEnv, 'function');
     assert.equal(typeof gateway.unifiedTenantManager, 'object');
     assert.equal(typeof gateway.createLocalUser, 'function');
     assert.equal(typeof gateway.changeOwnLocalUserPassword, 'function');

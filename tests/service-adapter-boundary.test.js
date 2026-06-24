@@ -82,16 +82,37 @@ test('product services avoid gateway singleton naming leakage', async () => {
     assert.deepEqual(violations, []);
 });
 
-test('auth route uses shared LDAP authentication instead of CodeBuddy internals', async () => {
-    const source = await readFile(path.join(repoRoot, 'src/routes/auth.js'), 'utf8')
-        .then((text) => text.replaceAll('\\', '/'));
+test('auth routes use gateway public auth boundary instead of shared auth internals', async () => {
+    const checkedRoutes = [
+        'src/routes/auth.js',
+        'src/routes/dashboard-users.js',
+        'src/routes/dashboard-frontend.js'
+    ];
+    const privateSharedAuthImport = /services\/shared\/(?:auth-mode|local-auth|ldap-auth)\.js/;
+    const codebuddyAuthImport = /services\/codebuddy\/ldap-auth\.js/;
+    const violations = [];
 
-    assert.match(source, /services\/shared\/ldap-auth\.js/);
-    assert.doesNotMatch(source, /services\/codebuddy\/ldap-auth\.js/);
+    for (const route of checkedRoutes) {
+        const source = await readFile(path.join(repoRoot, route), 'utf8')
+            .then((text) => text.replaceAll('\\', '/'));
+        if (privateSharedAuthImport.test(source) || codebuddyAuthImport.test(source)) {
+            violations.push(route);
+        }
+    }
+
+    assert.deepEqual(violations, []);
     await assert.rejects(
         stat(path.join(repoRoot, 'src', 'services', 'codebuddy', 'ldap-auth.js')),
         {code: 'ENOENT'}
     );
+});
+
+test('app entry imports authentication through gateway public boundary', async () => {
+    const source = await readFile(path.join(repoRoot, 'src/index.js'), 'utf8')
+        .then((text) => text.replaceAll('\\', '/'));
+
+    assert.doesNotMatch(source, /services\/shared\/(?:auth-mode|local-auth|ldap-auth)\.js/);
+    assert.match(source, /services\/gateway\/index\.js/);
 });
 
 test('product APIs do not re-export provider stream helpers', async () => {

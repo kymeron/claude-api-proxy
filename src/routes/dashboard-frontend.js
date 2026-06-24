@@ -9,12 +9,12 @@ import {fileURLToPath} from 'url';
 import {
     changeOwnLocalUserPassword,
     getDashboardUsageOverview,
+    getAuthMode,
     getSessionUser,
     listDashboardTenantMonthlyUsage,
     unifiedTenantManager
 } from '../services/gateway/index.js';
 import {handleAdminUsers} from './dashboard-users.js';
-import {getAuthMode} from '../services/shared/auth-mode.js';
 import {getCodebuddyAdminOptions, handleCodebuddyAdminRoute} from './dashboard-codebuddy.js';
 import {getCodebuddyCustomSiteLabels} from '../services/codebuddy/index.js';
 import {handleCopilotAdminRoute} from './dashboard-copilot.js';
