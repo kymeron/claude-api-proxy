@@ -231,18 +231,21 @@ test('chatRequestToAnthropic moves preceding tool result after assistant tool_us
 
 test('all service routes keep Anthropic endpoints out of OpenAI namespace', () => {
     const routeFiles = [
-        ['relay', 'src/routes/relay.js'],
-        ['codebuddy', 'src/routes/codebuddy.js'],
-        ['copilot', 'src/routes/copilot.js']
+        ['relay', [
+            'src/routes/relay.js',
+            'src/services/relay/anthropic-messages-handler.js'
+        ]],
+        ['codebuddy', [
+            'src/routes/codebuddy.js',
+            'src/services/codebuddy/metadata-handler.js'
+        ]],
+        ['copilot', ['src/routes/copilot.js']]
     ];
 
-    for (const [service, file] of routeFiles) {
-        const source = service === 'relay'
-            ? [
-                file,
-                'src/services/relay/anthropic-messages-handler.js'
-            ].map((sourceFile) => readFileSync(join(root, sourceFile), 'utf8')).join('\n')
-            : readFileSync(join(root, file), 'utf8');
+    for (const [service, files] of routeFiles) {
+        const source = files
+            .map((file) => readFileSync(join(root, file), 'utf8'))
+            .join('\n');
         assert.match(source, new RegExp(`/${service}/anthropic/v1/messages`));
         assert.match(source, new RegExp(`/${service}/anthropic/v1/messages/count_tokens`));
         assert.doesNotMatch(source, new RegExp(`/${service}/v1/messages'`));

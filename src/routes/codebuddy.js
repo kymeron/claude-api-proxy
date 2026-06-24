@@ -36,8 +36,7 @@ import {
     createCodebuddyTenantCredentialManagerResolver
 } from '../services/codebuddy/credential-context.js';
 import {
-    createCodebuddyUsageRecorder,
-    pickCodebuddyUsageModel as pickModelName
+    createCodebuddyUsageRecorder
 } from '../services/codebuddy/usage.js';
 import {mapCodebuddyModelName as mapModelName} from '../services/codebuddy/model-mapping.js';
 import {createCodebuddyChatCompletionsHandler} from '../services/codebuddy/chat-completions-handler.js';
@@ -45,6 +44,7 @@ import {createCodebuddyAnthropicMessagesHandler} from '../services/codebuddy/ant
 import {createCodebuddyResponsesCompactHandler} from '../services/codebuddy/responses-compact-handler.js';
 import {createCodebuddyResponsesAPIHandler} from '../services/codebuddy/responses-api-handler.js';
 import {createCodebuddyResponsesWebSocketHandler} from '../services/codebuddy/responses-websocket-handler.js';
+import {createCodebuddyMetadataHandlers} from '../services/codebuddy/metadata-handler.js';
 import logger from '../utils/logger.js';
 
 const authenticateAndGetCredential = createCodebuddyCredentialResolver({tenantManager: unifiedTenantManager});
@@ -157,94 +157,21 @@ export const handleCodebuddyResponsesWS = createCodebuddyResponsesWebSocketHandl
     logger
 });
 
-/**
- * 处理 OpenAI 格式的 /v1/models 请求
- */
-async function handleOpenAIModels(req, res) {
-    try {
-        const authResult = await authenticateAndGetCredential(req);
-        if (authResult.error) {
-            sendOpenAIError(
-                res,
-                authResult.error.status,
-                authResult.error.message,
-                authResult.error.status === 401 ? 'authentication_error' : 'api_error'
-            );
-            return;
-        }
-
-        const modelsData = await getModels(authResult.credential);
-
-        // 返回 OpenAI 格式
-        sendJson(res, 200, {
-            object: 'list',
-            data: modelsData.data.map((model) => ({
-                id: model.id,
-                object: 'model',
-                created: Math.floor(Date.now() / 1000),
-                owned_by: 'codebuddy'
-            }))
-        });
-    } catch (error) {
-        logger.error('Failed to get OpenAI models:', error);
-        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
-    }
-}
-
-
-/**
- * 处理 Anthropic 格式的 /v1/messages/count_tokens
- */
-async function handleAnthropicCountTokens(req, res) {
-    try {
-        const authResult = await authenticateAndGetCredential(req);
-        if (authResult.error) {
-            sendAnthropicError(res, authResult.error.status, authResult.error.message);
-            return;
-        }
-
-        const body = await parseBody(req);
-        const anthropicPayload = sanitizeAnthropicPayload(JSON.parse(body));
-
-        const text = JSON.stringify(anthropicPayload.messages);
-        const estimatedTokens = Math.ceil(text.length / 4);
-
-        sendJson(res, 200, {input_tokens: estimatedTokens});
-    } catch (error) {
-        logger.error('Failed to count tokens:', error);
-        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
-    }
-}
-
-/**
- * 处理 Anthropic 格式的 /v1/models
- */
-async function handleAnthropicModels(req, res) {
-    try {
-        const authResult = await authenticateAndGetCredential(req);
-        if (authResult.error) {
-            sendAnthropicError(res, authResult.error.status, authResult.error.message);
-            return;
-        }
-
-        const modelsData = await getModels(authResult.credential);
-
-        sendJson(res, 200, {
-            data: modelsData.data.map((model) => ({
-                id: model.id,
-                object: 'model',
-                created: 0,
-                owned_by: 'codebuddy',
-                name: model.name,
-                capabilities: {}
-            })),
-            object: 'list'
-        });
-    } catch (error) {
-        logger.error('Failed to get Anthropic models:', error);
-        sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
-    }
-}
+const {
+    handleOpenAIModels,
+    handleAnthropicCountTokens,
+    handleAnthropicModels
+} = createCodebuddyMetadataHandlers({
+    authenticateAndGetCredential,
+    getModels,
+    sendOpenAIError,
+    sendAnthropicError,
+    sendJson,
+    upstreamErrorStatus,
+    parseBody,
+    sanitizeAnthropicPayload,
+    logger
+});
 
 /**
  * 获取租户的凭证管理器（用于凭证管理端点）
