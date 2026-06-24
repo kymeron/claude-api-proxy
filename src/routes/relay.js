@@ -36,6 +36,14 @@ import {
     createRelayResponsesWebSocketCollector
 } from '../services/relay/response-state.js';
 import {
+    sendRelayAnthropicError as sendAnthropicError,
+    sendRelayJsonResponse as sendJson,
+    sendRelayOpenAIError as sendOpenAIError,
+    sendRelayResponsesWebSocketProtocolError as sendResponsesWebSocketProtocolError,
+    sendRelayStateMissingOpenAIError as sendStateMissingOpenAIError,
+    toRelayResponsesWebSocketStateMissingError as toResponsesWebSocketStateMissingError
+} from '../services/relay/response-writer.js';
+import {
     getRelaySSEEventType as getSSEEventType,
     parseRelayResponsesSSEEvents as parseResponsesSSEEvents,
     parseRelaySSEBlock as parseSSEBlock,
@@ -123,62 +131,6 @@ const {invokeWithRelayContextCompaction} = createRelayContextCompaction({
 });
 
 /* ==================== 工具函数 ==================== */
-
-function sendJson(res, status, data) {
-    if (res.headersSent) return;
-    res.writeHead(status, {'Content-Type': 'application/json'});
-    res.end(JSON.stringify(data));
-}
-
-function sendOpenAIError(res, status, message, type = 'api_error') {
-    sendJson(res, status, {error: {message, type, code: status}});
-}
-
-function sendAnthropicError(res, status, message) {
-    const errorType = status === 401 ? 'authentication_error' : status === 503 ? 'overloaded_error' : 'api_error';
-    sendJson(res, status, {type: 'error', error: {type: errorType, message}});
-}
-
-function sendStateMissingOpenAIError(res, error) {
-    sendJson(res, 400, {
-        error: {
-            message: error.message,
-            type: 'invalid_request_error',
-            code: 'state_missing'
-        }
-    });
-}
-
-function toResponsesWebSocketStateMissingError(error) {
-    return Object.assign(error, {
-        name: 'ResponsesWebSocketError',
-        event: {
-            type: 'error',
-            error: {
-                message: error.message,
-                code: 'state_missing'
-            }
-        }
-    });
-}
-
-function sendResponsesWebSocketProtocolError(res, error) {
-    const event = error?.event || {
-        type: 'error',
-        status: error?.status || 400,
-        error: {message: error?.message || 'Responses WebSocket request failed'}
-    };
-
-    if (res.headersSent) {
-        if (!res.destroyed && !res.writableEnded) {
-            res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
-            res.end();
-        }
-        return;
-    }
-
-    sendJson(res, event.status || error?.status || 400, event);
-}
 
 
 
