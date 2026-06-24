@@ -453,7 +453,8 @@ test('relay routes expose cross-protocol bridges without protocol mismatch rejec
         'src/services/relay/chat-completions-handler.js',
         'src/services/relay/anthropic-messages-handler.js',
         'src/services/relay/responses-api-handler.js',
-        'src/services/relay/responses-compact-handler.js'
+        'src/services/relay/responses-compact-handler.js',
+        'src/services/relay/responses-websocket-handler.js'
     ].map((file) => readFileSync(join(root, file), 'utf8')).join('\n');
 
     for (const requestType of [
@@ -475,7 +476,8 @@ test('relay Responses-capable passthrough paths remember visible input before co
     const source = [
         'src/routes/relay.js',
         'src/services/relay/responses-api-handler.js',
-        'src/services/relay/responses-compact-handler.js'
+        'src/services/relay/responses-compact-handler.js',
+        'src/services/relay/responses-websocket-handler.js'
     ].map((file) => readFileSync(join(root, file), 'utf8')).join('\n');
     const prepareCalls = source.match(/prepareResponsesPassthrough/g) || [];
 
@@ -486,7 +488,8 @@ test('relay Responses passthrough paths limit oversized input before upstream tr
     const source = [
         'src/routes/relay.js',
         'src/services/relay/responses-api-handler.js',
-        'src/services/relay/responses-compact-handler.js'
+        'src/services/relay/responses-compact-handler.js',
+        'src/services/relay/responses-websocket-handler.js'
     ].map((file) => readFileSync(join(root, file), 'utf8')).join('\n');
     const limitCalls = source.match(/limitResponsesPassthroughPayload/g) || [];
 
@@ -566,7 +569,8 @@ test('relay OpenAI passthrough stream records accumulated chat response into ses
 test('relay Responses output streams record accumulated responses when completed is missing', () => {
     const source = [
         'src/routes/relay.js',
-        'src/services/relay/chat-completions-handler.js'
+        'src/services/relay/chat-completions-handler.js',
+        'src/services/relay/responses-websocket-handler.js'
     ].map((file) => readFileSync(join(root, file), 'utf8')).join('\n');
 
     assert.match(source, /createResponsesStreamAccumulator/);
@@ -590,7 +594,7 @@ test('stream routes use canonical bridge wiring without legacy state machines', 
         },
         {
             name: 'relay Chat to Responses',
-            file: 'src/routes/relay.js',
+            file: 'src/services/relay/responses-websocket-handler.js',
             present: [
                 /createChatToResponsesStreamBridge/,
                 /chatToResponsesBridge\.feed\(chatChunk\)/,

@@ -140,7 +140,10 @@ test('passthrough compatibility mode stays on the stateful relay path', () => {
 });
 
 test('Responses WebSocket relay keeps the Anthropic upstream conversion path enabled', () => {
-    const relaySource = readFileSync(join(process.cwd(), 'src/routes/relay.js'), 'utf8');
+    const relaySource = [
+        'src/routes/relay.js',
+        'src/services/relay/responses-websocket-handler.js'
+    ].map((file) => readFileSync(join(process.cwd(), file), 'utf8')).join('\n');
 
     assert.equal(relaySource.includes('ResponsesWSViaAnthropic'), true);
     assert.equal(relaySource.includes('当前上游为 Anthropic 协议，不支持 Responses API'), false);
