@@ -49,13 +49,19 @@ export async function readCodebuddyRequestBody(req) {
     return Buffer.concat(chunks).toString('utf8');
 }
 
-export function createCodebuddyRouteRuntime({tenantManager, logger = defaultLogger} = {}) {
+export function createCodebuddyRouteRuntime({tenantManager, resolveCredential, logger = defaultLogger} = {}) {
     if (!tenantManager) {
         throw new Error('createCodebuddyRouteRuntime requires a tenantManager');
     }
+    if (typeof resolveCredential !== 'function') {
+        throw new Error('createCodebuddyRouteRuntime requires resolveCredential');
+    }
 
     const credentialService = getCodebuddyCredentialService(tenantManager);
-    const authenticateAndGetCredential = createCodebuddyCredentialResolver({credentialService});
+    const authenticateAndGetCredential = createCodebuddyCredentialResolver({
+        credentialService,
+        resolveCredential
+    });
     const resolveTenantManager = createCodebuddyTenantCredentialManagerResolver({credentialService});
     const {recordUsage: recordCodebuddyUsage} = createCodebuddyUsageRecorder(tenantManager);
 

@@ -3,12 +3,16 @@
  * @module routes/codebuddy
  */
 
-import {unifiedTenantManager} from '../services/gateway/index.js';
+import {
+    resolveCredential,
+    unifiedTenantManager
+} from '../services/gateway/index.js';
 import {createCodebuddyRouteRuntime} from '../services/codebuddy/index.js';
 import logger from '../utils/logger.js';
 
 const codebuddyRuntime = createCodebuddyRouteRuntime({
     tenantManager: unifiedTenantManager,
+    resolveCredential,
     logger
 });
 

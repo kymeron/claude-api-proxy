@@ -11,7 +11,8 @@ test('createCodebuddyRouteRuntime exposes route-facing CodeBuddy handlers', () =
         isEnabled: () => true
     };
     const logger = {error: () => {}, warn: () => {}, info: () => {}, debug: () => {}};
-    const runtime = createCodebuddyRouteRuntime({tenantManager, logger});
+    const resolveCredential = () => null;
+    const runtime = createCodebuddyRouteRuntime({tenantManager, logger, resolveCredential});
 
     for (const key of [
         'sendJson',
@@ -31,6 +32,19 @@ test('createCodebuddyRouteRuntime exposes route-facing CodeBuddy handlers', () =
     ]) {
         assert.equal(typeof runtime[key], 'function', key);
     }
+});
+
+test('createCodebuddyRouteRuntime requires credential resolution injection', () => {
+    const tenantManager = {
+        listTenants: () => [],
+        isEnabled: () => true
+    };
+    const logger = {error: () => {}, warn: () => {}, info: () => {}, debug: () => {}};
+
+    assert.throws(
+        () => createCodebuddyRouteRuntime({tenantManager, logger}),
+        /resolveCredential/
+    );
 });
 
 test('readCodebuddyRequestBody joins request chunks as utf8 text', async () => {

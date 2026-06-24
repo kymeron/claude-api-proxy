@@ -1,5 +1,3 @@
-import {resolveCredential as defaultResolveCredential} from '../gateway/index.js';
-
 function listCredentialRecords(credentialService, tenantId) {
     if (typeof credentialService.listCredentials === 'function') {
         return credentialService.listCredentials(tenantId);
@@ -17,7 +15,7 @@ function getCredentialManager(credentialService, tenantId) {
 export async function resolveCodebuddyCredentialContext({
     req,
     credentialService,
-    resolveCredential = defaultResolveCredential
+    resolveCredential
 }) {
     const tenantId = req.tenantId;
     if (!tenantId) {
@@ -37,7 +35,7 @@ export async function resolveCodebuddyCredentialContext({
 
 export function createCodebuddyCredentialResolver({
     credentialService,
-    resolveCredential = defaultResolveCredential
+    resolveCredential
 }) {
     return (req) => resolveCodebuddyCredentialContext({
         req,

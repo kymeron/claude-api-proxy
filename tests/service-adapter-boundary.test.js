@@ -46,6 +46,25 @@ test('routes do not depend on another product service API for shared helpers', a
     assert.deepEqual(violations, []);
 });
 
+test('product services receive gateway helpers through injection', async () => {
+    const productServiceDirs = ['relay', 'codebuddy', 'copilot'];
+    const gatewayImport =
+        /from\s+['"][^'"]*(?:services\/gateway|\.\.\/gateway|\.\.\/\.\.\/gateway)[^'"]*['"]/;
+    const violations = [];
+
+    for (const dir of productServiceDirs) {
+        const files = await listJsFiles(path.join(servicesRoot, dir));
+        for (const file of files) {
+            const source = await readFile(file, 'utf8').then((text) => text.replaceAll('\\', '/'));
+            if (gatewayImport.test(source)) {
+                violations.push(path.relative(repoRoot, file).replaceAll('\\', '/'));
+            }
+        }
+    }
+
+    assert.deepEqual(violations, []);
+});
+
 test('auth route uses shared LDAP authentication instead of CodeBuddy internals', async () => {
     const source = await readFile(path.join(repoRoot, 'src/routes/auth.js'), 'utf8')
         .then((text) => text.replaceAll('\\', '/'));
