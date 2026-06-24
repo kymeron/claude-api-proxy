@@ -43,6 +43,7 @@ import {mapCodebuddyModelName as mapModelName} from '../services/codebuddy/model
 import {createCodebuddyChatCompletionsHandler} from '../services/codebuddy/chat-completions-handler.js';
 import {createCodebuddyAnthropicMessagesHandler} from '../services/codebuddy/anthropic-messages-handler.js';
 import {createCodebuddyResponsesCompactHandler} from '../services/codebuddy/responses-compact-handler.js';
+import {createCodebuddyResponsesAPIHandler} from '../services/codebuddy/responses-api-handler.js';
 import logger from '../utils/logger.js';
 
 const authenticateAndGetCredential = createCodebuddyCredentialResolver({tenantManager: unifiedTenantManager});
@@ -114,6 +115,28 @@ const handleResponsesCompact = createCodebuddyResponsesCompactHandler({
     extractCacheHitTokens,
     recordUsage: recordCodebuddyUsage,
     chatResponseToCompact,
+    logger
+});
+
+const handleResponsesAPI = createCodebuddyResponsesAPIHandler({
+    authenticateAndGetCredential,
+    tenantManager: unifiedTenantManager,
+    sendOpenAIError,
+    sendJson,
+    upstreamErrorStatus,
+    parseBody,
+    getCodebuddyBaseUrl,
+    isPersonalHost,
+    resolveConversationId,
+    responsesRequestToChat,
+    mapModelName,
+    prepareCodebuddyOutboundChatRequest,
+    createChatCompletions,
+    createChatToResponsesStreamBridge,
+    aggregateStreamResponse,
+    extractCacheHitTokens,
+    recordUsage: recordCodebuddyUsage,
+    chatResponseToResponses,
     logger
 });
 
@@ -209,203 +232,6 @@ async function handleAnthropicModels(req, res) {
 /**
  * 获取租户的凭证管理器（用于凭证管理端点）
  */
-/**
- * 处理 OpenAI Responses API 请求 (/codebuddy/v1/responses)
- * 将 Responses 格式转为 Chat Completions 发给上游，再将响应转回 Responses 格式
- */
-async function handleResponsesAPI(req, res) {
-    let tenantInfo = '';
-    try {
-        const authResult = await authenticateAndGetCredential(req);
-        if (!authResult.error) {
-            const tenant = unifiedTenantManager.getTenant(authResult.tenantId);
-            if (tenant?.name && tenant?.username) tenantInfo = `${tenant.name}(${tenant.username})`;
-        }
-        if (authResult.error) {
-            sendOpenAIError(res, authResult.error.status, authResult.error.message);
-            return;
-        }
-
-        // 检测企业版凭证缺失企业信息
-        if (!authResult.credential.enterprise_id) {
-            const host = new URL(getCodebuddyBaseUrl(authResult.credential.base_url)).host;
-            if (!isPersonalHost(host)) {
-                logger.warn(
-                    `[CodeBuddy Responses API]: 凭证 ${authResult.credential.user_id} 缺少 enterprise_id，上游 ${host} 可能触发配额错误`
-                );
-            }
-        }
-
-        const body = await parseBody(req);
-        const responsesReq = JSON.parse(body);
-        const conversationId = resolveConversationId(req, responsesReq.input, responsesReq, {
-            tenantId: authResult.tenantId
-        });
-
-        // Responses → Chat Completions
-        const chatReq = responsesRequestToChat(responsesReq);
-
-        // 映射 Codex 传入的模型名到实际可用模型
-        if (chatReq.model) {
-            chatReq.model = mapModelName(chatReq.model);
-        }
-
-        prepareCodebuddyOutboundChatRequest(chatReq);
-
-        // 从 messages 前缀推算稳定的 conversationId，确保同一对话的 prompt_cache_key 一致
-        const tenant = unifiedTenantManager.getTenant(authResult.tenantId);
-        const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
-
-        const response = await createChatCompletions(chatReq, {
-            credential: authResult.credential,
-            conversationId,
-            conversationRequestId: req.headers['x-conversation-request-id'],
-            conversationMessageId: req.headers['x-conversation-message-id'],
-            requestId: req.headers['x-request-id'],
-            ...tenantMeta
-        });
-
-        if (responsesReq.stream) {
-            // 流式：解析 Chat SSE → Responses SSE
-            res.writeHead(200, {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                Connection: 'keep-alive'
-            });
-
-            const chatToResponsesBridge = createChatToResponsesStreamBridge({model: responsesReq.model});
-            let buffer = Buffer.alloc(0);
-            let streamInputTokens = 0;
-            let streamOutputTokens = 0;
-            let streamCacheHitTokens = 0;
-            let streamCredit = 0;
-            let streamModel = '';
-
-            response.body.on('data', (chunk) => {
-                buffer = Buffer.concat([buffer, chunk]);
-                let start = 0;
-                let newLineIndex;
-                while ((newLineIndex = buffer.indexOf(10, start)) !== -1) {
-                    const line = buffer.toString('utf8', start, newLineIndex).trim();
-                    start = newLineIndex + 1;
-                    if (!line || line.startsWith(':')) continue;
-                    if (!line.startsWith('data: ')) continue;
-                    const raw = line.slice(6).trim();
-                    if (raw === '[DONE]') continue;
-
-                    let data;
-                    try {
-                        data = JSON.parse(raw);
-                    } catch {
-                        continue;
-                    }
-
-                    if (data.usage) {
-                        streamInputTokens = data.usage.prompt_tokens || 0;
-                        streamOutputTokens = data.usage.completion_tokens || 0;
-                        streamCacheHitTokens = extractCacheHitTokens(data.usage);
-                        streamCredit = data.usage.credit || 0;
-                    }
-                    if (data.model) streamModel = data.model;
-
-                    const events = chatToResponsesBridge.feed(data);
-                    for (const ev of events) {
-                        res.write(`event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`);
-                    }
-                }
-                if (start > 0) buffer = buffer.subarray(start);
-            });
-
-            response.body.on('end', () => {
-                // 如果没有正常完成，兜底发送 response.completed
-                if (!chatToResponsesBridge.finished) {
-                    for (const ev of chatToResponsesBridge.finish()) {
-                        res.write(`event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`);
-                    }
-                }
-                if (authResult.tenantId) {
-                    unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
-                    unifiedTenantManager.incrementTokenUsage(
-                        authResult.tenantId,
-                        'codebuddy',
-                        streamInputTokens,
-                        streamOutputTokens,
-                        streamCacheHitTokens
-                    );
-                    unifiedTenantManager.incrementCreditUsage(authResult.tenantId, 'codebuddy', streamCredit);
-                    unifiedTenantManager.recordDailyUsage(
-                        authResult.tenantId,
-                        'codebuddy',
-                        streamInputTokens,
-                        streamOutputTokens,
-                        streamCacheHitTokens,
-                        streamCredit,
-                        pickModelName(streamModel, responsesReq.model)
-                    );
-                }
-                res.end();
-            });
-
-            response.body.on('error', (err) => {
-                logger.error(`Responses stream error${tenantInfo ? `, ${tenantInfo}` : ''}:`, err);
-                res.end();
-            });
-        } else {
-            // 非流式
-            const aggregated = await aggregateStreamResponse(response.body);
-
-            if (authResult.tenantId) {
-                const inputTokens = aggregated.usage?.prompt_tokens || 0;
-                const outputTokens = aggregated.usage?.completion_tokens || 0;
-                const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-                const credit = aggregated.usage?.credit || 0;
-                unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
-                unifiedTenantManager.incrementTokenUsage(
-                    authResult.tenantId,
-                    'codebuddy',
-                    inputTokens,
-                    outputTokens,
-                    cacheHitTokens
-                );
-                unifiedTenantManager.incrementCreditUsage(authResult.tenantId, 'codebuddy', credit);
-                unifiedTenantManager.recordDailyUsage(
-                    authResult.tenantId,
-                    'codebuddy',
-                    inputTokens,
-                    outputTokens,
-                    cacheHitTokens,
-                    credit,
-                    pickModelName(aggregated.model, responsesReq.model)
-                );
-            }
-
-            const chatResponse = {
-                id: aggregated.id || `chatcmpl_${Date.now()}`,
-                object: 'chat.completion',
-                created: Math.floor(Date.now() / 1000),
-                model: aggregated.model || chatReq.model,
-                choices: [
-                    {
-                        index: 0,
-                        message: {
-                            role: 'assistant',
-                            content: aggregated.content || null,
-                            reasoning_content: aggregated.reasoningContent || undefined,
-                            tool_calls: aggregated.toolCalls.length > 0 ? aggregated.toolCalls : undefined
-                        },
-                        finish_reason: aggregated.finishReason || 'stop'
-                    }
-                ],
-                usage: aggregated.usage || {prompt_tokens: 0, completion_tokens: 0, total_tokens: 0}
-            };
-
-            sendJson(res, 200, chatResponseToResponses(chatResponse));
-        }
-    } catch (error) {
-        logger.error(`Failed to handle Responses API${tenantInfo ? `, ${tenantInfo}` : ''}:`, error);
-        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
-    }
-}
 
 
 /**

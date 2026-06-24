@@ -604,7 +604,7 @@ test('stream routes use canonical bridge wiring without legacy state machines', 
         },
         {
             name: 'CodeBuddy Chat to Responses',
-            file: 'src/routes/codebuddy.js',
+            file: 'src/services/codebuddy/responses-api-handler.js',
             present: [/createChatToResponsesStreamBridge/, /chatToResponsesBridge\.feed\(data\)/],
             absent: [/chatChunkToResponsesEvents\(/]
         },
