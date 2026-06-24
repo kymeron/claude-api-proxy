@@ -42,6 +42,7 @@ import {
 import {mapCodebuddyModelName as mapModelName} from '../services/codebuddy/model-mapping.js';
 import {createCodebuddyChatCompletionsHandler} from '../services/codebuddy/chat-completions-handler.js';
 import {createCodebuddyAnthropicMessagesHandler} from '../services/codebuddy/anthropic-messages-handler.js';
+import {createCodebuddyResponsesCompactHandler} from '../services/codebuddy/responses-compact-handler.js';
 import logger from '../utils/logger.js';
 
 const authenticateAndGetCredential = createCodebuddyCredentialResolver({tenantManager: unifiedTenantManager});
@@ -94,6 +95,25 @@ const handleAnthropicMessages = createCodebuddyAnthropicMessagesHandler({
     extractCacheHitTokens,
     openAIToAnthropic,
     recordUsage: recordCodebuddyUsage,
+    logger
+});
+
+const handleResponsesCompact = createCodebuddyResponsesCompactHandler({
+    authenticateAndGetCredential,
+    tenantManager: unifiedTenantManager,
+    sendOpenAIError,
+    sendJson,
+    upstreamErrorStatus,
+    parseBody,
+    resolveConversationId,
+    compactRequestToChat,
+    mapModelName,
+    prepareCodebuddyOutboundChatRequest,
+    createChatCompletions,
+    aggregateStreamResponse,
+    extractCacheHitTokens,
+    recordUsage: recordCodebuddyUsage,
+    chatResponseToCompact,
     logger
 });
 
@@ -387,91 +407,6 @@ async function handleResponsesAPI(req, res) {
     }
 }
 
-/**
- * 处理 OpenAI Responses Compact 请求 (/codebuddy/v1/responses/compact)
- */
-async function handleResponsesCompact(req, res) {
-    try {
-        const authResult = await authenticateAndGetCredential(req);
-        if (authResult.error) {
-            sendOpenAIError(res, authResult.error.status, authResult.error.message);
-            return;
-        }
-
-        const body = await parseBody(req);
-        const compactReq = JSON.parse(body);
-        const conversationId = resolveConversationId(req, compactReq.input, compactReq, {
-            tenantId: authResult.tenantId
-        });
-
-        // Compact → Chat Completions
-        const chatReq = compactRequestToChat(compactReq);
-
-        // 映射 Codex 传入的模型名到实际可用模型
-        if (chatReq.model) {
-            chatReq.model = mapModelName(chatReq.model);
-        }
-
-        prepareCodebuddyOutboundChatRequest(chatReq);
-
-        // 从 messages 前缀推算稳定的 conversationId，确保同一对话的 prompt_cache_key 一致
-        const tenant = unifiedTenantManager.getTenant(authResult.tenantId);
-        const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
-
-        const response = await createChatCompletions(chatReq, {
-            credential: authResult.credential,
-            conversationId,
-            ...tenantMeta
-        });
-
-        const aggregated = await aggregateStreamResponse(response.body);
-
-        if (authResult.tenantId) {
-            const inputTokens = aggregated.usage?.prompt_tokens || 0;
-            const outputTokens = aggregated.usage?.completion_tokens || 0;
-            const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-            const credit = aggregated.usage?.credit || 0;
-            unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
-            unifiedTenantManager.incrementTokenUsage(
-                authResult.tenantId,
-                'codebuddy',
-                inputTokens,
-                outputTokens,
-                cacheHitTokens
-            );
-            unifiedTenantManager.incrementCreditUsage(authResult.tenantId, 'codebuddy', credit);
-            unifiedTenantManager.recordDailyUsage(
-                authResult.tenantId,
-                'codebuddy',
-                inputTokens,
-                outputTokens,
-                cacheHitTokens,
-                credit,
-                pickModelName(aggregated.model, compactReq.model)
-            );
-        }
-
-        const chatResponse = {
-            id: aggregated.id || `chatcmpl_${Date.now()}`,
-            object: 'chat.completion',
-            created: Math.floor(Date.now() / 1000),
-            model: aggregated.model || chatReq.model,
-            choices: [
-                {
-                    index: 0,
-                    message: {role: 'assistant', content: aggregated.content || null},
-                    finish_reason: aggregated.finishReason || 'stop'
-                }
-            ],
-            usage: aggregated.usage || {prompt_tokens: 0, completion_tokens: 0, total_tokens: 0}
-        };
-
-        sendJson(res, 200, chatResponseToCompact(chatResponse));
-    } catch (error) {
-        logger.error('Failed to handle Responses Compact:', error);
-        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
-    }
-}
 
 /**
  * 处理凭证管理端点 - 基于租户体系
