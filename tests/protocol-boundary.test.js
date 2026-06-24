@@ -52,6 +52,19 @@ test('protocol engine exposes a public module boundary for app layers', async ()
     assert.equal(typeof protocolEngine.responsesResponseToRelayChat, 'function');
 });
 
+test('protocol engine declares package metadata for future extraction', async () => {
+    const manifest = JSON.parse(
+        await readFile(path.join(protocolEngineRoot, 'package.json'), 'utf8')
+    );
+
+    assert.equal(manifest.name, '@claude-api-proxy/protocol-engine');
+    assert.equal(manifest.private, true);
+    assert.equal(manifest.type, 'module');
+    assert.equal(manifest.main, './index.js');
+    assert.deepEqual(manifest.exports, {'.': './index.js'});
+    assert.equal(manifest.sideEffects, false);
+});
+
 test('protocol engine does not import upper application layers', async () => {
     const files = await listJsFiles(protocolRoot);
     assert.ok(files.length > 0, 'expected protocol engine files');
