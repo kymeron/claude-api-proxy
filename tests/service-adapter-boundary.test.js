@@ -78,6 +78,25 @@ test('routes use product protocol adapters instead of protocol core directly', a
     assert.deepEqual(violations, []);
 });
 
+test('protocol routes use public service boundaries for providers session and shared helpers', async () => {
+    const checkedRoutes = [
+        'src/routes/relay.js',
+        'src/routes/copilot.js',
+        'src/routes/codebuddy.js'
+    ];
+    const privateServiceImports = /services\/(?:providers\/(?:upstream-api|stream-response|upstream-manager)|session\/(?:conversation-state|context-compactor|responses-continuation)|shared\/(?:responses-ws-client|responses-ws-server))\.js/;
+    const violations = [];
+
+    for (const route of checkedRoutes) {
+        const source = await readFile(path.join(repoRoot, route), 'utf8');
+        if (privateServiceImports.test(source.replaceAll('\\', '/'))) {
+            violations.push(route);
+        }
+    }
+
+    assert.deepEqual(violations, []);
+});
+
 test('relay and codebuddy anthropic adapters delegate request conversion to core protocol', async () => {
     const checkedAdapters = [
         'src/services/relay/anthropic-adapter.js',

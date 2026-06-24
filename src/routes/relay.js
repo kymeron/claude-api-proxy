@@ -17,8 +17,9 @@ import {
     isResponsesUpstream,
     isResponsesWebSocketUpstream,
     normalizeUpstreamProtocol,
-    ProviderUpstreamError
-} from '../services/providers/upstream-api.js';
+    ProviderUpstreamError,
+    aggregateStreamResponse
+} from '../services/providers/index.js';
 import {readBody, isNetworkError} from '../utils/http-client.js';
 import {
     anthropicToOpenAI,
@@ -54,18 +55,17 @@ import {
     chatRequestToAnthropic,
     responsesResponseToRelayChat
 } from '../services/relay/protocol-adapter.js';
-import {isResponsesWebSocketProtocolError} from '../services/shared/responses-ws-client.js';
-import {handleWSConnection} from '../services/shared/responses-ws-server.js';
+import {
+    handleWSConnection,
+    isResponsesWebSocketProtocolError
+} from '../services/shared/index.js';
 import {
     RelayStateMissingError,
-    relayConversationStore
-} from '../services/session/conversation-state.js';
-import {prepareResponsesContinuationPayload} from '../services/session/responses-continuation.js';
-import {
+    relayConversationStore,
+    prepareResponsesContinuationPayload,
     compactChatRequestIfNeeded,
     isContextWindowExceededError
-} from '../services/session/context-compactor.js';
-import {aggregateStreamResponse} from '../services/providers/stream-response.js';
+} from '../services/session/index.js';
 import {estimateMessageTokens} from '../utils/token-estimation.js';
 import logger from '../utils/logger.js';
 

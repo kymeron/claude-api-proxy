@@ -4,7 +4,7 @@
  */
 
 import {createChatCompletions, getModels} from '../services/codebuddy/api.js';
-import {aggregateStreamResponse} from '../services/providers/stream-response.js';
+import {aggregateStreamResponse} from '../services/providers/index.js';
 import {
     anthropicToOpenAI,
     injectBehaviorRules,
@@ -27,7 +27,7 @@ import {
 import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
 import {resolveCredential} from '../services/gateway/gateway-auth.js';
 import {BLOCKED_DOMAINS, getCodebuddyBaseUrl, isPersonalHost} from '../services/codebuddy/config.js';
-import {handleWSConnection} from '../services/shared/responses-ws-server.js';
+import {handleWSConnection} from '../services/shared/index.js';
 import logger from '../utils/logger.js';
 import {isNetworkError} from '../utils/http-client.js';
 

@@ -34,9 +34,11 @@ import {
     estimateMessageTokens,
     estimateContentBlockTokens
 } from '../utils/token-estimation.js';
-import {aggregateStreamResponse} from '../services/providers/stream-response.js';
-import {ResponsesWebSocketError} from '../services/shared/responses-ws-client.js';
-import {handleWSConnection} from '../services/shared/responses-ws-server.js';
+import {aggregateStreamResponse} from '../services/providers/index.js';
+import {
+    handleWSConnection,
+    ResponsesWebSocketError
+} from '../services/shared/index.js';
 import {
     currentCopilotContext,
     runCopilotTenantContext,
