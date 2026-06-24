@@ -61,3 +61,10 @@ test('relay and codebuddy anthropic adapters delegate request conversion to core
 
     assert.deepEqual(violations, []);
 });
+
+test('copilot anthropic adapter delegates Responses conversions to core protocol', async () => {
+    const source = await readFile(path.join(repoRoot, 'src/services/copilot/anthropic-adapter.js'), 'utf8');
+    const privateResponsesHelpers = /\bfunction\s+(?:anthropicContentToResponsesContent|anthropicMessagesToResponsesInput|anthropicSystemToInstructions|anthropicToolChoiceToResponses)\b/;
+
+    assert.equal(privateResponsesHelpers.test(source), false);
+});

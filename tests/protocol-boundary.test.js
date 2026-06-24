@@ -28,6 +28,8 @@ test('protocol engine exposes canonical session and stream APIs from core bounda
     assert.equal(typeof protocol.createChatStreamAccumulator, 'function');
     assert.equal(typeof protocol.analyzeCanonicalToolClosure, 'function');
     assert.equal(typeof protocol.anthropicRequestToChat, 'function');
+    assert.equal(typeof protocol.anthropicRequestToResponses, 'function');
+    assert.equal(typeof protocol.responsesResponseToAnthropic, 'function');
     assert.equal(typeof protocol.chatRequestToAnthropic, 'function');
     assert.equal(typeof protocol.responsesResponseToRelayChat, 'function');
 });
