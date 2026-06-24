@@ -68,3 +68,10 @@ test('copilot anthropic adapter delegates Responses conversions to core protocol
 
     assert.equal(privateResponsesHelpers.test(source), false);
 });
+
+test('copilot anthropic adapter delegates Chat request conversion to core protocol', async () => {
+    const source = await readFile(path.join(repoRoot, 'src/services/copilot/anthropic-adapter.js'), 'utf8');
+    const privateChatHelpers = /\bfunction\s+(?:resolveThinkingConfig|translateMessages|handleUserMessage|handleAssistantMessage)\b/;
+
+    assert.equal(privateChatHelpers.test(source), false);
+});

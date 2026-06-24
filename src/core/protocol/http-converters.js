@@ -380,10 +380,7 @@ function translateAnthropicMessagesToChat(anthropicMessages = [], system, option
         if (typeof system === 'string') {
             messages.push({role: 'system', content: system});
         } else if (Array.isArray(system)) {
-            const systemText = system
-                .map((block) => (typeof block?.text === 'string' ? block.text.trim() : ''))
-                .filter(Boolean)
-                .join('\n\n');
+            const systemText = anthropicSystemToChatContent(system, options);
             if (systemText) {
                 messages.push({role: 'system', content: systemText});
             }
@@ -408,6 +405,21 @@ function translateAnthropicMessagesToChat(anthropicMessages = [], system, option
     }
 
     return options.messagePostProcessor ? options.messagePostProcessor(messages, {model: options.model}) : messages;
+}
+
+function anthropicSystemToChatContent(system, options = {}) {
+    if (options.prioritizeCacheControlSystemBlocks) {
+        const cacheableBlocks = system.filter((block) => block.type === 'text' && block.text && block.cache_control);
+        const dynamicBlocks = system.filter((block) => block.type === 'text' && block.text && !block.cache_control);
+        const staticText = cacheableBlocks.map((block) => block.text).join('\n\n');
+        const dynamicText = dynamicBlocks.map((block) => block.text).join('\n\n');
+        return [staticText, dynamicText].filter(Boolean).join('\n\n');
+    }
+
+    return system
+        .map((block) => (typeof block?.text === 'string' ? block.text.trim() : ''))
+        .filter(Boolean)
+        .join('\n\n');
 }
 
 function handleAnthropicUserMessage(message, previousAssistantMessage = null, options = {}) {
@@ -499,10 +511,14 @@ function handleAnthropicAssistantMessage(message, options = {}) {
     if (toolUseBlocks.length > 0) {
         result.tool_calls = toolUseBlocks.map((block) => {
             let args = '{}';
-            if (block.input !== undefined && block.input !== null) {
+            if ((block.input !== undefined && block.input !== null) || options.toolArgumentsSerializer) {
                 try {
-                    const input = options.sortToolInput === false ? block.input : sortObjectKeys(block.input);
-                    args = JSON.stringify(input);
+                    if (options.toolArgumentsSerializer) {
+                        args = options.toolArgumentsSerializer(block.input, block);
+                    } else {
+                        const input = options.sortToolInput === false ? block.input : sortObjectKeys(block.input);
+                        args = JSON.stringify(input);
+                    }
                 } catch (e) {
                     options.logger?.warn?.(`Failed to stringify tool input for ${block.name}:`, e.message);
                     args = '{}';

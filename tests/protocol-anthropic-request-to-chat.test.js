@@ -65,3 +65,27 @@ test('anthropicRequestToChat preserves reasoning and orders tool results by assi
     ]);
     assert.equal(converted.messages[5].content, 'Continue');
 });
+
+test('anthropicRequestToChat supports Copilot system ordering and tool argument serialization options', () => {
+    const converted = anthropicRequestToChat({
+        model: 'claude-haiku-4',
+        system: [
+            {type: 'text', text: 'dynamic instructions'},
+            {type: 'text', text: 'static instructions', cache_control: {type: 'ephemeral'}}
+        ],
+        messages: [{
+            role: 'assistant',
+            content: [
+                {type: 'tool_use', id: 'call_1', name: 'noop'}
+            ]
+        }]
+    }, {
+        prioritizeCacheControlSystemBlocks: true,
+        toolArgumentsSerializer: (input) => JSON.stringify(input),
+        disableReasoningForModel: (model) => model.includes('haiku')
+    });
+
+    assert.equal(converted.reasoning_effort, '');
+    assert.equal(converted.messages[0].content, 'static instructions\n\ndynamic instructions');
+    assert.equal(converted.messages[1].tool_calls[0].function.arguments, undefined);
+});
