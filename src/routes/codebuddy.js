@@ -44,6 +44,7 @@ import {createCodebuddyChatCompletionsHandler} from '../services/codebuddy/chat-
 import {createCodebuddyAnthropicMessagesHandler} from '../services/codebuddy/anthropic-messages-handler.js';
 import {createCodebuddyResponsesCompactHandler} from '../services/codebuddy/responses-compact-handler.js';
 import {createCodebuddyResponsesAPIHandler} from '../services/codebuddy/responses-api-handler.js';
+import {createCodebuddyResponsesWebSocketHandler} from '../services/codebuddy/responses-websocket-handler.js';
 import logger from '../utils/logger.js';
 
 const authenticateAndGetCredential = createCodebuddyCredentialResolver({tenantManager: unifiedTenantManager});
@@ -137,6 +138,22 @@ const handleResponsesAPI = createCodebuddyResponsesAPIHandler({
     extractCacheHitTokens,
     recordUsage: recordCodebuddyUsage,
     chatResponseToResponses,
+    logger
+});
+
+export const handleCodebuddyResponsesWS = createCodebuddyResponsesWebSocketHandler({
+    handleWSConnection,
+    resolveCredentialContext: authenticateAndGetCredential,
+    tenantManager: unifiedTenantManager,
+    getCodebuddyBaseUrl,
+    isPersonalHost,
+    resolveConversationId,
+    responsesRequestToChat,
+    mapModelName,
+    prepareCodebuddyOutboundChatRequest,
+    createChatCompletions,
+    createChatToResponsesStreamBridge,
+    recordUsage: recordCodebuddyUsage,
     logger
 });
 
@@ -380,119 +397,6 @@ function handleRoot(req, res) {
 
 /* ==================== WebSocket 端点 ==================== */
 
-/**
- * 处理 CodeBuddy Responses API WebSocket 连接
- * 客户端通过 WS 连接 /codebuddy/v1/responses，发送标准 Responses API WS 协议
- * CodeBuddy 上游使用 OpenAI Chat HTTP，服务端做 WS→HTTP→WS 转换
- *
- * 注意：鉴权已在 server.js 的 upgrade handler 中完成，
- * 并通过 req.tenantId 注入到这里。
- *
- * @param {import('ws').WebSocket} clientWs - 客户端 WebSocket 连接
- * @param {import('http').IncomingMessage} req - 原始 HTTP 请求（已注入 tenantId）
- */
-export function handleCodebuddyResponsesWS(clientWs, req) {
-    req.codebuddyClientConnectionId = req.codebuddyClientConnectionId || `codebuddy-ws-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    handleWSConnection(clientWs, {
-        authenticate: () => true,
-        req,
-        handleRequest: async function* (payload, authResult, {signal}) {
-            const tenantId = req.tenantId;
-            const credential = await unifiedTenantManager
-                .listCodebuddyCredentials(tenantId)
-                .then(({credentials, activeIndex}) => resolveCredential(req.headers, credentials, activeIndex));
-            if (!credential) {
-                throw Object.assign(new Error('No available credentials for tenant'), {
-                    name: 'ResponsesWebSocketError',
-                    event: {
-                        type: 'error',
-                        error: {message: 'No available credentials for tenant', code: 'no_credentials'}
-                    }
-                });
-            }
-
-            // 检测企业版凭证缺失企业信息
-            if (!credential.enterprise_id) {
-                const host = new URL(getCodebuddyBaseUrl(credential.base_url)).host;
-                if (!isPersonalHost(host)) {
-                    logger.warn(
-                        `[CodeBuddy WS]: 凭证 ${credential.user_id} 缺少 enterprise_id，上游 ${host} 可能触发配额错误`
-                    );
-                }
-            }
-
-            // Responses → Chat Completions
-            const conversationId = resolveConversationId(req, payload.input, payload, {tenantId});
-            const chatReq = responsesRequestToChat(payload);
-            if (chatReq.model) chatReq.model = mapModelName(chatReq.model);
-            prepareCodebuddyOutboundChatRequest(chatReq);
-            chatReq.stream = true;
-
-            const tenant = unifiedTenantManager.getTenant(tenantId);
-            const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
-
-            const response = await createChatCompletions(chatReq, {
-                credential,
-                conversationId,
-                conversationRequestId: req.headers['x-conversation-request-id'],
-                conversationMessageId: req.headers['x-conversation-message-id'],
-                requestId: req.headers['x-request-id'],
-                ...tenantMeta
-            });
-
-            // 将 Chat SSE 流转换为 Responses WS 事件
-            const chatToResponsesBridge = createChatToResponsesStreamBridge({model: payload.model});
-            let buffer = Buffer.alloc(0);
-
-            for await (const chunk of response.body) {
-                if (signal?.aborted) break;
-                buffer = Buffer.concat([buffer, chunk]);
-                let start = 0;
-                let newLineIndex;
-                while ((newLineIndex = buffer.indexOf(10, start)) !== -1) {
-                    const line = buffer.toString('utf8', start, newLineIndex).trim();
-                    start = newLineIndex + 1;
-                    if (!line || line.startsWith(':') || !line.startsWith('data: ')) continue;
-                    const raw = line.slice(6).trim();
-                    if (raw === '[DONE]') continue;
-
-                    let data;
-                    try {
-                        data = JSON.parse(raw);
-                    } catch {
-                        continue;
-                    }
-
-                    const events = chatToResponsesBridge.feed(data);
-                    for (const ev of events) {
-                        yield {type: ev.event, data: ev.data};
-                    }
-                }
-                if (start > 0) buffer = buffer.subarray(start);
-            }
-            if (!chatToResponsesBridge.finished) {
-                for (const ev of chatToResponsesBridge.finish()) {
-                    yield {type: ev.event, data: ev.data};
-                }
-            }
-        },
-        onUsage: (inputTokens, outputTokens, cacheHitTokens, model) => {
-            const tenantId = req.tenantId;
-            if (!tenantId) return;
-            unifiedTenantManager.incrementApiCallCount(tenantId, 'codebuddy');
-            unifiedTenantManager.incrementTokenUsage(tenantId, 'codebuddy', inputTokens, outputTokens, cacheHitTokens);
-            unifiedTenantManager.recordDailyUsage(
-                tenantId,
-                'codebuddy',
-                inputTokens,
-                outputTokens,
-                cacheHitTokens,
-                0,
-                model
-            );
-        }
-    });
-}
 
 /**
  * 主路由处理函数

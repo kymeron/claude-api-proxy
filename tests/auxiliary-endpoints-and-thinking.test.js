@@ -262,7 +262,11 @@ test('OpenAI Responses stream fallback returns buffered output', () => {
     assert.match(relaySource, /chatToResponsesBridge\.finish\(\)/);
     assert.match(relaySource, /responsesAccumulator\.feed\(ev\.event,\s*ev\.data\)/);
 
-    const codebuddySource = readFileSync(join(root, 'src/routes/codebuddy.js'), 'utf8');
+    const codebuddySource = [
+        'src/routes/codebuddy.js',
+        'src/services/codebuddy/responses-api-handler.js',
+        'src/services/codebuddy/responses-websocket-handler.js'
+    ].map((file) => readFileSync(join(root, file), 'utf8')).join('\n');
     assert.match(codebuddySource, /if \(!chatToResponsesBridge\.finished\)/);
     assert.match(codebuddySource, /chatToResponsesBridge\.finish\(\)/);
 

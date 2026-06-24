@@ -384,6 +384,11 @@ test('codebuddy route delegates Responses API handler to codebuddy services', as
     assert.equal(/\basync\s+function\s+handleResponsesAPI\b/.test(source), false);
 });
 
+test('codebuddy route delegates Responses WebSocket handler to codebuddy services', async () => {
+    const source = await readFile(path.join(repoRoot, 'src/routes/codebuddy.js'), 'utf8');
+    assert.equal(/\bexport\s+function\s+handleCodebuddyResponsesWS\b/.test(source), false);
+});
+
 test('relay and codebuddy anthropic adapters delegate request conversion to core protocol', async () => {
     const checkedAdapters = [
         'src/services/relay/anthropic-adapter.js',
