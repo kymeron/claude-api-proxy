@@ -202,5 +202,3 @@ export async function createChatCompletions(payload, options = {}) {
 
     return response;
 }
-
-export {handleStreamResponse, aggregateStreamResponse} from '../providers/stream-response.js';

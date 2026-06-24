@@ -46,6 +46,22 @@ test('routes do not depend on another product service API for shared helpers', a
     assert.deepEqual(violations, []);
 });
 
+test('product APIs do not re-export provider stream helpers', async () => {
+    const checkedApis = [
+        'src/services/codebuddy/api.js'
+    ];
+    const violations = [];
+
+    for (const api of checkedApis) {
+        const source = await readFile(path.join(repoRoot, api), 'utf8');
+        if (/providers\/stream-response\.js/.test(source.replaceAll('\\', '/'))) {
+            violations.push(api);
+        }
+    }
+
+    assert.deepEqual(violations, []);
+});
+
 test('app layers import protocol engine through the public boundary', async () => {
     const files = [
         ...await listJsFiles(servicesRoot),
