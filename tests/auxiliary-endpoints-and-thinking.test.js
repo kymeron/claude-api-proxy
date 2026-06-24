@@ -624,7 +624,7 @@ test('stream routes use canonical bridge wiring without legacy state machines', 
         },
         {
             name: 'Copilot Responses to Chat',
-            file: 'src/routes/copilot.js',
+            file: 'src/services/copilot/chat-completions-handler.js',
             present: [/createResponsesToChatStreamBridge/, /responsesToChatBridge\.feed\(event\.type,\s*event\.data\)/],
             absent: [/responsesEventToChatChunks\(/]
         },
