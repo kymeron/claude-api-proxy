@@ -9,12 +9,12 @@ import {
     anthropicRequestToChat,
     anthropicRequestToResponses,
     responsesResponseToAnthropic
-} from '../../core/protocol/http-converters.js';
+} from '../../core/protocol/index.js';
 import {injectBehaviorRules} from '../shared/behavior-rules.js';
 import {
     normalizeClaudeModelAlias,
     openAIToAnthropic as sharedOpenAIToAnthropic
-} from '../../core/protocol/shared.js';
+} from '../../core/protocol/index.js';
 
 export function anthropicToOpenAI(anthropicPayload, modelId) {
     const resolvedModel = modelId || translateModelName(anthropicPayload.model);

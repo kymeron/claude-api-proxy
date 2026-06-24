@@ -5,11 +5,11 @@
  */
 
 import logger from '../../utils/logger.js';
-import {anthropicRequestToChat} from '../../core/protocol/http-converters.js';
+import {anthropicRequestToChat} from '../../core/protocol/index.js';
 import {injectBehaviorRules} from '../shared/behavior-rules.js';
 import {
     openAIToAnthropic as sharedOpenAIToAnthropic
-} from '../../core/protocol/shared.js';
+} from '../../core/protocol/index.js';
 
 export function anthropicToOpenAI(anthropicPayload) {
     return anthropicRequestToChat(anthropicPayload, {
@@ -30,4 +30,4 @@ export function openAIToAnthropic(openAIResponse) {
 }
 
 export {injectBehaviorRules};
-export {rewriteOpenAIStream} from '../../core/protocol/shared.js';
+export {rewriteOpenAIStream} from '../../core/protocol/index.js';

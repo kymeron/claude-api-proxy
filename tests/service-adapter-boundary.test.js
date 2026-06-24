@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const servicesRoot = path.join(repoRoot, 'src', 'services');
+const routesRoot = path.join(repoRoot, 'src', 'routes');
 
 async function listJsFiles(dir) {
     const entries = await readdir(dir, {withFileTypes: true});
@@ -38,6 +39,24 @@ test('routes do not depend on another product service API for shared helpers', a
         const source = await readFile(path.join(repoRoot, route), 'utf8');
         if (/services\/codebuddy\/api\.js/.test(source.replaceAll('\\', '/'))) {
             violations.push(route);
+        }
+    }
+
+    assert.deepEqual(violations, []);
+});
+
+test('app layers import protocol engine through the public boundary', async () => {
+    const files = [
+        ...await listJsFiles(servicesRoot),
+        ...await listJsFiles(routesRoot)
+    ];
+    const deepProtocolImport = /from\s+['"][^'"]*core\/protocol\/(?:shared|responses|http-converters|canonical|stream|diagnostics|schema)[^'"]*['"]/;
+    const violations = [];
+
+    for (const file of files) {
+        const source = await readFile(file, 'utf8').then((text) => text.replaceAll('\\', '/'));
+        if (deepProtocolImport.test(source)) {
+            violations.push(path.relative(repoRoot, file).replaceAll('\\', '/'));
         }
     }
 

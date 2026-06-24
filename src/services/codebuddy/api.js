@@ -4,7 +4,7 @@
  */
 
 import {request, readBody} from '../../utils/http-client.js';
-import {normalizePayload} from '../../core/protocol/shared.js';
+import {normalizePayload} from '../../core/protocol/index.js';
 import {interceptAndSerialize} from '../../utils/payload-interceptor.js';
 import logger from '../../utils/logger.js';
 import {getCodebuddyApiUrl, codebuddyHeaders, getCodebuddyBaseUrl, getModelsForHost, isPersonalHost} from './config.js';

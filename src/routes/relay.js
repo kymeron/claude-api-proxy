@@ -31,35 +31,35 @@ import {
     sanitizeAnthropicPayload,
     extractCacheHitTokens,
     extractInputTokens
-} from '../core/protocol/shared.js';
+} from '../core/protocol/index.js';
 import {
     compactRequestToChat,
     chatResponseToCompact,
     mergeConsecutiveAssistantMessages,
     limitResponsesInputItems
-} from '../core/protocol/responses.js';
+} from '../core/protocol/index.js';
 import {isResponsesWebSocketProtocolError} from '../services/shared/responses-ws-client.js';
 import {handleWSConnection} from '../services/shared/responses-ws-server.js';
 import {
     RelayStateMissingError,
     relayConversationStore
 } from '../services/session/conversation-state.js';
-import {createAnthropicStreamAccumulator} from '../core/protocol/stream/accumulators/anthropic.js';
-import {createChatStreamAccumulator} from '../core/protocol/stream/accumulators/chat.js';
+import {createAnthropicStreamAccumulator} from '../core/protocol/index.js';
+import {createChatStreamAccumulator} from '../core/protocol/index.js';
 import {
     createChatToAnthropicStreamBridge,
     createChatToResponsesStreamBridge,
     createResponsesToChatStreamBridge,
     createResponsesToResponsesStreamBridge,
     streamAnthropicSSEToChatChunks
-} from '../core/protocol/stream/canonical-stream.js';
-import {createResponsesStreamAccumulator} from '../core/protocol/stream/accumulators/responses.js';
+} from '../core/protocol/index.js';
+import {createResponsesStreamAccumulator} from '../core/protocol/index.js';
 import {
     canonicalFromAnthropicRequest,
     canonicalFromAnthropicResponse,
     canonicalFromAnthropicStreamChatResponse
-} from '../core/protocol/canonical/session.js';
-import {getRelayConversationDiagnostics} from '../core/protocol/diagnostics/index.js';
+} from '../core/protocol/index.js';
+import {getRelayConversationDiagnostics} from '../core/protocol/index.js';
 import {prepareResponsesContinuationPayload} from '../services/session/responses-continuation.js';
 import {
     compactChatRequestIfNeeded,
@@ -72,7 +72,7 @@ import {
     chatRequestToRelayResponses,
     chatRequestToAnthropic,
     responsesResponseToRelayChat
-} from '../core/protocol/http-converters.js';
+} from '../core/protocol/index.js';
 import {aggregateStreamResponse} from '../services/providers/stream-response.js';
 import {estimateMessageTokens} from '../utils/token-estimation.js';
 import logger from '../utils/logger.js';
