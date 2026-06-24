@@ -31,6 +31,11 @@ import {
     relayUpstreamErrorStatus as upstreamErrorStatus
 } from '../services/relay/upstream-context.js';
 import {
+    createRelayCompletedResponseRecorder,
+    createRelayResponsesPassthroughLimiter,
+    createRelayResponsesWebSocketCollector
+} from '../services/relay/response-state.js';
+import {
     anthropicResponseToChat,
     rewriteOpenAIStream,
     stripDynamicReminders,
@@ -40,7 +45,6 @@ import {
     compactRequestToChat,
     chatResponseToCompact,
     mergeConsecutiveAssistantMessages,
-    limitResponsesInputItems,
     createAnthropicStreamAccumulator,
     createChatStreamAccumulator,
     createChatToAnthropicStreamBridge,
@@ -78,6 +82,12 @@ const {
     recordUsage
 } = createRelayUsageRecorder(unifiedTenantManager);
 const authenticateAndGetUpstream = createRelayUpstreamContextResolver(unifiedTenantManager);
+const recordCompletedResponseState = createRelayCompletedResponseRecorder(relayConversationStore);
+const limitResponsesPassthroughPayload = createRelayResponsesPassthroughLimiter({logger});
+const collectResponsesWebSocketResponse = createRelayResponsesWebSocketCollector({
+    releaseConnection: releaseResponsesWebSocketConnection,
+    discardConnection: discardResponsesWebSocketConnection
+});
 
 /* ==================== 工具函数 ==================== */
 
@@ -135,49 +145,6 @@ function sendResponsesWebSocketProtocolError(res, error) {
     }
 
     sendJson(res, event.status || error?.status || 400, event);
-}
-
-async function collectResponsesWebSocketResponse(wsResult) {
-    let completedData = null;
-    try {
-        for await (const event of wsResult.eventStream) {
-            if (event.type === 'response.completed') {
-                completedData = event.data;
-            }
-        }
-        releaseResponsesWebSocketConnection(wsResult.conn);
-    } catch (error) {
-        discardResponsesWebSocketConnection(wsResult.conn);
-        throw error;
-    }
-
-    if (!completedData?.response) {
-        throw new Error('No response.completed event received from upstream');
-    }
-    return completedData.response;
-}
-
-function recordCompletedResponseState(tenantId, conversationKey, response, sourceCanonicalSession) {
-    if (!response || !conversationKey) return;
-    relayConversationStore.recordResponsesResponse({
-        tenantId,
-        conversationKey,
-        response,
-        sourceCanonicalSession
-    });
-}
-
-function limitResponsesPassthroughPayload(payload, {previousResponseId, requestType, conversationKey} = {}) {
-    const limited = limitResponsesInputItems(payload, {previousResponseId});
-    if (!limited.truncated) return limited.payload;
-
-    logger.info(
-        `Responses passthrough: truncated input items ${limited.originalLength}->${limited.retainedLength}`
-        + `${requestType ? ` requestType=${requestType}` : ''}`
-        + `${conversationKey ? ` conversationKey=${conversationKey}` : ''}`
-        + ` previous_response_id=${limited.previousResponseId}`
-    );
-    return limited.payload;
 }
 
 async function parseBody(req) {

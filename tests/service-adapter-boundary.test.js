@@ -128,6 +128,21 @@ test('relay route delegates usage and upstream context orchestration to relay se
     assert.deepEqual(violations, []);
 });
 
+test('relay route delegates response state orchestration to relay services', async () => {
+    const source = await readFile(path.join(repoRoot, 'src/routes/relay.js'), 'utf8');
+    const normalized = source.replaceAll('\\', '/');
+    const forbiddenPatterns = [
+        /\brecordResponsesResponse\s*\(/,
+        /\blimitResponsesInputItems\b/,
+        /\b(?:async\s+)?function\s+(?:recordCompletedResponseState|limitResponsesPassthroughPayload|collectResponsesWebSocketResponse)\b/
+    ];
+    const violations = forbiddenPatterns
+        .filter((pattern) => pattern.test(normalized))
+        .map((pattern) => pattern.source);
+
+    assert.deepEqual(violations, []);
+});
+
 test('relay and codebuddy anthropic adapters delegate request conversion to core protocol', async () => {
     const checkedAdapters = [
         'src/services/relay/anthropic-adapter.js',
