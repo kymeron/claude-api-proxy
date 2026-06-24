@@ -65,6 +65,7 @@ import {
     streamRelayResponsesEventsAsAnthropic as streamResponsesEventsAsAnthropic,
     writeRelayAnthropicEvent as writeAnthropicEvent
 } from '../services/relay/anthropic-stream.js';
+import {createRelayOpenAIStreamPassthrough} from '../services/relay/openai-stream.js';
 import {
     anthropicResponseToChat,
     rewriteOpenAIStream,
@@ -128,6 +129,11 @@ const {invokeWithRelayContextCompaction} = createRelayContextCompaction({
     anthropicResponseToChat,
     recordUsage,
     extractCacheHitTokens
+});
+const streamOpenAIPassthrough = createRelayOpenAIStreamPassthrough({
+    conversationStore: relayConversationStore,
+    recordUsage,
+    logger
 });
 
 /* ==================== 工具函数 ==================== */
@@ -456,7 +462,7 @@ async function handleOpenAIChatCompletions(req, res) {
                 'Cache-Control': 'no-cache',
                 Connection: 'keep-alive'
             });
-            _streamOpenAIPassthrough(response, res, tenantId, tenantInfo, relayStatsModel, conversationKey);
+            streamOpenAIPassthrough(response, res, tenantId, tenantInfo, relayStatsModel, conversationKey);
         } else {
             const responseBody = await readResponseBody(response.body);
             let parsed;
@@ -943,27 +949,6 @@ async function handleAnthropicMessages(req, res) {
 /* ==================== 流式响应辅助 ==================== */
 
 /** OpenAI 上游流式透传（OpenAI 端点 �?OpenAI 上游），�?reasoning_content 做缓冲合�?*/
-function _streamOpenAIPassthrough(response, res, tenantId, tenantInfo = '', model = 'unknown', conversationKey = null) {
-    const chatAccumulator = createChatStreamAccumulator({model});
-    rewriteOpenAIStream(
-        res,
-        response.body,
-        (inputTokens, outputTokens, cacheHitTokens) => {
-            const chatResponse = chatAccumulator.toChatResponse();
-            if (chatResponse && conversationKey) {
-                relayConversationStore.recordChatResponse({
-                    tenantId,
-                    conversationKey,
-                    response: chatResponse
-                });
-            }
-            recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens, model);
-        },
-        (chunk) => chatAccumulator.feed(chunk),
-        {logger}
-    );
-}
-
 /* ==================== 其他端点 ==================== */
 
 async function handleOpenAIModels(req, res) {

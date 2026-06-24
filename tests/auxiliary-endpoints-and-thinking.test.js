@@ -533,16 +533,12 @@ test('relay Anthropic via Chat stream records accumulated chat response into ses
 });
 
 test('relay OpenAI passthrough stream records accumulated chat response into session', () => {
-    const source = readFileSync(join(root, 'src/routes/relay.js'), 'utf8');
-    const start = source.indexOf('function _streamOpenAIPassthrough');
-    const end = source.indexOf('async function handleOpenAIModels', start);
-    const helper = source.slice(start, end);
+    const source = readFileSync(join(root, 'src/services/relay/openai-stream.js'), 'utf8');
 
-    assert.ok(start > -1);
-    assert.ok(end > start);
-    assert.match(helper, /const chatAccumulator = createChatStreamAccumulator/);
-    assert.match(helper, /chatAccumulator\.feed\(chunk\)/);
-    assert.match(helper, /relayConversationStore\.recordChatResponse\(\{/);
+    assert.match(source, /function streamRelayOpenAIPassthrough/);
+    assert.match(source, /const chatAccumulator = createChatStreamAccumulator/);
+    assert.match(source, /chatAccumulator\.feed\(chunk\)/);
+    assert.match(source, /conversationStore\?\.recordChatResponse\?\.\(\{/);
 });
 
 test('relay Responses output streams record accumulated responses when completed is missing', () => {

@@ -238,6 +238,19 @@ test('relay route delegates response writing helpers to relay services', async (
     assert.deepEqual(violations, []);
 });
 
+test('relay route delegates OpenAI passthrough stream helper to relay services', async () => {
+    const source = await readFile(path.join(repoRoot, 'src/routes/relay.js'), 'utf8');
+    const normalized = source.replaceAll('\\', '/');
+    const forbiddenPatterns = [
+        /\bfunction\s+_streamOpenAIPassthrough\b/
+    ];
+    const violations = forbiddenPatterns
+        .filter((pattern) => pattern.test(normalized))
+        .map((pattern) => pattern.source);
+
+    assert.deepEqual(violations, []);
+});
+
 test('relay and codebuddy anthropic adapters delegate request conversion to core protocol', async () => {
     const checkedAdapters = [
         'src/services/relay/anthropic-adapter.js',
