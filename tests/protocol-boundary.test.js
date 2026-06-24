@@ -151,3 +151,10 @@ test('legacy core protocol directory no longer owns protocol engine files', asyn
         {code: 'ENOENT'}
     );
 });
+
+test('legacy generic converter no longer owns protocol conversion', async () => {
+    await assert.rejects(
+        stat(path.join(repoRoot, 'src', 'utils', 'converter.js')),
+        {code: 'ENOENT'}
+    );
+});
