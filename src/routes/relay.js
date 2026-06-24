@@ -16,17 +16,20 @@ import {
     isAnthropicUpstream,
     isResponsesUpstream,
     isResponsesWebSocketUpstream,
-    normalizeUpstreamProtocol,
-    ProviderUpstreamError,
     aggregateStreamResponse
 } from '../services/providers/index.js';
-import {readBody, isNetworkError} from '../utils/http-client.js';
 import {
     anthropicToOpenAI,
     injectBehaviorRules
 } from '../services/relay/anthropic-adapter.js';
 import {extractConversationKey} from '../services/relay/conversation-key.js';
 import {createRelayUsageRecorder} from '../services/relay/usage.js';
+import {
+    callRelayUpstream as callUpstream,
+    createRelayUpstreamContextResolver,
+    getRelayProtocolErrorMessage as getProtocolErrorMessage,
+    relayUpstreamErrorStatus as upstreamErrorStatus
+} from '../services/relay/upstream-context.js';
 import {
     anthropicResponseToChat,
     rewriteOpenAIStream,
@@ -74,6 +77,7 @@ const {
     recordResponsesUsage,
     recordUsage
 } = createRelayUsageRecorder(unifiedTenantManager);
+const authenticateAndGetUpstream = createRelayUpstreamContextResolver(unifiedTenantManager);
 
 /* ==================== 工具函数 ==================== */
 
@@ -174,12 +178,6 @@ function limitResponsesPassthroughPayload(payload, {previousResponseId, requestT
         + ` previous_response_id=${limited.previousResponseId}`
     );
     return limited.payload;
-}
-
-function upstreamErrorStatus(err) {
-    if (err instanceof ProviderUpstreamError && err.status) return err.status;
-    if (isNetworkError(err)) return 502;
-    return 500;
 }
 
 async function parseBody(req) {
@@ -492,48 +490,7 @@ function getAnthropicRequestHeaders(req) {
     };
 }
 
-function getProtocolErrorMessage(upstream, expectedProtocol, endpoint) {
-    const protocol = normalizeUpstreamProtocol(upstream?.protocol);
-    if (protocol === expectedProtocol) return null;
-    if (expectedProtocol === 'anthropic') {
-        return `当前上游协议�?${protocol}，请改用 ${endpoint} 或切换上游类型`;
-    }
-    return `当前上游协议�?${protocol}，该端点需�?${expectedProtocol} 上游支持`;
-}
-
 /* ==================== 鉴权 ==================== */
-
-async function authenticateAndGetUpstream(req) {
-    // req.tenantId is already set by requireApiAuth in server.js
-    const tenantId = req.tenantId;
-    if (!tenantId) {
-        return {error: {status: 503, message: 'Relay tenant system is not enabled'}};
-    }
-
-    const upstreamManager = await unifiedTenantManager.getUpstreamManager(tenantId);
-    if (!upstreamManager) {
-        return {error: {status: 503, message: 'Tenant upstream manager not found'}};
-    }
-
-    const upstream = upstreamManager.getActiveUpstream();
-    if (!upstream) {
-        return {error: {status: 503, message: '未配置可用上游，请在管理面板 /dashboard 配置'}};
-    }
-
-    return {upstream, tenantId, upstreamManager};
-}
-
-/**
- * 调用上游，失败直接抛�?
- */
-async function callUpstream(upstream, fn) {
-    const response = await fn(upstream);
-    if (response.status >= 200 && response.status < 300) {
-        return {response, upstream};
-    }
-    const errorBody = await readBody(response.body);
-    throw new Error(`上游�?{upstream.name}」返�?HTTP ${response.status}: ${errorBody.slice(0, 200)}`);
-}
 
 /* ==================== 处理函数 ==================== */
 
@@ -2438,28 +2395,27 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
  * @param {import('http').IncomingMessage} req - 原始 HTTP 请求（已注入 tenantId�?
  */
 export async function handleRelayResponsesWS(clientWs, req) {
-    const tenantId = req.tenantId;
-    const upstreamManager = await unifiedTenantManager.getUpstreamManager(tenantId);
     req.relayClientConnectionId = req.relayClientConnectionId || `relay-ws-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     handleWSConnection(clientWs, {
         authenticate: () => true,
         req,
         handleRequest: async function* (payload, authResult, {signal}) {
-            if (!upstreamManager) {
-                throw Object.assign(new Error('Tenant upstream manager not found'), {
+            const upstreamContext = await authenticateAndGetUpstream(req);
+            if (upstreamContext.error) {
+                throw Object.assign(new Error(upstreamContext.error.message), {
                     name: 'ResponsesWebSocketError',
-                    event: {type: 'error', error: {message: 'Tenant upstream manager not found', code: 'server_error'}}
+                    event: {
+                        type: 'error',
+                        error: {
+                            message: upstreamContext.error.message,
+                            code: upstreamContext.error.status === 503 ? 'no_upstream' : 'server_error'
+                        }
+                    }
                 });
             }
 
             // Refresh active upstream on every request so switching upstreams takes effect immediately.
-            const upstream = upstreamManager.getActiveUpstream();
-            if (!upstream) {
-                throw Object.assign(new Error('No available upstream configured'), {
-                    name: 'ResponsesWebSocketError',
-                    event: {type: 'error', error: {message: 'No available upstream configured. Please configure one in /relayFE.', code: 'no_upstream'}}
-                });
-            }
+            const {upstream, tenantId, upstreamManager} = upstreamContext;
 
             const tenant = await unifiedTenantManager.getTenant(tenantId);
             const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
