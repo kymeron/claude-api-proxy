@@ -9,4 +9,4 @@ export {
     injectBehaviorRules,
     limitResponsesInputItems,
     sanitizeResponsesInput
-} from '../../core/protocol/index.js';
+} from '../../protocol-engine/index.js';

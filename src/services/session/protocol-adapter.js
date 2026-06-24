@@ -16,4 +16,4 @@ export {
     preserveCanonicalResponseToolMappings,
     preserveCanonicalToolMappings,
     renderCanonicalToChat
-} from '../../core/protocol/index.js';
+} from '../../protocol-engine/index.js';

@@ -537,6 +537,31 @@ test('product services centralize protocol core imports in protocol adapters', a
     assert.deepEqual(violations, []);
 });
 
+test('product protocol adapters import the protocol engine public module', async () => {
+    const checkedAdapters = [
+        'src/services/relay/protocol-adapter.js',
+        'src/services/codebuddy/protocol-adapter.js',
+        'src/services/copilot/protocol-adapter.js',
+        'src/services/shared/protocol-adapter.js',
+        'src/services/providers/protocol-adapter.js',
+        'src/services/session/protocol-adapter.js'
+    ];
+    const violations = [];
+
+    for (const adapter of checkedAdapters) {
+        const source = await readFile(path.join(repoRoot, adapter), 'utf8');
+        const normalized = source.replaceAll('\\', '/');
+        if (!/from\s+['"][^'"]*protocol-engine\/index\.js['"]/.test(normalized)) {
+            violations.push(adapter);
+        }
+        if (/from\s+['"][^'"]*core\/protocol\/index\.js['"]/.test(normalized)) {
+            violations.push(`${adapter}:core-protocol`);
+        }
+    }
+
+    assert.deepEqual(violations, []);
+});
+
 test('shared services centralize protocol core imports in their protocol adapter', async () => {
     const files = await listJsFiles(sharedServicesRoot);
     const violations = [];

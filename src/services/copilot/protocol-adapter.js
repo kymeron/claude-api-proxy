@@ -26,4 +26,4 @@ export {
     responsesResponseToChat,
     sanitizeAnthropicPayload,
     sanitizeResponsesInput
-} from '../../core/protocol/index.js';
+} from '../../protocol-engine/index.js';

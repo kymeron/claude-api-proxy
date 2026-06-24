@@ -6,6 +6,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const protocolRoot = path.join(repoRoot, 'src', 'core', 'protocol');
+const protocolEngineRoot = path.join(repoRoot, 'src', 'protocol-engine');
 
 async function listJsFiles(dir) {
     const entries = await readdir(dir, {withFileTypes: true});
@@ -32,6 +33,23 @@ test('protocol engine exposes canonical session and stream APIs from core bounda
     assert.equal(typeof protocol.responsesResponseToAnthropic, 'function');
     assert.equal(typeof protocol.chatRequestToAnthropic, 'function');
     assert.equal(typeof protocol.responsesResponseToRelayChat, 'function');
+});
+
+test('protocol engine exposes a public module boundary for app layers', async () => {
+    assert.equal((await stat(protocolEngineRoot)).isDirectory(), true);
+
+    const protocolEngine = await import(pathToFileURL(path.join(protocolEngineRoot, 'index.js')).href);
+
+    assert.equal(typeof protocolEngine.canonicalFromChatRequest, 'function');
+    assert.equal(typeof protocolEngine.renderCanonicalToResponses, 'function');
+    assert.equal(typeof protocolEngine.createResponsesToChatStreamBridge, 'function');
+    assert.equal(typeof protocolEngine.createChatStreamAccumulator, 'function');
+    assert.equal(typeof protocolEngine.analyzeCanonicalToolClosure, 'function');
+    assert.equal(typeof protocolEngine.anthropicRequestToChat, 'function');
+    assert.equal(typeof protocolEngine.anthropicRequestToResponses, 'function');
+    assert.equal(typeof protocolEngine.responsesResponseToAnthropic, 'function');
+    assert.equal(typeof protocolEngine.chatRequestToAnthropic, 'function');
+    assert.equal(typeof protocolEngine.responsesResponseToRelayChat, 'function');
 });
 
 test('protocol engine does not import upper application layers', async () => {
