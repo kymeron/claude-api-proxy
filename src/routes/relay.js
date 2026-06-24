@@ -36,6 +36,13 @@ import {
     createRelayResponsesWebSocketCollector
 } from '../services/relay/response-state.js';
 import {
+    getRelaySSEEventType as getSSEEventType,
+    parseRelayResponsesSSEEvents as parseResponsesSSEEvents,
+    parseRelaySSEBlock as parseSSEBlock,
+    readRelayRequestBody as parseBody,
+    readRelayResponseBody as readResponseBody
+} from '../services/relay/stream-events.js';
+import {
     anthropicResponseToChat,
     rewriteOpenAIStream,
     stripDynamicReminders,
@@ -145,60 +152,6 @@ function sendResponsesWebSocketProtocolError(res, error) {
     }
 
     sendJson(res, event.status || error?.status || 400, event);
-}
-
-async function parseBody(req) {
-    const chunks = [];
-    for await (const chunk of req) {
-        chunks.push(chunk);
-    }
-    return Buffer.concat(chunks).toString('utf8');
-}
-
-async function readResponseBody(stream) {
-    const chunks = [];
-    for await (const chunk of stream) {
-        chunks.push(chunk);
-    }
-    return Buffer.concat(chunks).toString('utf8');
-}
-
-function parseSSEBlock(block) {
-    const lines = block.split(/\r?\n/);
-    let event;
-    const dataLines = [];
-
-    for (const line of lines) {
-        if (line.startsWith('event:')) {
-            event = line.slice(6).trim();
-        } else if (line.startsWith('data:')) {
-            dataLines.push(line.slice(5).trim());
-        }
-    }
-
-    return {event, data: dataLines.join('\n')};
-}
-
-function getSSEEventType(event, parsed) {
-    return event || parsed?.type;
-}
-
-async function* parseResponsesSSEEvents(stream, signal) {
-    let buffer = '';
-    for await (const chunk of stream) {
-        if (signal?.aborted) break;
-        buffer += chunk.toString('utf8');
-        const parts = buffer.split(/\r?\n\r?\n/);
-        buffer = parts.pop() || '';
-
-        for (const part of parts) {
-            const {event, data} = parseSSEBlock(part);
-            if (!data || data === '[DONE]') continue;
-            let parsed;
-            try { parsed = JSON.parse(data); } catch { continue; }
-            yield {type: getSSEEventType(event, parsed), data: parsed};
-        }
-    }
 }
 
 function writeAnthropicEvent(res, event) {
