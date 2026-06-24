@@ -1,4 +1,3 @@
-import {models} from '../db/models/index.js';
 import {copilotCredentialManager, DEFAULT_VSCODE_VERSION} from '../services/copilot/index.js';
 import logger from '../utils/logger.js';
 
@@ -61,33 +60,14 @@ export async function handleCopilotAdminRoute(req, res, tenantId, subPath) {
 
     try {
         if (subPath === base && req.method === 'GET') {
-            const credentials = await models.TenantCopilotCredential.findAll({
-                where: {tenant_id: tenantId},
-                order: [['sort_order', 'ASC'], ['id', 'ASC']]
-            });
+            const credentials = await copilotCredentialManager.listCredentials(tenantId);
             sendJson(res, 200, {credentials: credentials.map(view)});
             return true;
         }
 
         if (subPath === base && req.method === 'POST') {
             const data = await readBody(req);
-            const count = await models.TenantCopilotCredential.count({where: {tenant_id: tenantId}});
-            const credential = await models.TenantCopilotCredential.create({
-                tenant_id: tenantId,
-                name: String(data.name || 'GitHub Copilot').trim().slice(0, 100),
-                proxy: String(data.proxy || '').trim() || null,
-                skip_tls_verify: data.skip_tls_verify === true,
-                account_type: ACCOUNT_TYPES.has(data.account_type) ? data.account_type : 'individual',
-                vscode_version: String(data.vscode_version || '').trim() || DEFAULT_VSCODE_VERSION,
-                enabled: data.enabled !== false,
-                sort_order: count
-            });
-            const active = await models.TenantCopilotCredential.findOne({
-                where: {tenant_id: tenantId, enabled: true, is_active: true}
-            });
-            if (!active && credential.enabled) {
-                await credential.update({is_active: true});
-            }
+            const credential = await copilotCredentialManager.createCredential(tenantId, data);
             sendJson(res, 201, {credential: view(credential)});
             return true;
         }

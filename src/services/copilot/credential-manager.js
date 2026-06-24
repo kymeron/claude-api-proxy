@@ -2,6 +2,8 @@ import {models} from '../../db/models/index.js';
 import * as githubApi from './github-api.js';
 import {DEFAULT_VSCODE_VERSION} from './config.js';
 
+const ACCOUNT_TYPES = new Set(['individual', 'business', 'enterprise']);
+
 function expiryDate(value) {
     if (!value) return null;
     if (value instanceof Date) return value;
@@ -23,6 +25,35 @@ export class CopilotCredentialManager {
     constructor({credentialModel = models.TenantCopilotCredential, githubApi: api = githubApi} = {}) {
         this.credentialModel = credentialModel;
         this.githubApi = api;
+    }
+
+    listCredentials(tenantId) {
+        return this.credentialModel.findAll({
+            where: {tenant_id: Number(tenantId)},
+            order: [['sort_order', 'ASC'], ['id', 'ASC']]
+        });
+    }
+
+    async createCredential(tenantId, data = {}) {
+        const numericTenantId = Number(tenantId);
+        const count = await this.credentialModel.count({where: {tenant_id: numericTenantId}});
+        const credential = await this.credentialModel.create({
+            tenant_id: numericTenantId,
+            name: String(data.name || 'GitHub Copilot').trim().slice(0, 100),
+            proxy: String(data.proxy || '').trim() || null,
+            skip_tls_verify: data.skip_tls_verify === true,
+            account_type: ACCOUNT_TYPES.has(data.account_type) ? data.account_type : 'individual',
+            vscode_version: String(data.vscode_version || '').trim() || DEFAULT_VSCODE_VERSION,
+            enabled: data.enabled !== false,
+            sort_order: count
+        });
+        const active = await this.credentialModel.findOne({
+            where: {tenant_id: numericTenantId, enabled: true, is_active: true}
+        });
+        if (!active && credential.enabled) {
+            await credential.update({is_active: true});
+        }
+        return credential;
     }
 
     async get(tenantId, credentialId, requireEnabled = false) {

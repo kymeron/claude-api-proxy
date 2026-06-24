@@ -96,3 +96,78 @@ test('resolves the active enabled Copilot credential before other enabled creden
     assert.equal(resolved.id, 2);
     assert.deepEqual(queries[0].where, {tenant_id: 42, enabled: true, is_active: true});
 });
+
+test('lists tenant Copilot credentials in admin order', async () => {
+    const rows = [
+        credential({id: 1, sort_order: 0}),
+        credential({id: 2, sort_order: 1})
+    ];
+    const model = {
+        async findAll(options) {
+            assert.deepEqual(options, {
+                where: {tenant_id: 42},
+                order: [['sort_order', 'ASC'], ['id', 'ASC']]
+            });
+            return rows;
+        }
+    };
+    const manager = new CopilotCredentialManager({credentialModel: model, githubApi: {}});
+
+    assert.equal(typeof manager.listCredentials, 'function');
+    assert.deepEqual(await manager.listCredentials(42), rows);
+});
+
+test('creates the first enabled tenant Copilot credential as active', async () => {
+    const created = credential({
+        id: 9,
+        tenant_id: 42,
+        enabled: true,
+        is_active: false,
+        name: '',
+        proxy: null,
+        sort_order: 0
+    });
+    const calls = [];
+    const model = {
+        async count(options) {
+            assert.deepEqual(options, {where: {tenant_id: 42}});
+            return 0;
+        },
+        async create(values) {
+            calls.push(['create', values]);
+            Object.assign(created, values);
+            return created;
+        },
+        async findOne(options) {
+            calls.push(['findOne', options]);
+            return null;
+        }
+    };
+    const manager = new CopilotCredentialManager({credentialModel: model, githubApi: {}});
+
+    assert.equal(typeof manager.createCredential, 'function');
+    const result = await manager.createCredential(42, {
+        name: ' Team Copilot ',
+        proxy: ' http://127.0.0.1:8080 ',
+        skip_tls_verify: true,
+        account_type: 'business',
+        vscode_version: ' 1.2.3 ',
+        enabled: true
+    });
+
+    assert.equal(result, created);
+    assert.equal(created.is_active, true);
+    assert.deepEqual(calls[0], ['create', {
+        tenant_id: 42,
+        name: 'Team Copilot',
+        proxy: 'http://127.0.0.1:8080',
+        skip_tls_verify: true,
+        account_type: 'business',
+        vscode_version: '1.2.3',
+        enabled: true,
+        sort_order: 0
+    }]);
+    assert.deepEqual(calls[1], ['findOne', {
+        where: {tenant_id: 42, enabled: true, is_active: true}
+    }]);
+});

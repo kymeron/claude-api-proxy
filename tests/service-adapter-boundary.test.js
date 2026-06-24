@@ -230,6 +230,13 @@ test('dashboard routes import product services through public boundaries', async
     assert.deepEqual(violations, []);
 });
 
+test('dashboard Copilot route delegates credential persistence to Copilot service', async () => {
+    const source = await readFile(path.join(repoRoot, 'src/routes/dashboard-copilot.js'), 'utf8')
+        .then((text) => text.replaceAll('\\', '/'));
+
+    assert.doesNotMatch(source, /db\/models|TenantCopilotCredential/);
+});
+
 test('relay route delegates usage and upstream context orchestration to relay services', async () => {
     const source = await readFile(path.join(repoRoot, 'src/routes/relay.js'), 'utf8');
     const normalized = source.replaceAll('\\', '/');
