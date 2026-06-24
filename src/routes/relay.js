@@ -73,7 +73,7 @@ import {
     chatRequestToAnthropic,
     responsesResponseToRelayChat
 } from '../core/protocol/http-converters.js';
-import {aggregateStreamResponse} from '../services/codebuddy/api.js';
+import {aggregateStreamResponse} from '../services/providers/stream-response.js';
 import {estimateMessageTokens} from '../utils/token-estimation.js';
 import logger from '../utils/logger.js';
 

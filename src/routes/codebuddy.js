@@ -4,6 +4,7 @@
  */
 
 import {createChatCompletions, getModels} from '../services/codebuddy/api.js';
+import {aggregateStreamResponse} from '../services/providers/stream-response.js';
 import {anthropicToOpenAI, openAIToAnthropic} from '../services/codebuddy/anthropic-adapter.js';
 import {rewriteOpenAIStream} from '../core/protocol/shared.js';
 import {
@@ -300,7 +301,6 @@ async function handleOpenAIChatCompletions(req, res) {
                 }
             });
         } else {
-            const {aggregateStreamResponse} = await import('../services/codebuddy/api.js');
             const aggregated = await aggregateStreamResponse(response.body);
 
             if (authResult.tenantId) {
@@ -556,7 +556,6 @@ async function handleAnthropicMessages(req, res) {
             });
         } else {
             // 非流式响应
-            const {aggregateStreamResponse} = await import('../services/codebuddy/api.js');
             const aggregated = await aggregateStreamResponse(response.body);
 
             if (authResult.tenantId) {
@@ -831,7 +830,6 @@ async function handleResponsesAPI(req, res) {
             });
         } else {
             // 非流式
-            const {aggregateStreamResponse} = await import('../services/codebuddy/api.js');
             const aggregated = await aggregateStreamResponse(response.body);
 
             if (authResult.tenantId) {
@@ -924,7 +922,6 @@ async function handleResponsesCompact(req, res) {
             ...tenantMeta
         });
 
-        const {aggregateStreamResponse} = await import('../services/codebuddy/api.js');
         const aggregated = await aggregateStreamResponse(response.body);
 
         if (authResult.tenantId) {

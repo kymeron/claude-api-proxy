@@ -35,7 +35,7 @@ import {
     estimateContentBlockTokens
 } from '../utils/token-estimation.js';
 import {sanitizeAnthropicPayload, extractCacheHitTokens} from '../core/protocol/shared.js';
-import {aggregateStreamResponse} from '../services/codebuddy/api.js';
+import {aggregateStreamResponse} from '../services/providers/stream-response.js';
 import {ResponsesWebSocketError} from '../services/shared/responses-ws-client.js';
 import {handleWSConnection} from '../services/shared/responses-ws-server.js';
 import {

@@ -27,6 +27,7 @@ test('providers expose upstream transport APIs from provider boundary', async ()
     assert.equal(typeof providers.createChatCompletions, 'function');
     assert.equal(typeof providers.createResponsesWebSocket, 'function');
     assert.equal(typeof providers.normalizeUpstreamProtocol, 'function');
+    assert.equal(typeof providers.aggregateStreamResponse, 'function');
 });
 
 test('providers do not import product wrappers or routes', async () => {

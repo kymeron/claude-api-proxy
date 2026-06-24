@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readdir} from 'node:fs/promises';
+import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -24,4 +25,21 @@ test('product services name protocol shims as adapters instead of translators', 
         .filter((file) => /(?:^|\/)(?:.*-)?translator\.js$/.test(path.basename(file)));
 
     assert.deepEqual(forbiddenFiles, []);
+});
+
+test('routes do not depend on another product service API for shared helpers', async () => {
+    const checkedRoutes = [
+        'src/routes/relay.js',
+        'src/routes/copilot.js'
+    ];
+    const violations = [];
+
+    for (const route of checkedRoutes) {
+        const source = await readFile(path.join(repoRoot, route), 'utf8');
+        if (/services\/codebuddy\/api\.js/.test(source.replaceAll('\\', '/'))) {
+            violations.push(route);
+        }
+    }
+
+    assert.deepEqual(violations, []);
 });
