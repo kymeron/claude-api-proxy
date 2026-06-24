@@ -56,15 +56,24 @@ test('providers do not import product wrappers or routes', async () => {
 test('providers centralize protocol core imports in their protocol adapter', async () => {
     const files = await listJsFiles(providersRoot);
     const violations = [];
+    const privateProtocolImport = /from\s+['"][^'"]*(?:core\/protocol|protocol-engine\/core|protocol-engine\/index)\.js['"]/;
 
     for (const file of files) {
         if (path.basename(file) === 'protocol-adapter.js') continue;
 
         const source = await readFile(file, 'utf8');
-        if (/from\s+['"][^'"]*core\/protocol\/index\.js['"]/.test(source.replaceAll('\\', '/'))) {
+        if (privateProtocolImport.test(source.replaceAll('\\', '/'))) {
             violations.push(path.relative(repoRoot, file).replaceAll('\\', '/'));
         }
     }
 
     assert.deepEqual(violations, []);
+});
+
+test('provider protocol adapter imports the protocol engine public module', async () => {
+    const adapter = path.join(providersRoot, 'protocol-adapter.js');
+    const source = await readFile(adapter, 'utf8').then((text) => text.replaceAll('\\', '/'));
+
+    assert.match(source, /from\s+['"]#protocol-engine['"]/);
+    assert.doesNotMatch(source, /from\s+['"][^'"]*(?:core\/protocol|protocol-engine\/core|protocol-engine\/index)\.js['"]/);
 });
