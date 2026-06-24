@@ -1,6 +1,6 @@
 /**
  * LDAP 认证模块 — 两次绑定验证
- * @module services/codebuddy/ldap-auth
+ * @module services/shared/ldap-auth
  */
 
 import ldap from 'ldapjs';

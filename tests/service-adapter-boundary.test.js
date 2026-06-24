@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readdir} from 'node:fs/promises';
+import {readdir, stat} from 'node:fs/promises';
 import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
@@ -44,6 +44,18 @@ test('routes do not depend on another product service API for shared helpers', a
     }
 
     assert.deepEqual(violations, []);
+});
+
+test('auth route uses shared LDAP authentication instead of CodeBuddy internals', async () => {
+    const source = await readFile(path.join(repoRoot, 'src/routes/auth.js'), 'utf8')
+        .then((text) => text.replaceAll('\\', '/'));
+
+    assert.match(source, /services\/shared\/ldap-auth\.js/);
+    assert.doesNotMatch(source, /services\/codebuddy\/ldap-auth\.js/);
+    await assert.rejects(
+        stat(path.join(repoRoot, 'src', 'services', 'codebuddy', 'ldap-auth.js')),
+        {code: 'ENOENT'}
+    );
 });
 
 test('product APIs do not re-export provider stream helpers', async () => {

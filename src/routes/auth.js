@@ -8,7 +8,7 @@ import {join, dirname} from 'path';
 import {fileURLToPath} from 'url';
 import {getAuthMode} from '../services/shared/auth-mode.js';
 import {localAuthenticate} from '../services/shared/local-auth.js';
-import {ldapAuthenticate} from '../services/codebuddy/ldap-auth.js';
+import {ldapAuthenticate} from '../services/shared/ldap-auth.js';
 import {
     createSessionToken,
     clearSessionCookie,
