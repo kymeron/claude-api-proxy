@@ -13,7 +13,7 @@ import {
     resetLocalUserPassword,
     deleteManagedUser
 } from '../services/shared/local-user-manager.js';
-import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
+import {unifiedTenantManager} from '../services/gateway/index.js';
 import {getAuthMode} from '../services/shared/auth-mode.js';
 
 function sendJson(res, status, data) {

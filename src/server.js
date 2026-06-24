@@ -19,10 +19,12 @@ import {handleFeedback} from './routes/feedback.js';
 import {routeFeedbackAdmin} from './routes/feedback-admin.js';
 import {sendNotFoundPage, wantsHtml} from './routes/not-found.js';
 import Busboy from 'busboy';
-import {authenticateApiKey} from './services/gateway/gateway-auth.js';
-import {requireApiAuth} from './services/gateway/dashboard-auth.js';
-import {getSessionUser} from './services/gateway/session.js';
-import {unifiedTenantManager} from './services/gateway/tenant-manager.js';
+import {
+    authenticateApiKey,
+    getSessionUser,
+    requireApiAuth,
+    unifiedTenantManager
+} from './services/gateway/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

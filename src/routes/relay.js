@@ -3,7 +3,7 @@
  * @module routes/relay
  */
 
-import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
+import {unifiedTenantManager} from '../services/gateway/index.js';
 import {createRelayRouteRuntime} from '../services/relay/route-runtime.js';
 import logger from '../utils/logger.js';
 

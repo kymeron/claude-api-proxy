@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'fs';
 import {createServer} from '../src/server.js';
-import {createSessionToken, setSessionCookie, clearSessionCookie} from '../src/services/gateway/session.js';
+import {clearSessionCookie, createSessionToken, setSessionCookie} from '../src/services/gateway/index.js';
 import {DASHBOARD_ENTRY_PATH, resolveLoginRole} from '../src/routes/auth.js';
 
 async function startServer(t) {

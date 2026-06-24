@@ -7,7 +7,7 @@ import {
     copilotStore,
     runCopilotTenantContext
 } from '../src/services/copilot/runtime.js';
-import {unifiedTenantManager} from '../src/services/gateway/tenant-manager.js';
+import {unifiedTenantManager} from '../src/services/gateway/index.js';
 import {buildCopilotNetworkKey} from '../src/services/copilot/copilot-api.js';
 
 test('keeps Copilot credential and usage context isolated across tenants', async () => {

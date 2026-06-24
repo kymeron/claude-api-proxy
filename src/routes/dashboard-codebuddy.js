@@ -1,6 +1,6 @@
 import {randomBytes, randomUUID} from 'crypto';
 import logger from '../utils/logger.js';
-import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
+import {unifiedTenantManager} from '../services/gateway/index.js';
 import {
     BLOCKED_DOMAINS,
     getCodebuddyBaseUrl,

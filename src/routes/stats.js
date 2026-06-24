@@ -5,8 +5,7 @@
  */
 
 import {Op, fn, col} from 'sequelize';
-import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
-import {getSessionUser} from '../services/gateway/session.js';
+import {getSessionUser, unifiedTenantManager} from '../services/gateway/index.js';
 import {TenantDailyUsage} from '../db/models/tenant-daily-usage.js';
 import {models} from '../db/models/index.js';
 import {getAuthMode} from '../services/shared/auth-mode.js';

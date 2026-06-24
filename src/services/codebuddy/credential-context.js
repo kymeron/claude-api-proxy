@@ -1,4 +1,4 @@
-import {resolveCredential as defaultResolveCredential} from '../gateway/gateway-auth.js';
+import {resolveCredential as defaultResolveCredential} from '../gateway/index.js';
 
 export async function resolveCodebuddyCredentialContext({req, tenantManager, resolveCredential = defaultResolveCredential}) {
     const tenantId = req.tenantId;

@@ -3,7 +3,7 @@
  * @module routes/codebuddy
  */
 
-import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
+import {unifiedTenantManager} from '../services/gateway/index.js';
 import {createCodebuddyRouteRuntime} from '../services/codebuddy/route-runtime.js';
 import logger from '../utils/logger.js';
 

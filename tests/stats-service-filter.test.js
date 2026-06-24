@@ -4,8 +4,7 @@ import {Op} from 'sequelize';
 
 import {routeStatsRequest} from '../src/routes/stats.js';
 import {TenantDailyUsage} from '../src/db/models/tenant-daily-usage.js';
-import {unifiedTenantManager} from '../src/services/gateway/tenant-manager.js';
-import {createSessionToken} from '../src/services/gateway/session.js';
+import {createSessionToken, unifiedTenantManager} from '../src/services/gateway/index.js';
 
 function mockJsonResponse() {
     return {

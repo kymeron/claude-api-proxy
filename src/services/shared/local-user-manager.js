@@ -9,7 +9,7 @@ import {Op} from 'sequelize';
 import logger from '../../utils/logger.js';
 import {models} from '../../db/models/index.js';
 import {hashPassword, verifyPassword} from './local-auth.js';
-import {unifiedTenantManager} from '../gateway/tenant-manager.js';
+import {unifiedTenantManager} from '../gateway/index.js';
 import {getAuthMode} from './auth-mode.js';
 
 const MIN_PASSWORD_LENGTH = 8;

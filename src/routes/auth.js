@@ -11,11 +11,11 @@ import {localAuthenticate} from '../services/shared/local-auth.js';
 import {ldapAuthenticate} from '../services/codebuddy/ldap-auth.js';
 import {
     createSessionToken,
-    setSessionCookie,
     clearSessionCookie,
-    getSessionUser
-} from '../services/gateway/session.js';
-import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
+    getSessionUser,
+    setSessionCookie,
+    unifiedTenantManager
+} from '../services/gateway/index.js';
 import {sendNotFoundPage, wantsHtml} from './not-found.js';
 import logger from '../utils/logger.js';
 

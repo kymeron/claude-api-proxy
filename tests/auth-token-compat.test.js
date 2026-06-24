@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {authenticateApiKey} from '../src/services/gateway/gateway-auth.js';
+import {authenticateApiKey} from '../src/services/gateway/index.js';
 
 function tenantManager(validKey) {
     return {

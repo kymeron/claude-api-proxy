@@ -5,6 +5,7 @@ import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..');
+const srcRoot = path.join(repoRoot, 'src');
 const gatewayRoot = path.join(repoRoot, 'src', 'services', 'gateway');
 const codebuddyRoot = path.join(repoRoot, 'src', 'services', 'codebuddy');
 
@@ -26,6 +27,18 @@ test('codebuddy service exposes credential manager from its public boundary', as
     assert.equal(typeof codebuddy.TenantTokenManager, 'function');
 });
 
+test('gateway service exposes auth session and tenant APIs from its public boundary', async () => {
+    assert.equal((await stat(gatewayRoot)).isDirectory(), true);
+
+    const gateway = await import(pathToFileURL(path.join(gatewayRoot, 'index.js')).href);
+
+    assert.equal(typeof gateway.authenticateApiKey, 'function');
+    assert.equal(typeof gateway.requireApiAuth, 'function');
+    assert.equal(typeof gateway.getSessionUser, 'function');
+    assert.equal(typeof gateway.createSessionToken, 'function');
+    assert.equal(typeof gateway.unifiedTenantManager, 'object');
+});
+
 test('gateway imports service managers through public service boundaries', async () => {
     const files = await listJsFiles(gatewayRoot);
     const privateServiceImports = /services\/(?:providers\/upstream-manager|codebuddy\/tenant-token-manager)\.js|from\s+['"]\.\.\/(?:providers\/upstream-manager|codebuddy\/tenant-token-manager)\.js['"]/;
@@ -35,6 +48,25 @@ test('gateway imports service managers through public service boundaries', async
         const source = await readFile(file, 'utf8');
         if (privateServiceImports.test(source.replaceAll('\\', '/'))) {
             violations.push(path.relative(repoRoot, file).replaceAll('\\', '/'));
+        }
+    }
+
+    assert.deepEqual(violations, []);
+});
+
+test('app layers import gateway through the public boundary', async () => {
+    const files = await listJsFiles(srcRoot);
+    const violations = [];
+    const privateGatewayImport =
+        /from\s+['"][^'"]*(?:services\/gateway|\.{1,2}\/gateway)\/(?:gateway-auth|dashboard-auth|session|tenant-manager)\.js['"]/;
+
+    for (const file of files) {
+        const relative = path.relative(repoRoot, file).replaceAll('\\', '/');
+        if (relative.startsWith('src/services/gateway/')) continue;
+
+        const source = await readFile(file, 'utf8');
+        if (privateGatewayImport.test(source.replaceAll('\\', '/'))) {
+            violations.push(relative);
         }
     }
 

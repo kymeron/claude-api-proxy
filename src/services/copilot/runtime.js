@@ -1,6 +1,6 @@
 import {AsyncLocalStorage} from 'async_hooks';
 import {copilotCredentialManager} from './credential-manager.js';
-import {unifiedTenantManager} from '../gateway/tenant-manager.js';
+import {unifiedTenantManager} from '../gateway/index.js';
 import {DEFAULT_VSCODE_VERSION} from './config.js';
 
 const storage = new AsyncLocalStorage();

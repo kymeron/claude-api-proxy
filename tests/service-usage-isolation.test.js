@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {models} from '../src/db/models/index.js';
 import {TenantServiceProfile} from '../src/db/models/tenant-service-profile.js';
-import {unifiedTenantManager} from '../src/services/gateway/tenant-manager.js';
+import {unifiedTenantManager} from '../src/services/gateway/index.js';
 
 test('flushes usage deltas to the matching tenant service profile', async () => {
     const originalIncrement = TenantServiceProfile.increment;

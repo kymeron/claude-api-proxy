@@ -11,7 +11,7 @@ import {basename, join} from 'path';
 import {Op} from 'sequelize';
 import logger from '../utils/logger.js';
 import {Feedback} from '../db/models/feedback.js';
-import {unifiedTenantManager} from './gateway/tenant-manager.js';
+import {unifiedTenantManager} from './gateway/index.js';
 
 const execFileAsync = promisify(execFile);
 
