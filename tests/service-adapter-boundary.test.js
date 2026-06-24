@@ -115,6 +115,26 @@ test('app entry imports authentication through gateway public boundary', async (
     assert.match(source, /services\/gateway\/index\.js/);
 });
 
+test('legacy unused runtime helper files stay removed', async () => {
+    const removedFiles = [
+        'src/services/copilot/copilot-ws-client.js',
+        'src/services/relay/config.js',
+        'src/utils/circular-buffer.js'
+    ];
+    const stillPresent = [];
+
+    for (const file of removedFiles) {
+        try {
+            await stat(path.join(repoRoot, file));
+            stillPresent.push(file);
+        } catch (error) {
+            if (error?.code !== 'ENOENT') throw error;
+        }
+    }
+
+    assert.deepEqual(stillPresent, []);
+});
+
 test('product APIs do not re-export provider stream helpers', async () => {
     const checkedApis = [
         'src/services/codebuddy/api.js'

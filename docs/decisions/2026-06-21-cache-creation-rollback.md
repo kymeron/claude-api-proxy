@@ -59,4 +59,4 @@ await record.increment({
 
 - 触发回滚的提交：`f79414e` (`fix: drop cache_creation token tracking and fix 3 relay bugs`)
 - 反向保护断言：[`tests/template-naming.test.js`](../../tests/template-naming.test.js)（admin.html / dashboard-frontend.js 不得再含 `cacheCreation`）
-- `extractInputTokens` 仍把 `cache_creation_input_tokens` 计入总输入是另一个有意保留 —— 它属于 Anthropic 原生计费定义而非 cacheCreation 独立维度，见 [`src/transformer/shared-translator.js:32-34`](../../src/transformer/shared-translator.js#L32-L34)
+- `extractInputTokens` 仍把 `cache_creation_input_tokens` 计入总输入是另一个有意保留 —— 它属于 Anthropic 原生计费定义而非 cacheCreation 独立维度，见 [`src/protocol-engine/core/shared.js`](../../src/protocol-engine/core/shared.js)

@@ -338,3 +338,42 @@ test('admin Claude Code guides document auth compatibility and model pass-throug
     assert.doesNotMatch(readme, /ANTHROPIC_CUSTOM_HEADERS/);
     assert.doesNotMatch(readme, /x-api-key/);
 });
+
+test('removed browser PDF export dependencies stay out of runtime package dependencies', () => {
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+
+    for (const name of ['html2canvas', 'jspdf']) {
+        assert.equal(pkg.dependencies?.[name], undefined);
+        assert.equal(lock.packages?.['']?.dependencies?.[name], undefined);
+        assert.equal(lock.packages?.[`node_modules/${name}`], undefined);
+    }
+});
+
+test('runtime configuration docs cover long task and session knobs', () => {
+    const readme = readFileSync(join(root, 'README.md'), 'utf8');
+    const envExample = readFileSync(join(root, '.env.example'), 'utf8');
+    const requiredKeys = [
+        'SESSION_COOKIE_DOMAIN',
+        'COOKIE_DOMAIN',
+        'DASHBOARD_CORS_ORIGINS',
+        'RELAY_CONVERSATION_STATE_MAX_CHAT_MESSAGES',
+        'RELAY_CONVERSATION_STATE_MAX_CANONICAL_TURNS',
+        'RELAY_RESPONSES_INPUT_ITEMS_LIMIT'
+    ];
+
+    for (const key of requiredKeys) {
+        assert.match(readme, new RegExp(key));
+        assert.match(envExample, new RegExp(key));
+    }
+});
+
+test('live architecture docs do not point to removed protocol paths', () => {
+    const docs = [
+        'README.md',
+        'docs/decisions/2026-06-21-cache-creation-rollback.md',
+        'docs/architecture-boundaries.md'
+    ].map((file) => readFileSync(join(root, file), 'utf8')).join('\n');
+
+    assert.doesNotMatch(docs, /(?:src\/)?transformer\/|src\/core\/protocol/);
+});
