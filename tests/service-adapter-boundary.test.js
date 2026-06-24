@@ -95,6 +95,24 @@ test('relay and codebuddy anthropic adapters delegate request conversion to core
     assert.deepEqual(violations, []);
 });
 
+test('anthropic adapters do not re-export unrelated stream helpers', async () => {
+    const checkedAdapters = [
+        'src/services/relay/anthropic-adapter.js',
+        'src/services/codebuddy/anthropic-adapter.js',
+        'src/services/copilot/anthropic-adapter.js'
+    ];
+    const violations = [];
+
+    for (const adapter of checkedAdapters) {
+        const source = await readFile(path.join(repoRoot, adapter), 'utf8');
+        if (/rewriteOpenAIStream/.test(source)) {
+            violations.push(adapter);
+        }
+    }
+
+    assert.deepEqual(violations, []);
+});
+
 test('copilot anthropic adapter delegates Responses conversions to core protocol', async () => {
     const source = await readFile(path.join(repoRoot, 'src/services/copilot/anthropic-adapter.js'), 'utf8');
     const privateResponsesHelpers = /\bfunction\s+(?:anthropicContentToResponsesContent|anthropicMessagesToResponsesInput|anthropicSystemToInstructions|anthropicToolChoiceToResponses)\b/;

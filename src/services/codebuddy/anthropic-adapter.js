@@ -30,4 +30,3 @@ export function openAIToAnthropic(openAIResponse) {
 }
 
 export {injectBehaviorRules};
-export {rewriteOpenAIStream} from '../../core/protocol/index.js';
