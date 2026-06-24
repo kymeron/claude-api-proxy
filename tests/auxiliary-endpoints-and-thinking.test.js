@@ -482,7 +482,7 @@ test('relay Anthropic passthrough non-stream stats use split input token helper'
 });
 
 test('relay Anthropic stream stats keep the maximum cache hit tokens across usage events', () => {
-    const source = readFileSync(join(root, 'src/routes/relay.js'), 'utf8');
+    const source = readFileSync(join(root, 'src/services/relay/anthropic-usage.js'), 'utf8');
 
     assert.match(
         source,

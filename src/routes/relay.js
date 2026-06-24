@@ -50,6 +50,10 @@ import {
 import {prepareRelayOutboundChatRequest} from '../services/relay/outbound-chat.js';
 import {createRelayContextCompaction} from '../services/relay/context-compaction.js';
 import {
+    estimateRelayAnthropicInputTokens as estimateAnthropicInputTokens,
+    handleRelayAnthropicUsageEvent as handleAnthropicUsageEvent
+} from '../services/relay/anthropic-usage.js';
+import {
     anthropicResponseToChat,
     rewriteOpenAIStream,
     stripDynamicReminders,
@@ -86,7 +90,6 @@ import {
     relayConversationStore,
     prepareResponsesContinuationPayload
 } from '../services/session/index.js';
-import {estimateMessageTokens} from '../utils/token-estimation.js';
 import logger from '../utils/logger.js';
 
 const {
@@ -198,33 +201,6 @@ async function streamResponsesEventsAsAnthropic(eventStream, res, signal, respon
     }
 
     return usage;
-}
-
-function handleAnthropicUsageEvent(eventName, payload, usageState) {
-    const usage = payload?.usage || payload?.message?.usage;
-    if (!usage) return;
-
-    if (usage.input_tokens !== undefined) {
-        usageState.inputTokens = extractInputTokens(usage);
-    }
-    if (usage.output_tokens !== undefined) usageState.outputTokens = usage.output_tokens;
-    usageState.cacheHitTokens = Math.max(usageState.cacheHitTokens, extractCacheHitTokens(usage));
-    if (eventName === 'message_start' && payload?.message?.model) usageState.model = payload.message.model;
-}
-
-function estimateAnthropicInputTokens(payload) {
-    const messages = [];
-    if (typeof payload.system === 'string') {
-        messages.push({role: 'system', content: payload.system});
-    } else if (Array.isArray(payload.system)) {
-        messages.push({role: 'system', content: payload.system});
-    }
-    messages.push(...(payload.messages || []));
-    const messageTokens = estimateMessageTokens(messages);
-    const toolTokens = Array.isArray(payload.tools)
-        ? estimateMessageTokens(payload.tools.map((tool) => ({role: 'tool', content: JSON.stringify(tool)})))
-        : 0;
-    return messageTokens + toolTokens;
 }
 
 
