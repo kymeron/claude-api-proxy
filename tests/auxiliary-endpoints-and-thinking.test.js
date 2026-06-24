@@ -242,6 +242,7 @@ test('all service routes keep Anthropic endpoints out of OpenAI namespace', () =
         ]],
         ['copilot', [
             'src/routes/copilot.js',
+            'src/services/copilot/route-runtime.js',
             'src/services/copilot/anthropic-messages-handler.js'
         ]]
     ];
