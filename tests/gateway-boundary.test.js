@@ -6,6 +6,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const srcRoot = path.join(repoRoot, 'src');
+const servicesRoot = path.join(srcRoot, 'services');
 const gatewayRoot = path.join(repoRoot, 'src', 'services', 'gateway');
 const codebuddyRoot = path.join(repoRoot, 'src', 'services', 'codebuddy');
 const sharedRoot = path.join(repoRoot, 'src', 'services', 'shared');
@@ -78,6 +79,24 @@ test('shared services do not import gateway services', async () => {
         const source = await readFile(file, 'utf8');
         if (gatewayImport.test(source.replaceAll('\\', '/'))) {
             violations.push(path.relative(repoRoot, file).replaceAll('\\', '/'));
+        }
+    }
+
+    assert.deepEqual(violations, []);
+});
+
+test('non-gateway services receive gateway helpers through injection', async () => {
+    const files = await listJsFiles(servicesRoot);
+    const violations = [];
+    const gatewayImport = /from\s+['"][^'"]*(?:services\/gateway|\.{1,2}\/gateway)[^'"]*['"]/;
+
+    for (const file of files) {
+        const relative = path.relative(repoRoot, file).replaceAll('\\', '/');
+        if (relative.startsWith('src/services/gateway/')) continue;
+
+        const source = await readFile(file, 'utf8').then((text) => text.replaceAll('\\', '/'));
+        if (gatewayImport.test(source)) {
+            violations.push(relative);
         }
     }
 

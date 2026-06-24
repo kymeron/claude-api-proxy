@@ -11,7 +11,6 @@ import {basename, join} from 'path';
 import {Op} from 'sequelize';
 import logger from '../utils/logger.js';
 import {Feedback} from '../db/models/feedback.js';
-import {unifiedTenantManager} from './gateway/index.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -138,7 +137,9 @@ export async function saveFeedback({category, description, source, username, ten
  * 修复已有的空 tenant_id 记录
  * 根据 username 和 source 反查租户ID
  */
-export async function repairEmptyTenantIds() {
+export async function repairEmptyTenantIds({findTenantByUsername} = {}) {
+    if (typeof findTenantByUsername !== 'function') return;
+
     const rows = await Feedback.findAll({
         where: {
             [Op.or]: [
@@ -154,7 +155,7 @@ export async function repairEmptyTenantIds() {
     for (const row of rows) {
         if (!row.username) continue;
         try {
-            const tenantId = await unifiedTenantManager.findTenantByUsername(row.username);
+            const tenantId = await findTenantByUsername(row.username);
             if (tenantId) {
                 await row.update({tenant_id: tenantId});
                 fixed++;
