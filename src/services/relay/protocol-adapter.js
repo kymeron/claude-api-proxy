@@ -5,6 +5,7 @@
  */
 
 export {
+    anthropicRequestToChat,
     anthropicResponseToChat,
     buildConversationAnchorKey,
     canonicalFromAnthropicRequest,
@@ -27,7 +28,9 @@ export {
     extractInputTokens,
     getRelayConversationDiagnostics,
     limitResponsesInputItems,
+    mapStopReason,
     mergeConsecutiveAssistantMessages,
+    openAIToAnthropic,
     responsesResponseToRelayChat,
     rewriteOpenAIStream,
     sanitizeAnthropicPayload,

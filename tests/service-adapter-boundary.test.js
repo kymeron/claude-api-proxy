@@ -113,6 +113,24 @@ test('anthropic adapters do not re-export unrelated stream helpers', async () =>
     assert.deepEqual(violations, []);
 });
 
+test('product services centralize protocol core imports in protocol adapters', async () => {
+    const productRoots = ['codebuddy', 'copilot', 'relay']
+        .map((name) => path.join(servicesRoot, name));
+    const files = (await Promise.all(productRoots.map(listJsFiles))).flat();
+    const violations = [];
+
+    for (const file of files) {
+        if (path.basename(file) === 'protocol-adapter.js') continue;
+
+        const source = await readFile(file, 'utf8');
+        if (/from\s+['"][^'"]*core\/protocol\/index\.js['"]/.test(source.replaceAll('\\', '/'))) {
+            violations.push(path.relative(repoRoot, file).replaceAll('\\', '/'));
+        }
+    }
+
+    assert.deepEqual(violations, []);
+});
+
 test('copilot anthropic adapter delegates Responses conversions to core protocol', async () => {
     const source = await readFile(path.join(repoRoot, 'src/services/copilot/anthropic-adapter.js'), 'utf8');
     const privateResponsesHelpers = /\bfunction\s+(?:anthropicContentToResponsesContent|anthropicMessagesToResponsesInput|anthropicSystemToInstructions|anthropicToolChoiceToResponses)\b/;

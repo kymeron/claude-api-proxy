@@ -8,13 +8,11 @@ import logger from '../../utils/logger.js';
 import {
     anthropicRequestToChat,
     anthropicRequestToResponses,
-    responsesResponseToAnthropic
-} from '../../core/protocol/index.js';
-import {injectBehaviorRules} from '../shared/behavior-rules.js';
-import {
+    responsesResponseToAnthropic,
     normalizeClaudeModelAlias,
     openAIToAnthropic as sharedOpenAIToAnthropic
-} from '../../core/protocol/index.js';
+} from './protocol-adapter.js';
+import {injectBehaviorRules} from '../shared/behavior-rules.js';
 
 export function anthropicToOpenAI(anthropicPayload, modelId) {
     const resolvedModel = modelId || translateModelName(anthropicPayload.model);

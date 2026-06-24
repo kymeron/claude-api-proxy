@@ -5,12 +5,12 @@
  */
 
 import logger from '../../utils/logger.js';
-import {anthropicRequestToChat} from '../../core/protocol/index.js';
 import {injectBehaviorRules} from '../shared/behavior-rules.js';
 import {
+    anthropicRequestToChat,
     mapStopReason,
     openAIToAnthropic as sharedOpenAIToAnthropic
-} from '../../core/protocol/index.js';
+} from './protocol-adapter.js';
 
 export function anthropicToOpenAI(anthropicPayload) {
     return anthropicRequestToChat(anthropicPayload, {

@@ -5,6 +5,8 @@
  */
 
 export {
+    anthropicRequestToChat,
+    anthropicRequestToResponses,
     chatRequestToResponses,
     chatResponseToCompact,
     chatResponseToResponses,
@@ -16,7 +18,11 @@ export {
     createResponsesToChatStreamBridge,
     createResponsesToResponsesStreamBridge,
     extractCacheHitTokens,
+    normalizeClaudeModelAlias,
+    normalizePayload,
+    openAIToAnthropic,
     responsesRequestToChat,
+    responsesResponseToAnthropic,
     responsesResponseToChat,
     sanitizeAnthropicPayload,
     sanitizeResponsesInput

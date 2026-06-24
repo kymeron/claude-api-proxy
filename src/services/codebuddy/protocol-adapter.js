@@ -5,6 +5,7 @@
  */
 
 export {
+    anthropicRequestToChat,
     buildConversationAnchorKey,
     chatResponseToCompact,
     chatResponseToResponses,
@@ -13,6 +14,8 @@ export {
     createChatToResponsesStreamBridge,
     extractCacheHitTokens,
     mergeConsecutiveAssistantMessages,
+    normalizePayload,
+    openAIToAnthropic,
     responsesRequestToChat,
     rewriteOpenAIStream,
     sanitizeAnthropicPayload,
