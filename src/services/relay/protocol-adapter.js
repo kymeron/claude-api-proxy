@@ -36,4 +36,4 @@ export {
     sanitizeAnthropicPayload,
     streamAnthropicSSEToChatChunks,
     stripDynamicReminders
-} from '../../protocol-engine/index.js';
+} from '#protocol-engine';

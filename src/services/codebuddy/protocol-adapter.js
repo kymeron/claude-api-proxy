@@ -20,4 +20,4 @@ export {
     rewriteOpenAIStream,
     sanitizeAnthropicPayload,
     stripDynamicReminders
-} from '../../protocol-engine/index.js';
+} from '#protocol-engine';

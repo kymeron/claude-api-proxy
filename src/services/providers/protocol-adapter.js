@@ -7,4 +7,4 @@
 export {
     normalizePayload,
     normalizeResponsesPayload
-} from '../../protocol-engine/index.js';
+} from '#protocol-engine';

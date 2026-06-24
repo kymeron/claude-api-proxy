@@ -4,6 +4,9 @@
     "description": "Claude API 代理服务 - 将 Claude API 请求转换为 OpenAI 格式",
     "type": "module",
     "main": "src/index.js",
+    "imports": {
+        "#protocol-engine": "./src/protocol-engine/index.js"
+    },
     "scripts": {
         "start": "node src/index.js",
         "debug": "cross-env LOG_LEVEL=DEBUG node src/index.js",

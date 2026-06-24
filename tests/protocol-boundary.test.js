@@ -65,6 +65,14 @@ test('protocol engine declares package metadata for future extraction', async ()
     assert.equal(manifest.sideEffects, false);
 });
 
+test('root package maps the protocol engine import alias', async () => {
+    const manifest = JSON.parse(
+        await readFile(path.join(repoRoot, 'package.json'), 'utf8')
+    );
+
+    assert.equal(manifest.imports?.['#protocol-engine'], './src/protocol-engine/index.js');
+});
+
 test('protocol engine does not import upper application layers', async () => {
     const files = await listJsFiles(protocolRoot);
     assert.ok(files.length > 0, 'expected protocol engine files');

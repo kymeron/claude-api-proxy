@@ -551,11 +551,11 @@ test('product protocol adapters import the protocol engine public module', async
     for (const adapter of checkedAdapters) {
         const source = await readFile(path.join(repoRoot, adapter), 'utf8');
         const normalized = source.replaceAll('\\', '/');
-        if (!/from\s+['"][^'"]*protocol-engine\/index\.js['"]/.test(normalized)) {
+        if (!/from\s+['"]#protocol-engine['"]/.test(normalized)) {
             violations.push(adapter);
         }
-        if (/from\s+['"][^'"]*core\/protocol\/index\.js['"]/.test(normalized)) {
-            violations.push(`${adapter}:core-protocol`);
+        if (/from\s+['"][^'"]*(?:core\/protocol|protocol-engine\/core|protocol-engine\/index)\.js['"]/.test(normalized)) {
+            violations.push(`${adapter}:private-protocol-path`);
         }
     }
 
