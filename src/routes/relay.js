@@ -25,6 +25,7 @@ import {
     anthropicToOpenAI,
     injectBehaviorRules
 } from '../services/relay/anthropic-adapter.js';
+import {createRelayUsageRecorder} from '../services/relay/usage.js';
 import {
     anthropicResponseToChat,
     rewriteOpenAIStream,
@@ -68,6 +69,11 @@ import {
 } from '../services/session/index.js';
 import {estimateMessageTokens} from '../utils/token-estimation.js';
 import logger from '../utils/logger.js';
+
+const {
+    recordResponsesUsage,
+    recordUsage
+} = createRelayUsageRecorder(unifiedTenantManager);
 
 /* ==================== 工具函数 ==================== */
 
@@ -205,16 +211,6 @@ async function collectResponsesWebSocketResponse(wsResult) {
         throw new Error('No response.completed event received from upstream');
     }
     return completedData.response;
-}
-
-function recordResponsesUsage(tenantId, usage, model) {
-    recordUsage(
-        tenantId,
-        extractInputTokens(usage),
-        usage?.output_tokens || 0,
-        extractCacheHitTokens(usage),
-        model
-    );
 }
 
 function recordCompletedResponseState(tenantId, conversationKey, response, sourceCanonicalSession) {
@@ -597,13 +593,6 @@ async function callUpstream(upstream, fn) {
     }
     const errorBody = await readBody(response.body);
     throw new Error(`上游�?{upstream.name}」返�?HTTP ${response.status}: ${errorBody.slice(0, 200)}`);
-}
-
-function recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens = 0, model = 'unknown', samplePayload = null, sampleResponse = null) {
-    if (!tenantId) return;
-    unifiedTenantManager.incrementApiCallCount(tenantId, 'relay');
-    unifiedTenantManager.incrementTokenUsage(tenantId, 'relay', inputTokens, outputTokens, cacheHitTokens);
-    unifiedTenantManager.recordDailyUsage(tenantId, 'relay', inputTokens, outputTokens, cacheHitTokens, 0, model);
 }
 
 /* ==================== 处理函数 ==================== */
