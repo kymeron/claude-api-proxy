@@ -54,6 +54,10 @@ import {
     handleRelayAnthropicUsageEvent as handleAnthropicUsageEvent
 } from '../services/relay/anthropic-usage.js';
 import {
+    streamRelayResponsesEventsAsAnthropic as streamResponsesEventsAsAnthropic,
+    writeRelayAnthropicEvent as writeAnthropicEvent
+} from '../services/relay/anthropic-stream.js';
+import {
     anthropicResponseToChat,
     rewriteOpenAIStream,
     stripDynamicReminders,
@@ -176,32 +180,6 @@ function sendResponsesWebSocketProtocolError(res, error) {
     sendJson(res, event.status || error?.status || 400, event);
 }
 
-function writeAnthropicEvent(res, event) {
-    res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
-}
-
-async function streamResponsesEventsAsAnthropic(eventStream, res, signal, responsesAccumulator = null) {
-    const responsesToChatBridge = createResponsesToChatStreamBridge();
-    const chatToAnthropicBridge = createChatToAnthropicStreamBridge();
-    let usage = null;
-
-    for await (const event of eventStream) {
-        if (signal?.aborted) break;
-        if (event.type === 'response.completed') {
-            usage = event.data?.response?.usage || usage;
-        }
-        if (responsesAccumulator) responsesAccumulator.feed(event.type, event.data);
-        const chatChunks = responsesToChatBridge.feed(event.type, event.data);
-        for (const chatChunk of chatChunks) {
-            const anthropicEvents = chatToAnthropicBridge.feed(chatChunk);
-            for (const anthropicEvent of anthropicEvents) {
-                writeAnthropicEvent(res, anthropicEvent);
-            }
-        }
-    }
-
-    return usage;
-}
 
 
 

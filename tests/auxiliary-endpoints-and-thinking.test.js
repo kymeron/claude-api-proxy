@@ -621,7 +621,7 @@ test('stream routes use canonical bridge wiring without legacy state machines', 
         },
         {
             name: 'relay Chat to Anthropic',
-            file: 'src/routes/relay.js',
+            file: 'src/services/relay/anthropic-stream.js',
             present: [/createChatToAnthropicStreamBridge/, /chatToAnthropicBridge\.feed\(chatChunk\)/],
             absent: [/chatChunkToAnthropicEvents\(/]
         },
