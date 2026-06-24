@@ -277,7 +277,10 @@ test('OpenAI Responses stream fallback returns buffered output', () => {
     assert.match(codebuddySource, /if \(!chatToResponsesBridge\.finished\)/);
     assert.match(codebuddySource, /chatToResponsesBridge\.finish\(\)/);
 
-    const copilotSource = readFileSync(join(root, 'src/routes/copilot.js'), 'utf8');
+    const copilotSource = [
+        'src/routes/copilot.js',
+        'src/services/copilot/responses-api-handler.js'
+    ].map((file) => readFileSync(join(root, file), 'utf8')).join('\n');
     assert.match(copilotSource, /if \(!chatToResponsesBridge\.finished\)/);
     assert.match(copilotSource, /chatToResponsesBridge\.finish\(\)/);
 });
@@ -621,7 +624,7 @@ test('stream routes use canonical bridge wiring without legacy state machines', 
         },
         {
             name: 'Copilot Chat to Responses',
-            file: 'src/routes/copilot.js',
+            file: 'src/services/copilot/responses-api-handler.js',
             present: [/createChatToResponsesStreamBridge/, /chatToResponsesBridge\.feed\(data\)/],
             absent: [/chatChunkToResponsesEvents\(/]
         },
@@ -633,7 +636,7 @@ test('stream routes use canonical bridge wiring without legacy state machines', 
         },
         {
             name: 'Copilot Responses to Responses',
-            file: 'src/routes/copilot.js',
+            file: 'src/services/copilot/responses-api-handler.js',
             present: [/createResponsesToResponsesStreamBridge/, /responsesToResponsesBridge\.feed\(event\.type,\s*event\.data\)/],
             absent: [/responsesEventToResponsesEvents\(/]
         },
