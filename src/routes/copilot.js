@@ -4,9 +4,13 @@
  */
 
 import {createCopilotRouteRuntime} from '../services/copilot/index.js';
+import {unifiedTenantManager} from '../services/gateway/index.js';
 import logger from '../utils/logger.js';
 
-const copilotRuntime = createCopilotRouteRuntime({logger});
+const copilotRuntime = createCopilotRouteRuntime({
+    tenantManager: unifiedTenantManager,
+    logger
+});
 
 export const supportsResponsesWebSocket = copilotRuntime.supportsResponsesWebSocket;
 export const {handleCopilotResponsesWS} = copilotRuntime;

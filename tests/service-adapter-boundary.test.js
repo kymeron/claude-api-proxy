@@ -672,3 +672,11 @@ test('copilot anthropic adapter delegates Chat request conversion to core protoc
 
     assert.equal(privateChatHelpers.test(source), false);
 });
+
+test('copilot runtime receives usage recording instead of importing gateway singleton', async () => {
+    const source = await readFile(path.join(repoRoot, 'src/services/copilot/runtime.js'), 'utf8')
+        .then((text) => text.replaceAll('\\', '/'));
+
+    assert.doesNotMatch(source, /services\/gateway|\.{1,2}\/gateway/);
+    assert.doesNotMatch(source, /unifiedTenantManager/);
+});

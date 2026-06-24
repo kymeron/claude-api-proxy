@@ -66,7 +66,8 @@ export async function readCopilotRequestBody(req) {
     return Buffer.concat(chunks).toString('utf8');
 }
 
-export function createCopilotRouteRuntime({logger = defaultLogger} = {}) {
+export function createCopilotRouteRuntime({tenantManager, logger = defaultLogger} = {}) {
+    const usageRecorder = tenantManager;
     const getCopilotNetworkOptions = createCopilotNetworkOptionsResolver({store: copilotStore});
     const ensureCopilotAuth = createCopilotAuthResolver({
         isAuthenticated,
@@ -286,7 +287,8 @@ export function createCopilotRouteRuntime({logger = defaultLogger} = {}) {
         try {
             return await runCopilotTenantContext(
                 req.tenantId,
-                () => routeCopilotRequestInContext(req, res)
+                () => routeCopilotRequestInContext(req, res),
+                {usageRecorder}
             );
         } catch (error) {
             logger.error(`Copilot tenant context failed: ${error.message}`);
@@ -298,7 +300,8 @@ export function createCopilotRouteRuntime({logger = defaultLogger} = {}) {
         try {
             return await runCopilotTenantContext(
                 req.tenantId,
-                () => handleCopilotResponsesWSInContext(clientWs, req)
+                () => handleCopilotResponsesWSInContext(clientWs, req),
+                {usageRecorder}
             );
         } catch (error) {
             logger.error(`Copilot WebSocket tenant context failed: ${error.message}`);
