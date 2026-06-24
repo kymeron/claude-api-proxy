@@ -1,12 +1,12 @@
 /**
- * 公共 Translator 逻辑
- * 抽取自 CodeBuddy/Relay translator 的重复代码
- * @module transformer/shared-translator
+ * 公共协议适配逻辑
+ * 抽取自 CodeBuddy/Relay 产品适配器的重复代码
+ * @module core/protocol/shared
  */
 
 import {randomBytes, createHash} from 'crypto';
-import logger from '../utils/logger.js';
-import {getBehaviorRules} from '../config/system-prompts.js';
+import logger from '../../utils/logger.js';
+import {getBehaviorRules} from '../../config/system-prompts.js';
 
 /**
  * 从上游 usage 中提取缓存命中 token 数

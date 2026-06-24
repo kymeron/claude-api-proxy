@@ -2,7 +2,7 @@
  * 上游配置管理器
  * 管理每个租户的多上游配置（base_url + api_key + proxy）和活跃上游
  * 使用 Sequelize ORM 操作数据库，不再依赖文件系统读写
- * @module services/relay/upstream-manager
+ * @module services/providers/upstream-manager
  */
 
 import {
@@ -16,7 +16,7 @@ import {
     isResponsesWebSocketUpstream,
     discardResponsesWebSocketConnection,
     buildResponsesWebSocketUrl
-} from './api.js';
+} from './upstream-api.js';
 import {discardByPoolKey, connectionPoolKey} from '../shared/responses-ws-pool.js';
 import {normalizeResponsesWebSocketMode} from '../shared/responses-ws-mode.js';
 import logger from '../../utils/logger.js';
@@ -102,7 +102,7 @@ export class UpstreamManager {
             });
             this.upstreams = rows.map((row) => row.get({plain: true}));
         } catch (error) {
-            logger.error(`Relay: 加载上游配置失败: ${error.message}`);
+            logger.error(`Provider: 加载上游配置失败: ${error.message}`);
             this.upstreams = [];
         }
     }
@@ -116,7 +116,7 @@ export class UpstreamManager {
                 this._activeIndex = state.active_upstream_index;
             }
         } catch (error) {
-            logger.error(`Relay: 加载设置失败: ${error.message}`);
+            logger.error(`Provider: 加载设置失败: ${error.message}`);
         }
     }
 
@@ -128,7 +128,7 @@ export class UpstreamManager {
                 saved_at: new Date().toISOString()
             });
         } catch (error) {
-            logger.error(`Relay: 保存设置失败: ${error.message}`);
+            logger.error(`Provider: 保存设置失败: ${error.message}`);
         }
     }
 
@@ -190,9 +190,9 @@ export class UpstreamManager {
                 const networkKey = `${wsUrl}:${proxyMode}:${tlsPart}`;
                 const oldPoolKey = connectionPoolKey(`${wsUrl}:${oldUpstream.api_key || ''}`, networkKey);
                 discardByPoolKey(oldPoolKey);
-                logger.info(`Relay: 切换上游时清除旧上游 WebSocket 连接: ${oldUpstream.name}, poolKey=${oldPoolKey}`);
+                logger.info(`Provider: 切换上游时清除旧上游 WebSocket 连接: ${oldUpstream.name}, poolKey=${oldPoolKey}`);
             } catch (err) {
-                logger.warn(`Relay: 切换上游时清除旧上游 WebSocket 连接失败: ${err.message}`);
+                logger.warn(`Provider: 切换上游时清除旧上游 WebSocket 连接失败: ${err.message}`);
             }
         }
 
@@ -365,7 +365,7 @@ export class UpstreamManager {
             }
             this.upstreams = rows.map((row) => row.get({plain: true}));
         } catch (error) {
-            logger.error(`Relay: 重建上游顺序失败: ${error.message}`);
+            logger.error(`Provider: 重建上游顺序失败: ${error.message}`);
         }
     }
 

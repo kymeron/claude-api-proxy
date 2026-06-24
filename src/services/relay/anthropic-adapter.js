@@ -2,7 +2,7 @@
  * Relay Anthropic <-> OpenAI 格式转换模块
  * 将 Anthropic 格式请求转换为 OpenAI 格式（发送给上游），
  * 将 OpenAI 格式的流式响应转换为 Anthropic SSE 格式（返回给客户端）
- * @module services/relay/translator
+ * @module services/relay/anthropic-adapter
  */
 
 import logger from '../../utils/logger.js';
@@ -17,7 +17,7 @@ import {
     openAIToAnthropic as sharedOpenAIToAnthropic,
     normalizeClaudeModelAlias,
     sortObjectKeys
-} from '../../transformer/shared-translator.js';
+} from '../../core/protocol/shared.js';
 
 /* ================= Anthropic -> OpenAI ================= */
 

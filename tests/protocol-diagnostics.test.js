@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {RelayConversationStore, relayConversationStore} from '../src/services/relay/conversation-state.js';
+import {RelayConversationStore, relayConversationStore} from '../src/services/session/conversation-state.js';
 import {routeRelayRequest} from '../src/routes/relay.js';
-import {canonicalFromAnthropicRequest} from '../src/services/relay/canonical-session.js';
+import {canonicalFromAnthropicRequest} from '../src/core/protocol/canonical/session.js';
 import {
     analyzeChatToolClosure,
     getRelayConversationDiagnostics,
     inspectResponsesStreamState
-} from '../src/services/relay/diagnostics.js';
+} from '../src/core/protocol/diagnostics/index.js';
 
 test('analyzeChatToolClosure reports missing and orphan tool results', () => {
     const messages = [

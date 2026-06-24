@@ -1,11 +1,11 @@
 /**
  * Anthropic 到 OpenAI 格式转换模块
  * 用于 Claude Code 兼容性
- * @module services/copilot/anthropic-translator
+ * @module services/copilot/anthropic-adapter
  */
 
 import logger from '../../utils/logger.js';
-import {generateId, translateToolChoice, mapContent, injectBehaviorRules, prependThinkingHint, prependToolThinkingHint, openAIToAnthropic as sharedOpenAIToAnthropic, normalizeClaudeModelAlias} from '../../transformer/shared-translator.js';
+import {generateId, translateToolChoice, mapContent, injectBehaviorRules, prependThinkingHint, prependToolThinkingHint, openAIToAnthropic as sharedOpenAIToAnthropic, normalizeClaudeModelAlias} from '../../core/protocol/shared.js';
 
 /**
  * 转换 Anthropic 请求到 OpenAI 格式

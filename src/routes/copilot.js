@@ -12,7 +12,7 @@ import {
     anthropicToOpenAI,
     anthropicToResponses,
     openAIToAnthropic
-} from '../services/copilot/anthropic-translator.js';
+} from '../services/copilot/anthropic-adapter.js';
 import {
     responsesRequestToChat,
     chatRequestToResponses,
@@ -22,19 +22,19 @@ import {
     compactRequestToChat,
     chatResponseToCompact,
     sanitizeResponsesInput
-} from '../transformer/responses-translator.js';
+} from '../core/protocol/responses.js';
 import {
     createChatToAnthropicStreamBridge,
     createChatToResponsesStreamBridge,
     createResponsesToAnthropicStreamBridge,
     createResponsesToChatStreamBridge,
     createResponsesToResponsesStreamBridge
-} from '../services/relay/canonical-stream.js';
+} from '../core/protocol/stream/canonical-stream.js';
 import {
     estimateMessageTokens,
     estimateContentBlockTokens
 } from '../utils/token-estimation.js';
-import {sanitizeAnthropicPayload, extractCacheHitTokens} from '../transformer/shared-translator.js';
+import {sanitizeAnthropicPayload, extractCacheHitTokens} from '../core/protocol/shared.js';
 import {aggregateStreamResponse} from '../services/codebuddy/api.js';
 import {ResponsesWebSocketError} from '../services/shared/responses-ws-client.js';
 import {handleWSConnection} from '../services/shared/responses-ws-server.js';

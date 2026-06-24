@@ -1,10 +1,10 @@
-import {convertResponsesUsageToChat, mergeConsecutiveAssistantMessages} from '../transformer/responses-translator.js';
+import {convertResponsesUsageToChat, mergeConsecutiveAssistantMessages} from './responses.js';
 import {
     extractCacheHitTokens,
     extractInputTokens,
     mapStopReason,
     openAIUsageToAnthropicUsage
-} from '../transformer/shared-translator.js';
+} from './shared.js';
 import {
     appendChatResponseToCanonical,
     canonicalFromAnthropicResponse,
@@ -13,8 +13,8 @@ import {
     renderCanonicalToAnthropic,
     renderCanonicalToChat,
     renderCanonicalToResponses
-} from '../services/relay/canonical-session.js';
-import {streamAnthropicSSEToChatChunks} from '../services/relay/canonical-stream.js';
+} from './canonical/session.js';
+import {streamAnthropicSSEToChatChunks} from './stream/canonical-stream.js';
 
 export function chatContentToText(content) {
     if (typeof content === 'string') return content;

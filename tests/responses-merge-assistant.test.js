@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mergeConsecutiveAssistantMessages, responsesRequestToChat, responsesResponseToChat} from '../src/transformer/responses-translator.js';
+import {mergeConsecutiveAssistantMessages, responsesRequestToChat, responsesResponseToChat} from '../src/core/protocol/responses.js';
 
 test('responsesRequestToChat merges consecutive assistant messages from output_text + function_call', () => {
     const result = responsesRequestToChat({
@@ -295,7 +295,7 @@ test('responsesResponseToChat preserves text content alongside tool_calls', () =
 test('getDuplicatePrefixLength handles system message offset (base has system, visible does not)', async () => {
     // Simulate: base has [system, user, assistant], visible has [user, assistant, tool]
     // The system message is injected by relay's behavior rules but not in Codex's request
-    const {RelayConversationStore} = await import('../src/services/relay/conversation-state.js');
+    const {RelayConversationStore} = await import('../src/services/session/conversation-state.js');
     const store = new RelayConversationStore({ttlMs: 60000, cleanupIntervalMs: 0});
 
     // Save first request's state (with system message from behavior rules)
@@ -345,7 +345,7 @@ test('getDuplicatePrefixLength handles system message offset (base has system, v
 });
 
 test('hydration deduplication with system offset and matching content', async () => {
-    const {RelayConversationStore} = await import('../src/services/relay/conversation-state.js');
+    const {RelayConversationStore} = await import('../src/services/session/conversation-state.js');
     const store = new RelayConversationStore({ttlMs: 60000, cleanupIntervalMs: 0});
 
     // Save state with system message

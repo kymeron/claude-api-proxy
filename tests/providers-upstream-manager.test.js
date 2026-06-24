@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {WebSocketServer} from 'ws';
-import {UpstreamManager} from '../src/services/relay/upstream-manager.js';
+import {UpstreamManager} from '../src/services/providers/upstream-manager.js';
 import {testRelayUpstream} from '../src/routes/dashboard-frontend.js';
 
 function createServer() {

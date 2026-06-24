@@ -8,7 +8,7 @@ import {
     renderCanonicalToAnthropic,
     renderCanonicalToChat,
     renderCanonicalToResponses
-} from '../src/services/relay/canonical-session.js';
+} from '../src/core/protocol/canonical/session.js';
 
 test('canonical session preserves OpenAI Chat tool call and result ids', () => {
     const session = canonicalFromChatRequest({

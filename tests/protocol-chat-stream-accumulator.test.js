@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createChatStreamAccumulator} from '../src/services/relay/chat-stream-accumulator.js';
+import {createChatStreamAccumulator} from '../src/core/protocol/stream/accumulators/chat.js';
 
 test('createChatStreamAccumulator builds a final chat response from streamed deltas', () => {
     const accumulator = createChatStreamAccumulator({model: 'claude-test'});

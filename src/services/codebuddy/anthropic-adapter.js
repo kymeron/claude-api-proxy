@@ -1,7 +1,7 @@
 /**
  * CodeBuddy Anthropic 到 OpenAI 格式转换模块
  * 复用 OpenAI 兼容接口的流式处理逻辑
- * @module services/codebuddy/translator
+ * @module services/codebuddy/anthropic-adapter
  */
 
 import logger from '../../utils/logger.js';
@@ -15,7 +15,7 @@ import {
     openAIToAnthropic as sharedOpenAIToAnthropic,
     normalizeClaudeModelAlias,
     sortObjectKeys
-} from '../../transformer/shared-translator.js';
+} from '../../core/protocol/shared.js';
 
 /**
  * 转换 Anthropic 请求到 OpenAI 格式
@@ -285,4 +285,4 @@ export function convertToolCallId(codebuddyId) {
 }
 
 export {sharedOpenAIToAnthropic as openAIToAnthropic};
-export {rewriteOpenAIStream} from '../../transformer/shared-translator.js';
+export {rewriteOpenAIStream} from '../../core/protocol/shared.js';

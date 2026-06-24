@@ -1,10 +1,10 @@
-import {convertResponsesUsageToChat} from '../../transformer/responses-translator.js';
+import {convertResponsesUsageToChat} from '../responses.js';
 import {
     extractCacheHitTokens,
     extractInputTokens,
     generateId,
     mapStopReason
-} from '../../transformer/shared-translator.js';
+} from '../shared.js';
 
 export function createResponsesCanonicalStreamState({model = 'unknown'} = {}) {
     return {

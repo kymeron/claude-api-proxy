@@ -1,4 +1,4 @@
-import {limitResponsesInputItems} from '../../transformer/responses-translator.js';
+import {limitResponsesInputItems} from '../../core/protocol/responses.js';
 import logger from '../../utils/logger.js';
 
 export function prepareResponsesContinuationPayload({

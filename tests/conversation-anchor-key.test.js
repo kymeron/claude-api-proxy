@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildConversationAnchorKey} from '../src/transformer/shared-translator.js';
+import {buildConversationAnchorKey} from '../src/core/protocol/shared.js';
 
 const basePayload = {
     model: 'glm-5.1',

@@ -1,4 +1,4 @@
-import {generateId} from '../../transformer/shared-translator.js';
+import {generateId} from '../../shared.js';
 
 export function createResponsesStreamAccumulator({model = 'unknown'} = {}) {
     const state = {

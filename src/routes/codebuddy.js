@@ -4,26 +4,26 @@
  */
 
 import {createChatCompletions, getModels} from '../services/codebuddy/api.js';
-import {anthropicToOpenAI, openAIToAnthropic} from '../services/codebuddy/translator.js';
-import {rewriteOpenAIStream} from '../transformer/shared-translator.js';
+import {anthropicToOpenAI, openAIToAnthropic} from '../services/codebuddy/anthropic-adapter.js';
+import {rewriteOpenAIStream} from '../core/protocol/shared.js';
 import {
     buildConversationAnchorKey,
     injectBehaviorRules,
     stripDynamicReminders,
     sanitizeAnthropicPayload,
     extractCacheHitTokens
-} from '../transformer/shared-translator.js';
+} from '../core/protocol/shared.js';
 import {
     responsesRequestToChat,
     chatResponseToResponses,
     compactRequestToChat,
     chatResponseToCompact,
     mergeConsecutiveAssistantMessages
-} from '../transformer/responses-translator.js';
+} from '../core/protocol/responses.js';
 import {
     createChatToAnthropicStreamBridge,
     createChatToResponsesStreamBridge
-} from '../services/relay/canonical-stream.js';
+} from '../core/protocol/stream/canonical-stream.js';
 import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
 import {resolveCredential} from '../services/gateway/gateway-auth.js';
 import {BLOCKED_DOMAINS, getCodebuddyBaseUrl, isPersonalHost} from '../services/codebuddy/config.js';

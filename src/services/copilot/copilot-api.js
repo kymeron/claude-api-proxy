@@ -7,7 +7,7 @@ import { request, readBody } from '../../utils/http-client.js';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { getCopilotBaseUrl, copilotHeaders } from './config.js';
-import { normalizePayload } from '../../transformer/shared-translator.js';
+import { normalizePayload } from '../../core/protocol/shared.js';
 import logger from '../../utils/logger.js';
 import {acquire, release, discard, sendRequest} from './copilot-ws-pool.js';
 import {currentCopilotContext} from './runtime.js';

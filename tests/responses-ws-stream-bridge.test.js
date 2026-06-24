@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
-import {createResponsesToResponsesStreamBridge} from '../src/services/relay/canonical-stream.js';
+import {createResponsesToResponsesStreamBridge} from '../src/core/protocol/stream/canonical-stream.js';
 import {bindAsyncIterableContext, handleWSConnection} from '../src/services/shared/responses-ws-server.js';
-import {RelayStateMissingError} from '../src/services/relay/conversation-state.js';
+import {RelayStateMissingError} from '../src/services/session/conversation-state.js';
 
 test('canonical Responses to Responses bridge adds ordinary scaffold before text deltas', () => {
     const bridge = createResponsesToResponsesStreamBridge({model: 'gpt-5.4'});

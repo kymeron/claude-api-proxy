@@ -6,11 +6,11 @@ import {
     openAIToAnthropic,
     sanitizeAnthropicPayload,
     sanitizeAnthropicMessages
-} from '../src/transformer/shared-translator.js';
-import {anthropicToOpenAI as copilotAnthropicToOpenAI} from '../src/services/copilot/anthropic-translator.js';
-import {anthropicToOpenAI as relayAnthropicToOpenAI} from '../src/services/relay/translator.js';
-import {anthropicToOpenAI as codebuddyAnthropicToOpenAI} from '../src/services/codebuddy/translator.js';
-import {createChatToAnthropicStreamBridge} from '../src/services/relay/canonical-stream.js';
+} from '../src/core/protocol/shared.js';
+import {anthropicToOpenAI as copilotAnthropicToOpenAI} from '../src/services/copilot/anthropic-adapter.js';
+import {anthropicToOpenAI as relayAnthropicToOpenAI} from '../src/services/relay/anthropic-adapter.js';
+import {anthropicToOpenAI as codebuddyAnthropicToOpenAI} from '../src/services/codebuddy/anthropic-adapter.js';
+import {createChatToAnthropicStreamBridge} from '../src/core/protocol/stream/canonical-stream.js';
 import {
     anthropicResponseToChat,
     chatResponseToAnthropic,
@@ -18,7 +18,7 @@ import {
     chatRequestToAnthropic,
     chatRequestToRelayResponses,
     responsesResponseToRelayChat
-} from '../src/routes/relay-protocol-converters.js';
+} from '../src/core/protocol/http-converters.js';
 
 const root = process.cwd();
 
@@ -74,7 +74,7 @@ test('copilot keeps historical thinking separate from assistant content', () => 
     assert.equal(assistant.reasoning_content, 'hidden chain');
 });
 
-test('anthropic translators keep tool_use-only assistant content as empty string', () => {
+test('anthropic adapters keep tool_use-only assistant content as empty string', () => {
     for (const convert of [copilotAnthropicToOpenAI, relayAnthropicToOpenAI, codebuddyAnthropicToOpenAI]) {
         const converted = convert({
             model: 'claude-sonnet-4',
@@ -658,10 +658,10 @@ test('stream routes use canonical bridge wiring without legacy state machines', 
     }
 });
 
-test('legacy stream state machine exports stay out of translators', () => {
+test('legacy stream state machine exports stay out of product adapters', () => {
     const cases = [
         {
-            file: 'src/transformer/responses-translator.js',
+            file: 'src/core/protocol/responses.js',
             absent: [
                 /export function createResponsesStreamState/,
                 /export function createChatCompletionsStreamState/,
@@ -671,7 +671,7 @@ test('legacy stream state machine exports stay out of translators', () => {
             ]
         },
         {
-            file: 'src/services/relay/translator.js',
+            file: 'src/services/relay/anthropic-adapter.js',
             absent: [
                 /class SSEWriter/,
                 /class ClaudeStreamState/,
@@ -681,7 +681,7 @@ test('legacy stream state machine exports stay out of translators', () => {
             ]
         },
         {
-            file: 'src/services/copilot/anthropic-translator.js',
+            file: 'src/services/copilot/anthropic-adapter.js',
             absent: [
                 /class SSEWriter/,
                 /class ClaudeStreamState/,
@@ -691,7 +691,7 @@ test('legacy stream state machine exports stay out of translators', () => {
             ]
         },
         {
-            file: 'src/services/codebuddy/translator.js',
+            file: 'src/services/codebuddy/anthropic-adapter.js',
             absent: [
                 /class SSEWriter/,
                 /class ClaudeStreamState/,

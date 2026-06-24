@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {RelayUpstreamError} from '../src/services/relay/api.js';
+import {ProviderUpstreamError} from '../src/services/providers/upstream-api.js';
 import {
     RELAY_COMPACTION_SUMMARY_PREFIX,
     compactChatRequestIfNeeded,
@@ -8,7 +8,7 @@ import {
     inferModelContextWindowTokens,
     isContextWindowExceededError,
     resolveContextCompactionPolicy
-} from '../src/services/relay/context-compactor.js';
+} from '../src/services/session/context-compactor.js';
 
 function message(role, content) {
     return {role, content};
@@ -257,23 +257,23 @@ test('compactChatRequestIfNeeded triggers using the automatic model threshold', 
 
 test('isContextWindowExceededError matches only context-window 400 errors', () => {
     assert.equal(
-        isContextWindowExceededError(new RelayUpstreamError('[upstream]: HTTP 400: context window exceeded', 400)),
+        isContextWindowExceededError(new ProviderUpstreamError('[upstream]: HTTP 400: context window exceeded', 400)),
         true
     );
     assert.equal(
-        isContextWindowExceededError(new RelayUpstreamError('[upstream]: HTTP 400: maximum context length is 128000 tokens', 400)),
+        isContextWindowExceededError(new ProviderUpstreamError('[upstream]: HTTP 400: maximum context length is 128000 tokens', 400)),
         true
     );
     assert.equal(
-        isContextWindowExceededError(new RelayUpstreamError('[upstream]: HTTP 400: Invalid input: Maximum of 1000 items allowed in input.', 400)),
+        isContextWindowExceededError(new ProviderUpstreamError('[upstream]: HTTP 400: Invalid input: Maximum of 1000 items allowed in input.', 400)),
         true
     );
     assert.equal(
-        isContextWindowExceededError(new RelayUpstreamError('[upstream]: HTTP 429: Requests are too frequent', 429)),
+        isContextWindowExceededError(new ProviderUpstreamError('[upstream]: HTTP 429: Requests are too frequent', 429)),
         false
     );
     assert.equal(
-        isContextWindowExceededError(new RelayUpstreamError('[upstream]: HTTP 400: invalid tool schema', 400)),
+        isContextWindowExceededError(new ProviderUpstreamError('[upstream]: HTTP 400: invalid tool schema', 400)),
         false
     );
 });

@@ -8,7 +8,7 @@ import {
     buildResponsesWebSocketUrl,
     isResponsesUpstream,
     isResponsesWebSocketUpstream
-} from '../src/services/relay/api.js';
+} from '../src/services/providers/upstream-api.js';
 import {
     normalizeResponsesWebSocketMode,
     shouldUseResponsesWebSocketPassthrough

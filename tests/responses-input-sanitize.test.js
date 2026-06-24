@@ -4,7 +4,7 @@ import {
     limitResponsesInputItems,
     sanitizeResponsesInput,
     truncateResponsesInputItems
-} from '../src/transformer/responses-translator.js';
+} from '../src/core/protocol/responses.js';
 
 test('sanitizeResponsesInput removes previous response text part references from message content', () => {
     const sanitized = sanitizeResponsesInput(

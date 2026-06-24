@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {RelayConversationStore} from '../src/services/relay/conversation-state.js';
-import {prepareResponsesContinuationPayload} from '../src/services/relay/responses-continuation.js';
+import {RelayConversationStore} from '../src/services/session/conversation-state.js';
+import {prepareResponsesContinuationPayload} from '../src/services/session/responses-continuation.js';
 
 test('prepareResponsesContinuationPayload limits converted full-history input using stored response id', () => {
     const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});

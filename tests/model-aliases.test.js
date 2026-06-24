@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {anthropicToOpenAI as codebuddyAnthropicToOpenAI} from '../src/services/codebuddy/translator.js';
-import {anthropicToOpenAI as relayAnthropicToOpenAI} from '../src/services/relay/translator.js';
-import {UpstreamManager} from '../src/services/relay/upstream-manager.js';
+import {anthropicToOpenAI as codebuddyAnthropicToOpenAI} from '../src/services/codebuddy/anthropic-adapter.js';
+import {anthropicToOpenAI as relayAnthropicToOpenAI} from '../src/services/relay/anthropic-adapter.js';
+import {UpstreamManager} from '../src/services/providers/upstream-manager.js';
 
 function request(model) {
     return {

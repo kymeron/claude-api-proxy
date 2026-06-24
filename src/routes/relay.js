@@ -1,5 +1,5 @@
 /**
- * Relay 路由处理器 - 支持 OpenAI 和 Anthropic 双格式的聊天补全和模型列表 API
+ * Relay 路由处理�?- 支持 OpenAI �?Anthropic 双格式的聊天补全和模型列�?API
  * @module routes/relay
  */
 
@@ -17,13 +17,13 @@ import {
     isResponsesUpstream,
     isResponsesWebSocketUpstream,
     normalizeUpstreamProtocol,
-    RelayUpstreamError
-} from '../services/relay/api.js';
+    ProviderUpstreamError
+} from '../services/providers/upstream-api.js';
 import {readBody, isNetworkError} from '../utils/http-client.js';
 import {
     anthropicToOpenAI,
     injectBehaviorRules
-} from '../services/relay/translator.js';
+} from '../services/relay/anthropic-adapter.js';
 import {
     rewriteOpenAIStream,
     stripDynamicReminders,
@@ -31,40 +31,40 @@ import {
     sanitizeAnthropicPayload,
     extractCacheHitTokens,
     extractInputTokens
-} from '../transformer/shared-translator.js';
+} from '../core/protocol/shared.js';
 import {
     compactRequestToChat,
     chatResponseToCompact,
     mergeConsecutiveAssistantMessages,
     limitResponsesInputItems
-} from '../transformer/responses-translator.js';
+} from '../core/protocol/responses.js';
 import {isResponsesWebSocketProtocolError} from '../services/shared/responses-ws-client.js';
 import {handleWSConnection} from '../services/shared/responses-ws-server.js';
 import {
     RelayStateMissingError,
     relayConversationStore
-} from '../services/relay/conversation-state.js';
-import {createAnthropicStreamAccumulator} from '../services/relay/anthropic-stream-accumulator.js';
-import {createChatStreamAccumulator} from '../services/relay/chat-stream-accumulator.js';
+} from '../services/session/conversation-state.js';
+import {createAnthropicStreamAccumulator} from '../core/protocol/stream/accumulators/anthropic.js';
+import {createChatStreamAccumulator} from '../core/protocol/stream/accumulators/chat.js';
 import {
     createChatToAnthropicStreamBridge,
     createChatToResponsesStreamBridge,
     createResponsesToChatStreamBridge,
     createResponsesToResponsesStreamBridge,
     streamAnthropicSSEToChatChunks
-} from '../services/relay/canonical-stream.js';
-import {createResponsesStreamAccumulator} from '../services/relay/responses-stream-accumulator.js';
+} from '../core/protocol/stream/canonical-stream.js';
+import {createResponsesStreamAccumulator} from '../core/protocol/stream/accumulators/responses.js';
 import {
     canonicalFromAnthropicRequest,
     canonicalFromAnthropicResponse,
     canonicalFromAnthropicStreamChatResponse
-} from '../services/relay/canonical-session.js';
-import {getRelayConversationDiagnostics} from '../services/relay/diagnostics.js';
-import {prepareResponsesContinuationPayload} from '../services/relay/responses-continuation.js';
+} from '../core/protocol/canonical/session.js';
+import {getRelayConversationDiagnostics} from '../core/protocol/diagnostics/index.js';
+import {prepareResponsesContinuationPayload} from '../services/session/responses-continuation.js';
 import {
     compactChatRequestIfNeeded,
     isContextWindowExceededError
-} from '../services/relay/context-compactor.js';
+} from '../services/session/context-compactor.js';
 import {
     anthropicResponseToChat,
     chatResponseToAnthropic,
@@ -72,7 +72,7 @@ import {
     chatRequestToRelayResponses,
     chatRequestToAnthropic,
     responsesResponseToRelayChat
-} from './relay-protocol-converters.js';
+} from '../core/protocol/http-converters.js';
 import {aggregateStreamResponse} from '../services/codebuddy/api.js';
 import {estimateMessageTokens} from '../utils/token-estimation.js';
 import logger from '../utils/logger.js';
@@ -170,7 +170,7 @@ function extractConversationKey(req, payload, meta = {}) {
             : {})
     };
 
-    // Fallback: 用共享的 buildConversationAnchorKey，优先识别 payload 内的 session-id。
+    // Fallback: 用共享的 buildConversationAnchorKey，优先识�?payload 内的 session-id�?
     const anchorPayload = payload && typeof payload === 'object'
         ? {...payload, messages: payload?.messages || payload?.input}
         : {messages: payload?.messages || payload?.input};
@@ -249,7 +249,7 @@ function limitResponsesPassthroughPayload(payload, {previousResponseId, requestT
 }
 
 function upstreamErrorStatus(err) {
-    if (err instanceof RelayUpstreamError && err.status) return err.status;
+    if (err instanceof ProviderUpstreamError && err.status) return err.status;
     if (isNetworkError(err)) return 502;
     return 500;
 }
@@ -568,9 +568,9 @@ function getProtocolErrorMessage(upstream, expectedProtocol, endpoint) {
     const protocol = normalizeUpstreamProtocol(upstream?.protocol);
     if (protocol === expectedProtocol) return null;
     if (expectedProtocol === 'anthropic') {
-        return `当前上游协议为 ${protocol}，请改用 ${endpoint} 或切换上游类型`;
+        return `当前上游协议�?${protocol}，请改用 ${endpoint} 或切换上游类型`;
     }
-    return `当前上游协议为 ${protocol}，该端点需要 ${expectedProtocol} 上游支持`;
+    return `当前上游协议�?${protocol}，该端点需�?${expectedProtocol} 上游支持`;
 }
 
 /* ==================== 鉴权 ==================== */
@@ -596,7 +596,7 @@ async function authenticateAndGetUpstream(req) {
 }
 
 /**
- * 调用上游，失败直接抛错
+ * 调用上游，失败直接抛�?
  */
 async function callUpstream(upstream, fn) {
     const response = await fn(upstream);
@@ -604,7 +604,7 @@ async function callUpstream(upstream, fn) {
         return {response, upstream};
     }
     const errorBody = await readBody(response.body);
-    throw new Error(`上游「${upstream.name}」返回 HTTP ${response.status}: ${errorBody.slice(0, 200)}`);
+    throw new Error(`上游�?{upstream.name}」返�?HTTP ${response.status}: ${errorBody.slice(0, 200)}`);
 }
 
 function recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens = 0, model = 'unknown', samplePayload = null, sampleResponse = null) {
@@ -617,7 +617,7 @@ function recordUsage(tenantId, inputTokens, outputTokens, cacheHitTokens = 0, mo
 /* ==================== 处理函数 ==================== */
 
 /**
- * 处理 OpenAI 格式的 /relay/v1/chat/completions 请求
+ * 处理 OpenAI 格式�?/relay/v1/chat/completions 请求
  */
 async function handleOpenAIChatCompletions(req, res) {
     let tenantInfo = '';
@@ -978,7 +978,7 @@ async function handleOpenAIChatCompletions(req, res) {
 }
 
 /**
- * 处理 Anthropic 格式的 /relay/anthropic/v1/messages 请求
+ * 处理 Anthropic 格式�?/relay/anthropic/v1/messages 请求
  */
 async function handleAnthropicMessages(req, res) {
     let tenantInfo = '';
@@ -1115,7 +1115,7 @@ async function handleAnthropicMessages(req, res) {
             return;
         }
 
-        // 转换为 OpenAI 格式
+        // 转换�?OpenAI 格式
         if (isResponsesWebSocketUpstream(upstream)) {
             const responsesPayload = chatRequestToRelayResponses({
                 ...openAIPayload,
@@ -1410,7 +1410,7 @@ async function handleAnthropicMessages(req, res) {
         if (!res.headersSent) {
             sendAnthropicError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
         } else {
-            // 流式响应已开始，无法再写 headers，直接结束响应
+            // 流式响应已开始，无法再写 headers，直接结束响�?
             try { res.end(); } catch {}
         }
     }
@@ -1418,7 +1418,7 @@ async function handleAnthropicMessages(req, res) {
 
 /* ==================== 流式响应辅助 ==================== */
 
-/** OpenAI 上游流式透传（OpenAI 端点 → OpenAI 上游），对 reasoning_content 做缓冲合并 */
+/** OpenAI 上游流式透传（OpenAI 端点 �?OpenAI 上游），�?reasoning_content 做缓冲合�?*/
 function _streamOpenAIPassthrough(response, res, tenantId, tenantInfo = '', model = 'unknown', conversationKey = null) {
     const chatAccumulator = createChatStreamAccumulator({model});
     rewriteOpenAIStream(res, response.body, (inputTokens, outputTokens, cacheHitTokens) => {
@@ -1503,7 +1503,7 @@ async function handleAnthropicCountTokens(req, res) {
 
 /**
  * 处理 Responses API 请求 (/relay/v1/responses)
- * 将 Responses 格式转为 Chat Completions 发给上游，再将响应转回 Responses 格式
+ * �?Responses 格式转为 Chat Completions 发给上游，再将响应转�?Responses 格式
  */
 async function handleResponsesAPI(req, res) {
     try {
@@ -1809,7 +1809,7 @@ async function handleResponsesAPI(req, res) {
             return;
         }
 
-        // Responses → Chat Completions
+        // Responses �?Chat Completions
         const responsesConversationKey = extractConversationKey(req, responsesReq, {tenantId});
         const hydrated = relayConversationStore.hydrateResponsesForFullHistory({
             tenantId,
@@ -1926,7 +1926,7 @@ async function handleResponsesAPI(req, res) {
                 res.end();
             });
         } else {
-            // 非流式：强制 stream=true 请求上游，聚合后转 Responses 格式
+            // 非流式：强制 stream=true 请求上游，聚合后�?Responses 格式
             const invocation = await invokeWithRelayContextCompaction({
                 chatRequest: chatReq,
                 compactOptions,
@@ -2176,16 +2176,16 @@ async function handleResponsesCompact(req, res) {
 /* ==================== WebSocket 端点 ==================== */
 
 /**
- * Relay WS 处理器的核心请求逻辑（async generator）
- * 根据上游协议分发：
- * - Anthropic 上游 → hydrate Responses 增量上下文后转 Anthropic stream
- * - Responses WS 上游 → 直接 WS 转发
- * - Responses HTTP 上游 → SSE → WS 事件
- * - OpenAI Chat 上游 → Chat→Responses 事件
+ * Relay WS 处理器的核心请求逻辑（async generator�?
+ * 根据上游协议分发�?
+ * - Anthropic 上游 �?hydrate Responses 增量上下文后�?Anthropic stream
+ * - Responses WS 上游 �?直接 WS 转发
+ * - Responses HTTP 上游 �?SSE �?WS 事件
+ * - OpenAI Chat 上游 �?Chat→Responses 事件
  *
- * @param {object} payload - Responses 请求体
+ * @param {object} payload - Responses 请求�?
  * @param {object} upstream - 上游配置
- * @param {object} upstreamManager - 上游管理器
+ * @param {object} upstreamManager - 上游管理�?
  * @param {string} tenantId - 租户 ID
  * @param {object} tenantMeta - {tenantName, tenantUsername}
  * @param {AbortSignal} signal - 取消信号
@@ -2297,7 +2297,7 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
         return;
     }
 
-    // Responses WS 上游：直接 WS 连接上游，转发事件
+    // Responses WS 上游：直�?WS 连接上游，转发事�?
     if (isResponsesWebSocketUpstream(upstream)) {
         const wsPayload = {...payload, model: resolvedModel};
         const prepared = relayConversationStore.prepareResponsesPassthrough({
@@ -2322,8 +2322,7 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
             ...tenantMeta
         });
 
-        // 必须用 finally 释放连接：WS server 在收到 response.completed 后会 break，
-        // 触发 generator return()，try 块尾部的 release 永远到不了，连接将一直 busy 烂在池里
+        // 必须�?finally 释放连接：WS server 在收�?response.completed 后会 break�?        // 触发 generator return()，try 块尾部的 release 永远到不了，连接将一�?busy 烂在池里
         let connHandled = false;
         const responsesAccumulator = createResponsesStreamAccumulator({model: payload.model});
         let completedResponse = null;
@@ -2358,10 +2357,10 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
         return;
     }
 
-    // Responses HTTP 上游：透传 SSE → WS 事件
+    // Responses HTTP 上游：透传 SSE �?WS 事件
     if (isResponsesUpstream(upstream)) {
-        // stream: WS 客户端不发 stream 字段，但 HTTP 上游需要 stream=true 才返回 SSE
-        // store: 火山引擎需要 store=true 才存储 response，否则 previous_response_id 找不到
+        // stream: WS 客户端不�?stream 字段，但 HTTP 上游需�?stream=true 才返�?SSE
+        // store: 火山引擎需�?store=true 才存�?response，否�?previous_response_id 找不�?
         const responsesPayload = {...payload, model: resolvedModel, stream: true, store: true};
         const prepared = relayConversationStore.prepareResponsesPassthrough({
             tenantId,
@@ -2417,7 +2416,7 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
         return;
     }
 
-    // OpenAI Chat 上游：Chat → Responses 事件转换
+    // OpenAI Chat 上游：Chat �?Responses 事件转换
     let hydrated;
     try {
         hydrated = relayConversationStore.hydrateResponsesForFullHistory({
@@ -2503,13 +2502,13 @@ async function* _relayWSHandleRequest(payload, upstream, upstreamManager, tenant
 
 /**
  * 处理 Relay Responses API WebSocket 连接
- * 客户端通过 WS 连接 /relay/v1/responses，发送标准 Responses API WS 协议
+ * 客户端通过 WS 连接 /relay/v1/responses，发送标�?Responses API WS 协议
  *
- * 注意：鉴权已在 server.js 的 upgrade handler 中完成，
- * 并通过 req.tenantId 注入到这里。
+ * 注意：鉴权已�?server.js �?upgrade handler 中完成，
+ * 并通过 req.tenantId 注入到这里�?
  *
- * @param {import('ws').WebSocket} clientWs - 客户端 WebSocket 连接
- * @param {import('http').IncomingMessage} req - 原始 HTTP 请求（已注入 tenantId）
+ * @param {import('ws').WebSocket} clientWs - 客户�?WebSocket 连接
+ * @param {import('http').IncomingMessage} req - 原始 HTTP 请求（已注入 tenantId�?
  */
 export async function handleRelayResponsesWS(clientWs, req) {
     const tenantId = req.tenantId;
@@ -2526,12 +2525,12 @@ export async function handleRelayResponsesWS(clientWs, req) {
                 });
             }
 
-            // 每次请求时重新获取活跃上游，确保切换上游后立即生效
+            // Refresh active upstream on every request so switching upstreams takes effect immediately.
             const upstream = upstreamManager.getActiveUpstream();
             if (!upstream) {
-                throw Object.assign(new Error('未配置可用上游'), {
+                throw Object.assign(new Error('No available upstream configured'), {
                     name: 'ResponsesWebSocketError',
-                    event: {type: 'error', error: {message: '未配置可用上游，请在管理面板 /relayFE 配置', code: 'no_upstream'}}
+                    event: {type: 'error', error: {message: 'No available upstream configured. Please configure one in /relayFE.', code: 'no_upstream'}}
                 });
             }
 
@@ -2553,7 +2552,7 @@ export async function handleRelayResponsesWS(clientWs, req) {
     });
 }
 
-/* ==================== 主路由 ==================== */
+/* ==================== 主路�?==================== */
 
 export async function routeRelayRequest(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);

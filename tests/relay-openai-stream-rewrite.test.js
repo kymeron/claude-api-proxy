@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {PassThrough} from 'node:stream';
-import {rewriteOpenAIStream} from '../src/transformer/shared-translator.js';
+import {rewriteOpenAIStream} from '../src/core/protocol/shared.js';
 
 test('rewriteOpenAIStream exposes parsed chunks to an optional callback', async () => {
     const upstream = new PassThrough();

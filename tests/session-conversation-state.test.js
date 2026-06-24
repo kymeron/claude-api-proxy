@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import {
     RelayConversationStore,
     RelayStateMissingError
-} from '../src/services/relay/conversation-state.js';
+} from '../src/services/session/conversation-state.js';
 import {
     canonicalFromAnthropicResponse,
     canonicalFromAnthropicRequest,
     canonicalFromAnthropicStreamChatResponse,
     renderCanonicalToChat
-} from '../src/services/relay/canonical-session.js';
-import {anthropicResponseToChat} from '../src/routes/relay-protocol-converters.js';
+} from '../src/core/protocol/canonical/session.js';
+import {anthropicResponseToChat} from '../src/core/protocol/http-converters.js';
 
 test('default TTL keeps stable single-instance conversations for at least one day', () => {
     const store = new RelayConversationStore({cleanupIntervalMs: 0});

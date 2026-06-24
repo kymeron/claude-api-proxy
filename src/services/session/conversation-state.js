@@ -1,4 +1,4 @@
-import {convertResponsesUsageToChat} from '../../transformer/responses-translator.js';
+import {convertResponsesUsageToChat} from '../../core/protocol/responses.js';
 import {
     appendAnthropicResponseToCanonical,
     appendChatResponseToCanonical,
@@ -9,7 +9,7 @@ import {
     preserveCanonicalResponseToolMappings,
     preserveCanonicalToolMappings,
     renderCanonicalToChat
-} from './canonical-session.js';
+} from '../../core/protocol/canonical/session.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
