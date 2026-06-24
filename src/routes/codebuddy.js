@@ -35,27 +35,18 @@ import {
     createCodebuddyCredentialResolver,
     createCodebuddyTenantCredentialManagerResolver
 } from '../services/codebuddy/credential-context.js';
-import {pickCodebuddyUsageModel as pickModelName} from '../services/codebuddy/usage.js';
+import {
+    createCodebuddyUsageRecorder,
+    pickCodebuddyUsageModel as pickModelName
+} from '../services/codebuddy/usage.js';
+import {mapCodebuddyModelName as mapModelName} from '../services/codebuddy/model-mapping.js';
+import {createCodebuddyChatCompletionsHandler} from '../services/codebuddy/chat-completions-handler.js';
 import logger from '../utils/logger.js';
 
 const authenticateAndGetCredential = createCodebuddyCredentialResolver({tenantManager: unifiedTenantManager});
 const resolveTenantManager = createCodebuddyTenantCredentialManagerResolver({tenantManager: unifiedTenantManager});
+const {recordUsage: recordCodebuddyUsage} = createCodebuddyUsageRecorder(unifiedTenantManager);
 
-/**
- * 基于规则映射 Codex 传入的模型名到 CodeBuddy 实际可用模型
- * - gpt- 开头且不含 mini → kimi-k2.6
- * - gpt- 开头且含 mini，或含 codex → deepseek-v4-flash
- * - 其他保持不变
- */
-function mapModelName(model) {
-    if (!model || typeof model !== 'string') return model;
-    const lower = model.toLowerCase();
-
-    if (lower.startsWith('gpt-') || lower.includes('mini')) {
-        return 'deepseek-v4-flash';
-    }
-    return model;
-}
 
 async function parseBody(req) {
     const chunks = [];
@@ -66,151 +57,23 @@ async function parseBody(req) {
 }
 
 
-/**
- * 处理 OpenAI 格式的 /v1/chat/completions 请求 - 直接透传
- */
-async function handleOpenAIChatCompletions(req, res) {
-    let tenantInfo = '';
-    try {
-        const authResult = await authenticateAndGetCredential(req);
-        if (!authResult.error) {
-            const tenant = unifiedTenantManager.getTenant(authResult.tenantId);
-            if (tenant?.name && tenant?.username) tenantInfo = `${tenant.name}(${tenant.username})`;
-        }
-        if (authResult.error) {
-            sendOpenAIError(
-                res,
-                authResult.error.status,
-                authResult.error.message,
-                authResult.error.status === 401 ? 'authentication_error' : 'api_error'
-            );
-            return;
-        }
-
-        // 解析 OpenAI 格式的请求
-        const body = await parseBody(req);
-        const openAIPayload = JSON.parse(body);
-
-        // 映射 Codex 传入的模型名到实际可用模型
-        if (openAIPayload.model) {
-            openAIPayload.model = mapModelName(openAIPayload.model);
-        }
-
-        const conversationId = resolveConversationId(req, openAIPayload.messages, openAIPayload, {
-            tenantId: authResult.tenantId
-        });
-
-        prepareCodebuddyOutboundChatRequest(openAIPayload);
-
-        // 从 messages 前缀推算稳定的 conversationId，确保同一对话的 prompt_cache_key 一致
-        const tenant = unifiedTenantManager.getTenant(authResult.tenantId);
-        const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
-
-        // 直接调用 CodeBuddy API（已经是 OpenAI 格式）
-        const response = await createChatCompletions(openAIPayload, {
-            credential: authResult.credential,
-            conversationId,
-            conversationRequestId: req.headers['x-conversation-request-id'],
-            conversationMessageId: req.headers['x-conversation-message-id'],
-            requestId: req.headers['x-request-id'],
-            ...tenantMeta
-        });
-
-        // 流式响应：对 reasoning_content 做缓冲合并，避免 thinking 被逐 token 刷成多个块
-        if (openAIPayload.stream) {
-            res.writeHead(200, {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                Connection: 'keep-alive'
-            });
-
-            rewriteOpenAIStream(
-                res,
-                response.body,
-                (inputTokens, outputTokens, cacheHitTokens, credit, model) => {
-                    if (authResult.tenantId) {
-                        unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
-                        unifiedTenantManager.incrementTokenUsage(
-                            authResult.tenantId,
-                            'codebuddy',
-                            inputTokens,
-                            outputTokens,
-                            cacheHitTokens
-                        );
-                        unifiedTenantManager.incrementCreditUsage(authResult.tenantId, 'codebuddy', credit);
-                        unifiedTenantManager.recordDailyUsage(
-                            authResult.tenantId,
-                            'codebuddy',
-                            inputTokens,
-                            outputTokens,
-                            cacheHitTokens,
-                            credit,
-                            pickModelName(model, openAIPayload.model)
-                        );
-                    }
-                },
-                undefined,
-                {logger}
-            );
-        } else {
-            const aggregated = await aggregateStreamResponse(response.body);
-
-            if (authResult.tenantId) {
-                const inputTokens = aggregated.usage ? aggregated.usage.prompt_tokens || 0 : 0;
-                const outputTokens = aggregated.usage ? aggregated.usage.completion_tokens || 0 : 0;
-                const cacheHitTokens = extractCacheHitTokens(aggregated.usage);
-                const credit = aggregated.usage ? aggregated.usage.credit || 0 : 0;
-                unifiedTenantManager.incrementApiCallCount(authResult.tenantId, 'codebuddy');
-                unifiedTenantManager.incrementTokenUsage(
-                    authResult.tenantId,
-                    'codebuddy',
-                    inputTokens,
-                    outputTokens,
-                    cacheHitTokens
-                );
-                unifiedTenantManager.incrementCreditUsage(authResult.tenantId, 'codebuddy', credit);
-                unifiedTenantManager.recordDailyUsage(
-                    authResult.tenantId,
-                    'codebuddy',
-                    inputTokens,
-                    outputTokens,
-                    cacheHitTokens,
-                    credit,
-                    pickModelName(aggregated.model, openAIPayload.model)
-                );
-            }
-
-            const openAIResponse = {
-                id: aggregated.id || `chatcmpl_${Date.now()}`,
-                object: 'chat.completion',
-                created: Math.floor(Date.now() / 1000),
-                model: aggregated.model || openAIPayload.model,
-                choices: [
-                    {
-                        index: 0,
-                        message: {
-                            role: 'assistant',
-                            content: aggregated.content || null,
-                            reasoning_content: aggregated.reasoningContent || undefined,
-                            tool_calls: aggregated.toolCalls.length > 0 ? aggregated.toolCalls : undefined
-                        },
-                        finish_reason: aggregated.finishReason || 'stop'
-                    }
-                ],
-                usage: aggregated.usage || {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0
-                }
-            };
-
-            sendJson(res, 200, openAIResponse);
-        }
-    } catch (error) {
-        logger.error(`Failed to handle OpenAI chat completions${tenantInfo ? `, ${tenantInfo}` : ''}:`, error);
-        sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
-    }
-}
+const handleOpenAIChatCompletions = createCodebuddyChatCompletionsHandler({
+    authenticateAndGetCredential,
+    tenantManager: unifiedTenantManager,
+    sendOpenAIError,
+    sendJson,
+    upstreamErrorStatus,
+    parseBody,
+    mapModelName,
+    resolveConversationId,
+    prepareCodebuddyOutboundChatRequest,
+    createChatCompletions,
+    rewriteOpenAIStream,
+    aggregateStreamResponse,
+    extractCacheHitTokens,
+    recordUsage: recordCodebuddyUsage,
+    logger
+});
 
 /**
  * 处理 OpenAI 格式的 /v1/models 请求
