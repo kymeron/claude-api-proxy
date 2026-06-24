@@ -43,3 +43,21 @@ test('routes do not depend on another product service API for shared helpers', a
 
     assert.deepEqual(violations, []);
 });
+
+test('relay and codebuddy anthropic adapters delegate request conversion to core protocol', async () => {
+    const checkedAdapters = [
+        'src/services/relay/anthropic-adapter.js',
+        'src/services/codebuddy/anthropic-adapter.js'
+    ];
+    const privateRequestHelpers = /\bfunction\s+(?:translateMessages|handleUserMessage|handleAssistantMessage|translateTools|resolveThinkingConfig)\b/;
+    const violations = [];
+
+    for (const adapter of checkedAdapters) {
+        const source = await readFile(path.join(repoRoot, adapter), 'utf8');
+        if (privateRequestHelpers.test(source)) {
+            violations.push(adapter);
+        }
+    }
+
+    assert.deepEqual(violations, []);
+});

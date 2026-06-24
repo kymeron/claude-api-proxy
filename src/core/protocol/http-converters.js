@@ -1,9 +1,16 @@
 import {convertResponsesUsageToChat, mergeConsecutiveAssistantMessages} from './responses.js';
+import {cleanJsonSchema} from '../../utils/helpers.js';
 import {
     extractCacheHitTokens,
     extractInputTokens,
+    mapContent,
     mapStopReason,
-    openAIUsageToAnthropicUsage
+    normalizeClaudeModelAlias,
+    openAIUsageToAnthropicUsage,
+    prependThinkingHint,
+    prependToolThinkingHint,
+    sortObjectKeys,
+    translateToolChoice
 } from './shared.js';
 import {
     appendChatResponseToCanonical,
@@ -67,6 +74,232 @@ export function chatRequestToRelayResponses(chatReq = {}) {
         delete payload.parallel_tool_calls;
     }
     return payload;
+}
+
+export function anthropicRequestToChat(anthropicPayload = {}, options = {}) {
+    const modelMapper = options.modelMapper || normalizeClaudeModelAlias;
+    const model = modelMapper(anthropicPayload.model);
+    const renderOptions = {...options, model};
+    const openAIPayload = {
+        model,
+        messages: translateAnthropicMessagesToChat(anthropicPayload.messages, anthropicPayload.system, renderOptions),
+        max_tokens: anthropicPayload.max_tokens,
+        temperature: anthropicPayload.temperature,
+        top_p: anthropicPayload.top_p,
+        stream: anthropicPayload.stream,
+        stop: anthropicPayload.stop_sequences
+    };
+
+    if (anthropicPayload.tools) {
+        openAIPayload.tools = anthropicToolsToChatTools(anthropicPayload.tools, renderOptions);
+    }
+
+    if (anthropicPayload.tool_choice) {
+        openAIPayload.tool_choice = translateToolChoice(anthropicPayload.tool_choice);
+    }
+
+    if (options.disableReasoningForModel?.(model, anthropicPayload)) {
+        openAIPayload.reasoning_effort = '';
+    } else {
+        const thinkingConfig = resolveAnthropicThinkingConfig(anthropicPayload);
+        if (thinkingConfig.disabled) {
+            openAIPayload.reasoning_effort = '';
+        } else if (thinkingConfig.effort) {
+            openAIPayload.reasoning_effort = thinkingConfig.effort;
+        }
+    }
+
+    return openAIPayload;
+}
+
+function anthropicToolsToChatTools(anthropicTools, options = {}) {
+    return anthropicTools.map((tool) => ({
+        type: 'function',
+        function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: options.cleanToolSchema ? cleanJsonSchema(tool.input_schema) : tool.input_schema
+        }
+    }));
+}
+
+function resolveAnthropicThinkingConfig(anthropicPayload) {
+    const thinking = anthropicPayload.thinking;
+
+    if (thinking?.type === 'disabled') {
+        return {disabled: true, effort: ''};
+    }
+
+    let effort = null;
+    const outputEffort = anthropicPayload.output_config?.effort;
+    if (outputEffort && typeof outputEffort === 'string') {
+        const effortMap = {low: 'low', medium: 'medium', high: 'high', max: 'high'};
+        const mapped = effortMap[outputEffort.toLowerCase()];
+        if (mapped) {
+            effort = mapped;
+        }
+    }
+
+    if (!effort && thinking) {
+        if (thinking.type === 'adaptive') {
+            effort = 'high';
+        } else if (thinking.type === 'enabled' && thinking.budget_tokens) {
+            if (thinking.budget_tokens <= 4000) effort = 'low';
+            else if (thinking.budget_tokens <= 16000) effort = 'medium';
+            else effort = 'high';
+        }
+    }
+
+    return {disabled: false, effort};
+}
+
+function translateAnthropicMessagesToChat(anthropicMessages = [], system, options = {}) {
+    const messages = [];
+
+    if (system) {
+        if (typeof system === 'string') {
+            messages.push({role: 'system', content: system});
+        } else if (Array.isArray(system)) {
+            const systemText = system
+                .map((block) => (typeof block?.text === 'string' ? block.text.trim() : ''))
+                .filter(Boolean)
+                .join('\n\n');
+            if (systemText) {
+                messages.push({role: 'system', content: systemText});
+            }
+        }
+    }
+
+    let lastAssistantMessage = null;
+    for (const message of Array.isArray(anthropicMessages) ? anthropicMessages : []) {
+        if (message.role === 'user') {
+            const userMessages = handleAnthropicUserMessage(message, lastAssistantMessage, options);
+            messages.push(...userMessages);
+            lastAssistantMessage = null;
+        } else {
+            const assistantMessages = handleAnthropicAssistantMessage(message, options);
+            messages.push(...assistantMessages);
+            if (assistantMessages.length > 0 && assistantMessages[0].tool_calls) {
+                lastAssistantMessage = assistantMessages[0];
+            } else {
+                lastAssistantMessage = null;
+            }
+        }
+    }
+
+    return options.messagePostProcessor ? options.messagePostProcessor(messages, {model: options.model}) : messages;
+}
+
+function handleAnthropicUserMessage(message, previousAssistantMessage = null, options = {}) {
+    const messages = [];
+
+    if (typeof message.content === 'string') {
+        messages.push({role: 'user', content: prependThinkingHint(message.content)});
+    } else if (Array.isArray(message.content)) {
+        const toolResults = message.content.filter((block) => block.type === 'tool_result');
+        const otherBlocks = message.content.filter((block) => block.type !== 'tool_result');
+
+        if (toolResults.length > 0) {
+            const resultMap = new Map();
+            for (const block of toolResults) {
+                let content = '';
+                if (typeof block.content === 'string') {
+                    content = block.content;
+                } else if (block.content != null) {
+                    content = JSON.stringify(block.content);
+                }
+                resultMap.set(block.tool_use_id, prependToolThinkingHint(content));
+            }
+
+            if (options.orderToolResultsByAssistant !== false && previousAssistantMessage?.tool_calls) {
+                const orderedIds = previousAssistantMessage.tool_calls.map((toolCall) => toolCall.id);
+                for (const toolId of orderedIds) {
+                    if (resultMap.has(toolId)) {
+                        messages.push({
+                            role: 'tool',
+                            tool_call_id: toolId,
+                            content: resultMap.get(toolId)
+                        });
+                        resultMap.delete(toolId);
+                    }
+                }
+            }
+
+            for (const [toolId, content] of resultMap) {
+                messages.push({
+                    role: 'tool',
+                    tool_call_id: toolId,
+                    content
+                });
+            }
+        }
+
+        if (otherBlocks.length > 0) {
+            messages.push({
+                role: 'user',
+                content: prependThinkingHint(mapContent(otherBlocks))
+            });
+        }
+    }
+
+    return messages;
+}
+
+function handleAnthropicAssistantMessage(message, options = {}) {
+    if (typeof message.content === 'string') {
+        return [{role: 'assistant', content: message.content}];
+    }
+
+    if (!Array.isArray(message.content)) {
+        return [{role: 'assistant', content: null}];
+    }
+
+    const toolUseBlocks = message.content.filter((block) => block.type === 'tool_use');
+    const textBlocks = message.content.filter((block) => block.type === 'text');
+    const thinkingBlocks = message.content.filter((block) => block.type === 'thinking');
+
+    const allText = textBlocks
+        .map((block) => block.text)
+        .filter(Boolean)
+        .join('\n\n');
+
+    const result = {
+        role: 'assistant',
+        content: allText || (toolUseBlocks.length > 0 ? '' : null)
+    };
+
+    const reasoningText = thinkingBlocks
+        .map((block) => block.thinking)
+        .filter(Boolean)
+        .join('\n\n');
+    if (reasoningText) {
+        result.reasoning_content = reasoningText;
+    }
+
+    if (toolUseBlocks.length > 0) {
+        result.tool_calls = toolUseBlocks.map((block) => {
+            let args = '{}';
+            if (block.input !== undefined && block.input !== null) {
+                try {
+                    const input = options.sortToolInput === false ? block.input : sortObjectKeys(block.input);
+                    args = JSON.stringify(input);
+                } catch (e) {
+                    options.logger?.warn?.(`Failed to stringify tool input for ${block.name}:`, e.message);
+                    args = '{}';
+                }
+            }
+            return {
+                id: block.id,
+                type: 'function',
+                function: {
+                    name: block.name,
+                    arguments: args
+                }
+            };
+        });
+    }
+
+    return [result];
 }
 
 function cloneChatMessages(messages) {
