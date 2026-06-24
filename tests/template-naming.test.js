@@ -24,6 +24,7 @@ test('unified admin console includes all service management surfaces', () => {
     const upstreamModel = readFileSync(join(root, 'src/db/models/tenant-upstream.js'), 'utf8');
     const adminHtml = readFileSync(join(root, 'src/templates/admin.html'), 'utf8');
     const statsRoute = readFileSync(join(root, 'src/routes/stats.js'), 'utf8');
+    const statsUsage = readFileSync(join(root, 'src/services/gateway/stats-usage.js'), 'utf8');
     const loginHtml = readFileSync(join(root, 'src/templates/login.html'), 'utf8');
     const notFoundHtml = readFileSync(join(root, 'src/templates/404.html'), 'utf8');
     assert.equal(existsSync(join(root, 'src/templates/stats.html')), false);
@@ -291,11 +292,13 @@ test('unified admin console includes all service management surfaces', () => {
     assert.match(statsRoute, /getSessionUser/);
     assert.doesNotMatch(statsRoute, /function isStatsAdmin\(req\)/);
     assert.doesNotMatch(statsRoute, /requireStatsAdmin\(req, res\)/);
-    assert.match(statsRoute, /function buildDateRangeWhere\(/);
     assert.match(statsRoute, /getStatsService\(url\)/);
-    assert.match(statsRoute, /getOverviewStats\(service, startDate, endDate, tenantId\)/);
-    assert.match(statsRoute, /getModelCacheStats\(service, startDate, endDate, tenantId\)/);
-    assert.match(statsRoute, /getUserDetail\(service, username\)/);
+    assert.match(statsRoute, /statsUsage\.getOverviewStats\(service, startDate, endDate, tenantId\)/);
+    assert.match(statsRoute, /statsUsage\.getModelCacheStats\(service, startDate, endDate, tenantId\)/);
+    assert.match(statsRoute, /statsUsage\.getUserDetail\(service, username\)/);
+    assert.match(statsUsage, /function buildDateRangeWhere\(/);
+    assert.match(statsUsage, /function getOverviewStats\(tenantManager, serviceType = 'codebuddy', startDate, endDate, tenantId\)/);
+    assert.match(statsUsage, /function getModelCacheStats\(tenantManager, serviceType = 'codebuddy', startDate, endDate, tenantId\)/);
 });
 
 test('unified admin inline scripts are syntactically valid', () => {
