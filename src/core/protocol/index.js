@@ -7,3 +7,4 @@ export * from './stream/accumulators/responses.js';
 export * from './stream/accumulators/anthropic.js';
 export * from './diagnostics/index.js';
 export * from './http-converters.js';
+export * from './schema.js';

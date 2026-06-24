@@ -57,6 +57,20 @@ test('protocol engine does not import upper application layers', async () => {
     assert.deepEqual(violations, []);
 });
 
+test('protocol engine owns protocol schema helpers instead of importing generic utilities', async () => {
+    const files = await listJsFiles(protocolRoot);
+    const violations = [];
+
+    for (const file of files) {
+        const source = await readFile(file, 'utf8');
+        if (/from\s+['"][^'"]*utils\/helpers\.js['"]/.test(source.replaceAll('\\', '/'))) {
+            violations.push(path.relative(repoRoot, file).replaceAll('\\', '/'));
+        }
+    }
+
+    assert.deepEqual(violations, []);
+});
+
 test('legacy transformer directory no longer owns protocol engine files', async () => {
     await assert.rejects(
         stat(path.join(repoRoot, 'src', 'transformer')),

@@ -1,5 +1,5 @@
 import {convertResponsesUsageToChat, mergeConsecutiveAssistantMessages} from './responses.js';
-import {cleanJsonSchema} from '../../utils/helpers.js';
+import {cleanJsonSchema} from './schema.js';
 import {
     extractCacheHitTokens,
     extractInputTokens,
