@@ -7,29 +7,39 @@ import {createChatCompletions, getModels} from '../services/codebuddy/api.js';
 import {aggregateStreamResponse} from '../services/providers/index.js';
 import {
     anthropicToOpenAI,
-    injectBehaviorRules,
     openAIToAnthropic
 } from '../services/codebuddy/anthropic-adapter.js';
 import {
-    buildConversationAnchorKey,
     chatResponseToResponses,
     chatResponseToCompact,
     compactRequestToChat,
     createChatToAnthropicStreamBridge,
     createChatToResponsesStreamBridge,
     extractCacheHitTokens,
-    mergeConsecutiveAssistantMessages,
     responsesRequestToChat,
     rewriteOpenAIStream,
-    sanitizeAnthropicPayload,
-    stripDynamicReminders
+    sanitizeAnthropicPayload
 } from '../services/codebuddy/protocol-adapter.js';
 import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
-import {resolveCredential} from '../services/gateway/gateway-auth.js';
 import {BLOCKED_DOMAINS, getCodebuddyBaseUrl, isPersonalHost} from '../services/codebuddy/config.js';
 import {handleWSConnection} from '../services/shared/index.js';
+import {
+    codebuddyUpstreamErrorStatus as upstreamErrorStatus,
+    sendCodebuddyAnthropicError as sendAnthropicError,
+    sendCodebuddyJsonResponse as sendJson,
+    sendCodebuddyOpenAIError as sendOpenAIError
+} from '../services/codebuddy/response-writer.js';
+import {resolveCodebuddyConversationId as resolveConversationId} from '../services/codebuddy/conversation-key.js';
+import {prepareCodebuddyOutboundChatRequest} from '../services/codebuddy/outbound-chat.js';
+import {
+    createCodebuddyCredentialResolver,
+    createCodebuddyTenantCredentialManagerResolver
+} from '../services/codebuddy/credential-context.js';
+import {pickCodebuddyUsageModel as pickModelName} from '../services/codebuddy/usage.js';
 import logger from '../utils/logger.js';
-import {isNetworkError} from '../utils/http-client.js';
+
+const authenticateAndGetCredential = createCodebuddyCredentialResolver({tenantManager: unifiedTenantManager});
+const resolveTenantManager = createCodebuddyTenantCredentialManagerResolver({tenantManager: unifiedTenantManager});
 
 /**
  * 基于规则映射 Codex 传入的模型名到 CodeBuddy 实际可用模型
@@ -47,161 +57,6 @@ function mapModelName(model) {
     return model;
 }
 
-/**
- * 选择用于统计记录的模型名
- * 优先使用上游返回的模型名，但如果上游返回的是端点 ID（ep- 前缀）等不可读标识，
- * 则回退到客户端请求的模型名
- */
-function pickModelName(upstreamModel, clientModel) {
-    if (upstreamModel && !upstreamModel.startsWith('ep-')) return upstreamModel;
-    return clientModel || upstreamModel;
-}
-
-/**
- * 发送 JSON 响应
- */
-function sendJson(res, status, data) {
-    if (res.headersSent) return;
-    res.writeHead(status, {'Content-Type': 'application/json'});
-    res.end(JSON.stringify(data));
-}
-
-/**
- * 发送 OpenAI 格式的错误响应
- */
-function sendOpenAIError(res, status, message, type = 'api_error') {
-    if (res.headersSent) {
-        try { res.end(); } catch {}
-        return;
-    }
-    const errorResponse = {
-        error: {
-            message: message,
-            type: type,
-            code: status
-        }
-    };
-    res.writeHead(status, {'Content-Type': 'application/json'});
-    res.end(JSON.stringify(errorResponse));
-}
-
-/**
- * 发送 Anthropic 格式的错误响应
- */
-function sendAnthropicError(res, status, message) {
-    const errorResponse = {
-        type: 'error',
-        error: {
-            type: status === 401 ? 'authentication_error' : 'api_error',
-            message: message
-        }
-    };
-    sendJson(res, status, errorResponse);
-}
-
-function upstreamErrorStatus(err) {
-    return isNetworkError(err) ? 502 : 500;
-}
-
-/**
- * 从请求头或 payload 消息中提取稳定的会话标识
- *
- * 优先级：x-conversation-id 请求头 > 从 messages 前缀推算的会话指纹
- *
- * 推算策略：用 system、tools、第一条 user 和 tenantId 作为对话锚点，
- * 避免多轮追加消息时 prompt_cache_key 每轮变化。
- * 这确保 prompt_cache_key 在同一对话内保持一致，
- * 让 GLM 等依赖 cache key 做实例路由的厂商能正确复用 KV Cache。
- */
-function normalizeConversationId(value) {
-    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function extractConversationIdFromPayload(payload) {
-    if (!payload || typeof payload !== 'object') return undefined;
-    const metadata = payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : undefined;
-    const candidates = [
-        payload.conversation_id,
-        payload.conversationId,
-        payload.session_id,
-        payload.sessionId,
-        payload.thread_id,
-        payload.threadId,
-        metadata?.conversation_id,
-        metadata?.conversationId,
-        metadata?.session_id,
-        metadata?.sessionId,
-        metadata?.thread_id,
-        metadata?.threadId
-    ];
-
-    for (const candidate of candidates) {
-        const normalized = normalizeConversationId(candidate);
-        if (normalized) return normalized;
-    }
-    return undefined;
-}
-
-function resolveConversationId(req, messages, payload = {}, meta = {}) {
-    // 1. 优先使用客户端显式传入的 conversation-id
-    const headerCandidates = [
-        req.headers['x-conversation-id'],
-        req.headers['x-session-id'],
-        req.headers['x-chat-id'],
-        req.headers['x-thread-id']
-    ];
-
-    for (const candidate of headerCandidates) {
-        const value = Array.isArray(candidate) ? candidate[0] : candidate;
-        const normalized = normalizeConversationId(value);
-        if (normalized) return normalized;
-    }
-
-    const payloadResult = extractConversationIdFromPayload(payload);
-    if (payloadResult) return payloadResult;
-
-    const keyMeta = {
-        ...meta,
-        ...(req.codebuddyClientConnectionId && !meta.clientConnectionId
-            ? {clientConnectionId: req.codebuddyClientConnectionId}
-            : {})
-    };
-
-    const anchorPayload =
-        payload && typeof payload === 'object'
-            ? {...payload, messages: Array.isArray(messages) ? messages : payload.messages}
-            : {messages};
-    return buildConversationAnchorKey(anchorPayload, keyMeta);
-}
-
-/**
- * 鉴权并获取租户凭证
- * @param {Object} req - 请求对象（必须已通过中间件注入 req.tenantId）
- */
-async function authenticateAndGetCredential(req) {
-    const tenantId = req.tenantId;
-    if (!tenantId) {
-        return {error: {status: 503, message: 'CodeBuddy tenant system is not enabled'}};
-    }
-
-    // Get the codebuddy credential manager for this tenant
-    // This uses the existing TokenManager logic via tenant-manager
-    const {credentials, activeIndex} = (await unifiedTenantManager.listCodebuddyCredentials)
-        ? await unifiedTenantManager.listCodebuddyCredentials(tenantId)
-        : {credentials: [], activeIndex: -1};
-
-    const credential = resolveCredential(req.headers, credentials, activeIndex);
-
-    if (!credential) {
-        return {error: {status: 503, message: 'No available credentials for tenant'}};
-    }
-
-    return {credential, tenantId};
-}
-
-/**
- * 解析请求体
- */
 async function parseBody(req) {
     const chunks = [];
     for await (const chunk of req) {
@@ -210,14 +65,6 @@ async function parseBody(req) {
     return Buffer.concat(chunks).toString('utf8');
 }
 
-function prepareCodebuddyOutboundChatRequest(chatRequest, {model, stream} = {}) {
-    if (model) chatRequest.model = model;
-    if (stream !== undefined) chatRequest.stream = stream;
-    chatRequest.messages = injectBehaviorRules(chatRequest.messages || [], chatRequest.model);
-    chatRequest.messages = stripDynamicReminders(chatRequest.messages);
-    mergeConsecutiveAssistantMessages(chatRequest.messages);
-    return chatRequest;
-}
 
 /**
  * 处理 OpenAI 格式的 /v1/chat/completions 请求 - 直接透传
@@ -680,18 +527,6 @@ async function handleAnthropicModels(req, res) {
 /**
  * 获取租户的凭证管理器（用于凭证管理端点）
  */
-async function resolveTenantManager(req) {
-    const tenantId = req.tenantId;
-    if (!tenantId) return {error: {status: 401, message: 'Unauthorized'}};
-    // Use the existing codebuddy tenant-manager for credential operations
-    // (still needed until Task 20 extracts credential manager)
-    const manager = (await unifiedTenantManager.getCodebuddyCredentialManager)
-        ? await unifiedTenantManager.getCodebuddyCredentialManager(tenantId)
-        : null;
-    if (!manager) return {error: {status: 404, message: 'Tenant credential manager not available'}};
-    return {manager, tenantId};
-}
-
 /**
  * 处理 OpenAI Responses API 请求 (/codebuddy/v1/responses)
  * 将 Responses 格式转为 Chat Completions 发给上游，再将响应转回 Responses 格式
