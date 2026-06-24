@@ -230,6 +230,13 @@ test('dashboard routes import product services through public boundaries', async
     assert.deepEqual(violations, []);
 });
 
+test('dashboard frontend route delegates usage persistence to gateway service', async () => {
+    const source = await readFile(path.join(repoRoot, 'src/routes/dashboard-frontend.js'), 'utf8')
+        .then((text) => text.replaceAll('\\', '/'));
+
+    assert.doesNotMatch(source, /db\/models|from\s+['"]sequelize['"]|\bmodels\./);
+});
+
 test('dashboard Copilot route delegates credential persistence to Copilot service', async () => {
     const source = await readFile(path.join(repoRoot, 'src/routes/dashboard-copilot.js'), 'utf8')
         .then((text) => text.replaceAll('\\', '/'));
