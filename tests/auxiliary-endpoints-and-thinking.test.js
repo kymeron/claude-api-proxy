@@ -237,7 +237,12 @@ test('all service routes keep Anthropic endpoints out of OpenAI namespace', () =
     ];
 
     for (const [service, file] of routeFiles) {
-        const source = readFileSync(join(root, file), 'utf8');
+        const source = service === 'relay'
+            ? [
+                file,
+                'src/services/relay/anthropic-messages-handler.js'
+            ].map((sourceFile) => readFileSync(join(root, sourceFile), 'utf8')).join('\n')
+            : readFileSync(join(root, file), 'utf8');
         assert.match(source, new RegExp(`/${service}/anthropic/v1/messages`));
         assert.match(source, new RegExp(`/${service}/anthropic/v1/messages/count_tokens`));
         assert.doesNotMatch(source, new RegExp(`/${service}/v1/messages'`));
@@ -442,7 +447,8 @@ test('chatRequestToAnthropic preserves file blocks through canonical rendering',
 test('relay routes expose cross-protocol bridges without protocol mismatch rejects', () => {
     const source = [
         'src/routes/relay.js',
-        'src/services/relay/chat-completions-handler.js'
+        'src/services/relay/chat-completions-handler.js',
+        'src/services/relay/anthropic-messages-handler.js'
     ].map((file) => readFileSync(join(root, file), 'utf8')).join('\n');
 
     for (const requestType of [
@@ -476,7 +482,7 @@ test('relay Responses passthrough paths limit oversized input before upstream tr
 });
 
 test('relay Anthropic passthrough non-stream stats use split input token helper', () => {
-    const source = readFileSync(join(root, 'src/routes/relay.js'), 'utf8');
+    const source = readFileSync(join(root, 'src/services/relay/anthropic-messages-handler.js'), 'utf8');
 
     assert.match(
         source,
@@ -507,7 +513,7 @@ test('relay Chat handler does not reference Anthropic payload before it is creat
 });
 
 test('relay Anthropic passthrough stream records accumulated response into session', () => {
-    const source = readFileSync(join(root, 'src/routes/relay.js'), 'utf8');
+    const source = readFileSync(join(root, 'src/services/relay/anthropic-messages-handler.js'), 'utf8');
 
     assert.match(source, /const anthropicAccumulator = createAnthropicStreamAccumulator/);
     assert.match(source, /anthropicAccumulator\.feed\(event, parsed\)/);
@@ -518,7 +524,7 @@ test('relay Anthropic passthrough stream records accumulated response into sessi
 });
 
 test('relay Anthropic via Chat stream records accumulated chat response into session', () => {
-    const source = readFileSync(join(root, 'src/routes/relay.js'), 'utf8');
+    const source = readFileSync(join(root, 'src/services/relay/anthropic-messages-handler.js'), 'utf8');
     const requestTypeIndex = source.indexOf("requestType: 'Anthropic'");
     const start = source.lastIndexOf("if (anthropicPayload.stream) {", requestTypeIndex);
     const end = source.indexOf('} else {', requestTypeIndex);
@@ -629,7 +635,7 @@ test('stream routes use canonical bridge wiring without legacy state machines', 
         },
         {
             name: 'relay Anthropic via Chat',
-            file: 'src/routes/relay.js',
+            file: 'src/services/relay/anthropic-messages-handler.js',
             present: [/chatToAnthropicBridge\.feed\(data\)/],
             absent: [/new ClaudeStreamState/, /new SSEWriter/]
         },
