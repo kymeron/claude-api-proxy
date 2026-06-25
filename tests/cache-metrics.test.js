@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {
     extractCacheHitTokens,
     openAIUsageToAnthropicUsage
-} from '../src/transformer/shared-translator.js';
-import {anthropicUsageToChatUsage} from '../src/routes/relay-protocol-converters.js';
+} from '../src/protocol-engine/core/shared.js';
+import {anthropicUsageToChatUsage} from '../src/protocol-engine/core/http-converters.js';
 
 /* ==================== extractCacheHitTokens 四协议覆盖 ==================== */
 

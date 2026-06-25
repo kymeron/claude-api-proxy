@@ -1,8 +1,7 @@
 export const RESPONSES_WS_MODE_OFF = 'off';
 export const RESPONSES_WS_MODE_CTX_POOL = 'ctx_pool';
-export const RESPONSES_WS_MODE_PASSTHROUGH = 'passthrough';
 
-const LEGACY_CTX_POOL_MODES = new Set(['shared', 'dedicated', RESPONSES_WS_MODE_PASSTHROUGH]);
+const LEGACY_CTX_POOL_MODES = new Set(['shared', 'dedicated', 'passthrough']);
 const VALID_RESPONSES_WS_MODES = new Set([
     RESPONSES_WS_MODE_OFF,
     RESPONSES_WS_MODE_CTX_POOL
@@ -43,10 +42,4 @@ export function resolveResponsesWebSocketMode(upstream = {}, fallback) {
         queryMode;
 
     return normalizeResponsesWebSocketMode(configured, envFallback);
-}
-
-export function shouldUseResponsesWebSocketPassthrough(upstream = {}, fallback) {
-    const protocol = String(upstream.protocol || '').trim().toLowerCase();
-    return protocol === 'responses_ws' &&
-        resolveResponsesWebSocketMode(upstream, fallback) === RESPONSES_WS_MODE_PASSTHROUGH;
 }

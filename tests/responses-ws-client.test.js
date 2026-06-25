@@ -7,7 +7,7 @@ import {
     sendResponsesWebSocketRequest,
     ResponsesWebSocketError
 } from '../src/services/shared/responses-ws-client.js';
-import {createResponsesWebSocket, discardResponsesWebSocketConnection} from '../src/services/relay/api.js';
+import {createResponsesWebSocket, discardResponsesWebSocketConnection} from '../src/services/providers/upstream-api.js';
 import {
     acquire,
     connectionPoolKey,

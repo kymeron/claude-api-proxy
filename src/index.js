@@ -10,9 +10,12 @@ import './load-env.js';
 
 import {networkInterfaces} from 'os';
 import {createServer} from './server.js';
-import {initAuthMode, getAuthMode} from './services/shared/auth-mode.js';
-import {ensureAdminFromEnv} from './services/shared/local-auth.js';
-import {unifiedTenantManager} from './services/gateway/tenant-manager.js';
+import {
+    ensureAdminFromEnv,
+    getAuthMode,
+    initAuthMode,
+    unifiedTenantManager
+} from './services/gateway/index.js';
 import logger from './utils/logger.js';
 
 // 配置

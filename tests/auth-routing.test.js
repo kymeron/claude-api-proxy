@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'fs';
 import {createServer} from '../src/server.js';
-import {createSessionToken, setSessionCookie, clearSessionCookie} from '../src/services/gateway/session.js';
+import {clearSessionCookie, createSessionToken, setSessionCookie} from '../src/services/gateway/index.js';
 import {DASHBOARD_ENTRY_PATH, resolveLoginRole} from '../src/routes/auth.js';
 
 async function startServer(t) {
@@ -267,6 +267,26 @@ test('feedback requires a logged-in session but not administrator role', async t
         assert.equal(administrator.status, 302);
         assert.equal(administrator.headers.get('location'), '/dashboard#/feedback');
     }
+});
+
+test('legacy standalone upload routes are removed', async t => {
+    const base = await startServer(t);
+
+    const page = await fetch(`${base}/uploadFE`, {
+        headers: {accept: 'text/html'},
+        redirect: 'manual'
+    });
+    assert.equal(page.status, 404);
+    assert.match(await page.text(), /HTTP 404/);
+
+    const api = await fetch(`${base}/api/upload`, {
+        method: 'POST',
+        headers: {...sessionHeaders(), accept: 'application/json'}
+    });
+    assert.equal(api.status, 404);
+
+    const serverSource = readFileSync('src/server.js', 'utf8');
+    assert.doesNotMatch(serverSource, /\/uploadFE|\/api\/upload|Busboy/);
 });
 
 test('stats root no longer serves a standalone dashboard page', async t => {

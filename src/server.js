@@ -4,7 +4,7 @@
  */
 
 import http from 'http';
-import {readFileSync, existsSync, mkdirSync, createWriteStream} from 'fs';
+import {readFileSync, existsSync} from 'fs';
 import {join, dirname, extname} from 'path';
 import {fileURLToPath} from 'url';
 import {WebSocketServer} from 'ws';
@@ -18,11 +18,12 @@ import {routeStatsRequest} from './routes/stats.js';
 import {handleFeedback} from './routes/feedback.js';
 import {routeFeedbackAdmin} from './routes/feedback-admin.js';
 import {sendNotFoundPage, wantsHtml} from './routes/not-found.js';
-import Busboy from 'busboy';
-import {authenticateApiKey} from './services/gateway/gateway-auth.js';
-import {requireApiAuth} from './services/gateway/dashboard-auth.js';
-import {getSessionUser} from './services/gateway/session.js';
-import {unifiedTenantManager} from './services/gateway/tenant-manager.js';
+import {
+    authenticateApiKey,
+    getSessionUser,
+    requireApiAuth,
+    unifiedTenantManager
+} from './services/gateway/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -350,148 +351,6 @@ export function createServer() {
                 sendError(res, 500, 'Internal server error');
                 return;
             }
-        }
-
-        // 文件上传页面
-        if (req.method === 'GET' && req.url === '/uploadFE') {
-            const html = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>文件上传</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-    .container { max-width: 480px; width: 100%; padding: 48px 24px; }
-    h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 8px; color: #f0f6fc; }
-    .subtitle { color: #8b949e; margin-bottom: 32px; font-size: 0.95rem; }
-    .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; }
-    .file-input { display: none; }
-    .file-label { display: block; width: 100%; padding: 12px 16px; border: 2px dashed #30363d; border-radius: 8px; text-align: center; color: #8b949e; cursor: pointer; transition: border-color 0.2s, color 0.2s; margin-bottom: 16px; }
-    .file-label:hover { border-color: #58a6ff; color: #58a6ff; }
-    .file-label.has-file { border-color: #3fb950; color: #3fb950; }
-    button { width: 100%; padding: 12px 16px; border: none; border-radius: 8px; background: #238636; color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
-    button:hover { background: #2ea043; }
-    button:disabled { background: #30363d; color: #8b949e; cursor: not-allowed; }
-    .message { margin-top: 16px; padding: 12px 16px; border-radius: 8px; font-size: 0.9rem; display: none; }
-    .message.success { display: block; background: #0f2d1f; color: #3fb950; border: 1px solid #3fb95044; }
-    .message.error { display: block; background: #2d0f0f; color: #f85149; border: 1px solid #f8514944; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>文件上传</h1>
-    <p class="subtitle">选择文件并上传到服务器</p>
-    <div class="card">
-      <input type="file" id="fileInput" class="file-input">
-      <label for="fileInput" class="file-label" id="fileLabel">点击选择文件</label>
-      <button id="uploadBtn" disabled>上传</button>
-      <div class="message" id="message"></div>
-    </div>
-  </div>
-  <script>
-    function pageApiOrigin(){
-      return '';
-    }
-    function apiUrl(path){
-      if(/^https?:\/\//i.test(path))return path;
-      const origin=pageApiOrigin();
-      return origin?origin+path:path;
-    }
-    const fileInput = document.getElementById('fileInput');
-    const fileLabel = document.getElementById('fileLabel');
-    const uploadBtn = document.getElementById('uploadBtn');
-    const message = document.getElementById('message');
-    fileInput.addEventListener('change', () => {
-      if (fileInput.files.length > 0) {
-        fileLabel.textContent = fileInput.files[0].name;
-        fileLabel.classList.add('has-file');
-        uploadBtn.disabled = false;
-      } else {
-        fileLabel.textContent = '点击选择文件';
-        fileLabel.classList.remove('has-file');
-        uploadBtn.disabled = true;
-      }
-      message.className = 'message';
-    });
-    uploadBtn.addEventListener('click', async () => {
-      if (fileInput.files.length === 0) return;
-      uploadBtn.disabled = true;
-      message.className = 'message';
-      const formData = new FormData();
-      formData.append('file', fileInput.files[0]);
-      try {
-        const res = await fetch(apiUrl('/api/upload'), { method: 'POST', credentials: 'include', body: formData });
-        const data = await res.json();
-        if (data.success) {
-          message.className = 'message success';
-          message.textContent = '上传成功：' + data.filename;
-        } else {
-          message.className = 'message error';
-          message.textContent = data.message || '上传失败';
-        }
-      } catch (err) {
-        message.className = 'message error';
-        message.textContent = '上传失败：' + err.message;
-      }
-      uploadBtn.disabled = false;
-    });
-  </script>
-</body>
-</html>`;
-            res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'});
-            res.end(html);
-            return;
-        }
-
-        // 文件上传 API
-        if (req.method === 'POST' && req.url === '/api/upload') {
-            const contentType = req.headers['content-type'] || '';
-            if (!contentType.includes('multipart/form-data')) {
-                sendJson(res, 400, {success: false, message: '未找到文件'});
-                return;
-            }
-            try {
-                const busboy = Busboy({headers: req.headers});
-                let uploadedFile = null;
-                let fileWritePromise = null;
-
-                busboy.on('file', (fieldname, file, info) => {
-                    // busboy 默认按 latin1 解析文件名，需要转回 UTF-8
-                    const filename = Buffer.from(info.filename, 'latin1').toString('utf8');
-                    const uploadsDir = join(process.cwd(), 'uploads');
-                    if (!existsSync(uploadsDir)) {
-                        mkdirSync(uploadsDir);
-                    }
-                    const savePath = join(uploadsDir, filename);
-                    const writeStream = createWriteStream(savePath);
-                    file.pipe(writeStream);
-                    fileWritePromise = new Promise((resolve, reject) => {
-                        writeStream.on('finish', () => resolve(filename));
-                        writeStream.on('error', reject);
-                        file.on('error', reject);
-                    });
-                    uploadedFile = filename;
-                });
-
-                await new Promise((resolve, reject) => {
-                    busboy.on('finish', resolve);
-                    busboy.on('error', reject);
-                    req.pipe(busboy);
-                });
-
-                if (fileWritePromise) {
-                    const filename = await fileWritePromise;
-                    sendJson(res, 200, {success: true, filename});
-                } else {
-                    sendJson(res, 400, {success: false, message: '未找到文件'});
-                }
-            } catch (err) {
-                logger.error('Upload error:', err);
-                sendJson(res, 500, {success: false, message: '上传处理失败'});
-            }
-            return;
         }
 
         // 根路径统一进入管理控制台；未登录时先进入登录页

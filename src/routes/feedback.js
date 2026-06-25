@@ -10,7 +10,7 @@ import {mkdirSync, createWriteStream, rmSync} from 'fs';
 import {basename, join} from 'path';
 import logger from '../utils/logger.js';
 import {saveFeedback, getFeedbackConfig, repairMojibakeFilename} from '../services/feedback.js';
-import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
+import {unifiedTenantManager} from '../services/gateway/index.js';
 
 function sendJson(res, status, data) {
     res.writeHead(status, {'Content-Type': 'application/json'});

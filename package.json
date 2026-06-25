@@ -4,6 +4,9 @@
     "description": "Claude API 代理服务 - 将 Claude API 请求转换为 OpenAI 格式",
     "type": "module",
     "main": "src/index.js",
+    "imports": {
+        "#protocol-engine": "./src/protocol-engine/index.js"
+    },
     "scripts": {
         "start": "node src/index.js",
         "debug": "cross-env LOG_LEVEL=DEBUG node src/index.js",
@@ -14,11 +17,8 @@
         "@tencent-ai/codebuddy-code": "^2.98.1",
         "busboy": "^1.6.0",
         "cross-env": "^7.0.3",
-        "dotenv": "^17.2.4",
-        "html2canvas": "^1.4.1",
         "https-proxy-agent": "^7.0.6",
         "jsonwebtoken": "^9.0.3",
-        "jspdf": "^2.5.2",
         "ldapjs": "^3.0.7",
         "mysql2": "^3.22.3",
         "sequelize": "^6.37.8",

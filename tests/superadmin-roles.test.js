@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {models} from '../src/db/models/index.js';
-import {unifiedTenantManager} from '../src/services/gateway/tenant-manager.js';
+import {unifiedTenantManager} from '../src/services/gateway/index.js';
 import {
     listLocalUsers,
     createLocalUser,
     updateLocalUser,
     resetLocalUserPassword,
     deleteLocalUser
-} from '../src/services/shared/local-user-manager.js';
+} from '../src/services/gateway/index.js';
 import {ensureAdminFromEnv} from '../src/services/shared/local-auth.js';
 import {canManageDashboardTenant} from '../src/routes/dashboard-frontend.js';
 

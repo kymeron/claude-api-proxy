@@ -7,14 +7,14 @@
 
 import logger from '../utils/logger.js';
 import {
+    getAuthMode,
     listManagedUsers,
     createLocalUser,
     updateManagedUser,
     resetLocalUserPassword,
-    deleteManagedUser
-} from '../services/shared/local-user-manager.js';
-import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
-import {getAuthMode} from '../services/shared/auth-mode.js';
+    deleteManagedUser,
+    unifiedTenantManager
+} from '../services/gateway/index.js';
 
 function sendJson(res, status, data) {
     res.writeHead(status, {'Content-Type': 'application/json'});

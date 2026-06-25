@@ -7,12 +7,10 @@ import {
     copilotStore,
     runCopilotTenantContext
 } from '../src/services/copilot/runtime.js';
-import {unifiedTenantManager} from '../src/services/gateway/tenant-manager.js';
 import {buildCopilotNetworkKey} from '../src/services/copilot/copilot-api.js';
 
 test('keeps Copilot credential and usage context isolated across tenants', async () => {
     const originalModel = copilotCredentialManager.credentialModel;
-    const originalIncrement = unifiedTenantManager.incrementApiCallCount;
     const usage = [];
 
     copilotCredentialManager.credentialModel = {
@@ -32,8 +30,12 @@ test('keeps Copilot credential and usage context isolated across tenants', async
             };
         }
     };
-    unifiedTenantManager.incrementApiCallCount = (tenantId, serviceType) => {
-        usage.push({tenantId, serviceType});
+    const usageRecorder = {
+        incrementApiCallCount: (tenantId, serviceType) => {
+            usage.push({tenantId, serviceType});
+        },
+        incrementTokenUsage: () => {},
+        recordDailyUsage: () => {}
     };
 
     try {
@@ -46,7 +48,7 @@ test('keeps Copilot credential and usage context isolated across tenants', async
                     proxy: copilotStore.getProxyUrl(),
                     rejectUnauthorized: copilotStore.getRejectUnauthorized()
                 };
-            })
+            }, {usageRecorder})
         )));
 
         assert.deepEqual(results, [
@@ -59,7 +61,6 @@ test('keeps Copilot credential and usage context isolated across tenants', async
         ]);
     } finally {
         copilotCredentialManager.credentialModel = originalModel;
-        unifiedTenantManager.incrementApiCallCount = originalIncrement;
     }
 });
 

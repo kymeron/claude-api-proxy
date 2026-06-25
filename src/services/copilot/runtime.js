@@ -1,9 +1,13 @@
 import {AsyncLocalStorage} from 'async_hooks';
 import {copilotCredentialManager} from './credential-manager.js';
-import {unifiedTenantManager} from '../gateway/tenant-manager.js';
 import {DEFAULT_VSCODE_VERSION} from './config.js';
 
 const storage = new AsyncLocalStorage();
+const noopUsageRecorder = {
+    incrementApiCallCount() {},
+    incrementTokenUsage() {},
+    recordDailyUsage() {}
+};
 
 export function currentCopilotContext() {
     const context = storage.getStore();
@@ -15,9 +19,13 @@ export function runWithCopilotContext(context, callback) {
     return storage.run(context, callback);
 }
 
-export async function runCopilotTenantContext(tenantId, callback) {
+export async function runCopilotTenantContext(tenantId, callback, {usageRecorder = noopUsageRecorder} = {}) {
     const credential = await copilotCredentialManager.resolve(tenantId);
-    return storage.run({tenantId: Number(tenantId), credential}, callback);
+    return storage.run({
+        tenantId: Number(tenantId),
+        credential,
+        usageRecorder
+    }, callback);
 }
 
 export const copilotState = new Proxy({}, {
@@ -44,12 +52,12 @@ export const copilotStore = {
         return currentCopilotContext().credential.skip_tls_verify !== true;
     },
     incrementApiCallCount() {
-        const {tenantId} = currentCopilotContext();
-        unifiedTenantManager.incrementApiCallCount(tenantId, 'copilot');
+        const {tenantId, usageRecorder} = currentCopilotContext();
+        usageRecorder.incrementApiCallCount(tenantId, 'copilot');
     },
     incrementTokenUsage(inputTokens, outputTokens, cacheHitTokens = 0) {
-        const {tenantId} = currentCopilotContext();
-        unifiedTenantManager.incrementTokenUsage(
+        const {tenantId, usageRecorder} = currentCopilotContext();
+        usageRecorder.incrementTokenUsage(
             tenantId,
             'copilot',
             inputTokens,
@@ -58,8 +66,8 @@ export const copilotStore = {
         );
     },
     recordDailyUsage(inputTokens, outputTokens, cacheHitTokens = 0, model = 'unknown') {
-        const {tenantId} = currentCopilotContext();
-        unifiedTenantManager.recordDailyUsage(
+        const {tenantId, usageRecorder} = currentCopilotContext();
+        usageRecorder.recordDailyUsage(
             tenantId,
             'copilot',
             inputTokens,

@@ -6,18 +6,19 @@
 import {readFileSync} from 'fs';
 import {join, dirname} from 'path';
 import {fileURLToPath} from 'url';
-import logger from '../utils/logger.js';
-import {unifiedTenantManager} from '../services/gateway/tenant-manager.js';
-import {getSessionUser} from '../services/gateway/session.js';
+import {
+    changeOwnLocalUserPassword,
+    getDashboardUsageOverview,
+    getAuthMode,
+    getSessionUser,
+    listDashboardTenantMonthlyUsage,
+    unifiedTenantManager
+} from '../services/gateway/index.js';
 import {handleAdminUsers} from './dashboard-users.js';
-import {changeOwnLocalUserPassword} from '../services/shared/local-user-manager.js';
-import {getAuthMode} from '../services/shared/auth-mode.js';
 import {getCodebuddyAdminOptions, handleCodebuddyAdminRoute} from './dashboard-codebuddy.js';
-import {getCodebuddyCustomSiteLabels} from '../services/codebuddy/config.js';
+import {getCodebuddyCustomSiteLabels} from '../services/codebuddy/index.js';
 import {handleCopilotAdminRoute} from './dashboard-copilot.js';
 import {sendNotFoundPage, wantsHtml} from './not-found.js';
-import {Op} from 'sequelize';
-import {models} from '../db/models/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ADMIN_PAGE = readFileSync(join(__dirname, '..', 'templates', 'admin.html'), 'utf8');
@@ -92,76 +93,21 @@ export function canManageDashboardTenant(actorRole, targetTenant) {
     return false;
 }
 
-function aggregateUsageRows(rows) {
-    const totals = {apiCalls: 0, inputTokens: 0, outputTokens: 0, cacheHitTokens: 0, credit: 0};
-    const monthly = new Map();
-    const daily = new Map();
-    const modelsByName = new Map();
-
-    for (const row of rows) {
-        const apiCalls = Number(row.api_calls || 0);
-        const inputTokens = Number(row.input_tokens || 0);
-        const outputTokens = Number(row.output_tokens || 0);
-        const cacheHitTokens = Number(row.input_cache_hit || 0);
-        const credit = Number(row.credit || 0);
-        totals.apiCalls += apiCalls;
-        totals.inputTokens += inputTokens;
-        totals.outputTokens += outputTokens;
-        totals.cacheHitTokens += cacheHitTokens;
-        totals.credit += credit;
-
-        const month = String(row.date || '').slice(0, 7);
-        const day = row.date;
-        const model = row.model || 'unknown';
-        for (const [key, map] of [[month, monthly], [day, daily], [model, modelsByName]]) {
-            if (!key) continue;
-            const item = map.get(key) || {key, apiCalls: 0, inputTokens: 0, outputTokens: 0, cacheHitTokens: 0, credit: 0};
-            item.apiCalls += apiCalls;
-            item.inputTokens += inputTokens;
-            item.outputTokens += outputTokens;
-            item.cacheHitTokens += cacheHitTokens;
-            item.credit += credit;
-            map.set(key, item);
-        }
-    }
-
-    const withRate = item => ({
-        ...item,
-        cacheHitRate: item.inputTokens > 0 ? Math.round((item.cacheHitTokens / item.inputTokens) * 1000) / 10 : 0
-    });
-    return {
-        totals: withRate({...totals, totalTokens: totals.inputTokens + totals.outputTokens}),
-        monthlyTrend: [...monthly.values()].sort((a, b) => a.key.localeCompare(b.key)).map(item => withRate({month: item.key, ...item})),
-        dailyTrend: [...daily.values()].sort((a, b) => a.key.localeCompare(b.key)).map(item => withRate({date: item.key, ...item})),
-        modelStats: [...modelsByName.values()].sort((a, b) => b.inputTokens - a.inputTokens).map(item => withRate({model: item.key, ...item}))
-    };
-}
-
 async function adminStatsOverview(req, res, username) {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const serviceType = url.searchParams.get('service') || 'relay';
     if (!SERVICES.has(serviceType)) return sendJson(res, 400, {error: 'Invalid service'});
 
-    let tenantId = unifiedTenantManager.findTenantByUsername(username);
-    if (!tenantId) tenantId = await unifiedTenantManager.createTenantForUser(username, username);
-    const tenant = unifiedTenantManager.getTenant(tenantId);
-    const serviceProfile = tenant?.serviceProfiles?.find(profile => profile.service_type === serviceType);
-    if (!serviceProfile?.enabled && !unifiedTenantManager.isAdmin(username)) {
-        return sendJson(res, 403, {error: 'Service is not enabled'});
-    }
-
-    await unifiedTenantManager._flushDirtyTenants();
-    const rows = await models.TenantDailyUsage.findAll({
-        where: {tenant_id: tenantId, service_type: serviceType},
-        order: [['date', 'ASC'], ['model', 'ASC']],
-        raw: true
+    const result = await getDashboardUsageOverview({
+        tenantManager: unifiedTenantManager,
+        username,
+        serviceType
     });
-    const aggregated = aggregateUsageRows(rows);
+    if (!result.ok) return sendJson(res, result.status, {error: result.error});
+    const {ok, tenant, ...payload} = result;
     return sendJson(res, 200, {
-        service: serviceType,
         tenant: tenantView(tenant, false),
-        ...aggregated,
-        recentRows: rows.slice(-100).reverse()
+        ...payload
     });
 }
 
@@ -374,7 +320,7 @@ export async function routeAdminFrontend(req, res) {
             }
             const {enabled} = await readRequestBody(req);
             const serviceType = serviceMatch[1];
-            if (!SERVICES.has(serviceType)) return sendJson(res, 400, {error: '鏈煡鏈嶅姟'});
+            if (!SERVICES.has(serviceType)) return sendJson(res, 400, {error: '未知服务'});
             await unifiedTenantManager.setServiceEnabled(tenantId, serviceType, enabled === true);
             return sendJson(res, 200, {message: '服务状态已更新'});
         }
@@ -385,19 +331,16 @@ export async function routeAdminFrontend(req, res) {
             if (!SERVICES.has(serviceType) || !/^\d{4}-\d{2}$/.test(month)) {
                 return sendJson(res, 400, {error: 'Invalid service or month'});
             }
-            await unifiedTenantManager._flushDirtyTenants();
-            const rows = await models.TenantDailyUsage.findAll({
-                where: {
-                    tenant_id: tenantId,
-                    service_type: serviceType,
-                    date: {[Op.like]: `${month}-%`}
-                },
-                order: [['date', 'ASC'], ['model', 'ASC']]
+            const data = await listDashboardTenantMonthlyUsage({
+                tenantManager: unifiedTenantManager,
+                tenantId,
+                serviceType,
+                month
             });
             return sendJson(res, 200, {
                 month,
                 service: serviceType,
-                data: rows.map(row => row.toJSON())
+                data
             });
         }
 

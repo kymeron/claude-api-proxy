@@ -11,7 +11,6 @@ import {basename, join} from 'path';
 import {Op} from 'sequelize';
 import logger from '../utils/logger.js';
 import {Feedback} from '../db/models/feedback.js';
-import {unifiedTenantManager} from './gateway/tenant-manager.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -28,6 +27,65 @@ export function repairMojibakeFilename(filename) {
     } catch {
         return filename;
     }
+}
+
+function canViewAllFeedback(sessionUser = {}) {
+    return sessionUser.role === 'admin' || sessionUser.role === 'superadmin';
+}
+
+export function canManageFeedback(sessionUser = {}, feedback) {
+    return canViewAllFeedback(sessionUser) || (sessionUser.username && feedback?.username === sessionUser.username);
+}
+
+export function toFeedbackAdminView(sessionUser, feedback) {
+    const raw = typeof feedback.toJSON === 'function' ? feedback.toJSON() : feedback;
+    return {
+        ...raw,
+        attachments: (raw.attachments || []).map(item => ({...item, name: repairMojibakeFilename(item.name)})),
+        can_manage: canManageFeedback(sessionUser, raw)
+    };
+}
+
+export function findFeedbackById(id) {
+    return Feedback.findByPk(id);
+}
+
+export async function listFeedbackForAdmin({
+    page = 1,
+    pageSize = 20,
+    status,
+    category,
+    keyword,
+    sessionUser = {}
+} = {}) {
+    const where = {};
+    if (!canViewAllFeedback(sessionUser)) {
+        where.username = sessionUser.username || '';
+    }
+    if (status) where.status = status;
+    if (category) where.category = category;
+    if (keyword) {
+        where[Op.or] = [
+            {description: {[Op.like]: `%${keyword}%`}},
+            {username: {[Op.like]: `%${keyword}%`}}
+        ];
+    }
+
+    const {count, rows} = await Feedback.findAndCountAll({
+        where,
+        order: [['created_at', 'DESC']],
+        limit: pageSize,
+        offset: (page - 1) * pageSize
+    });
+
+    return {
+        total: count,
+        page,
+        pageSize,
+        current_user: sessionUser.username || '',
+        is_admin: canViewAllFeedback(sessionUser),
+        list: rows.map(row => toFeedbackAdminView(sessionUser, row))
+    };
 }
 
 /**
@@ -138,7 +196,9 @@ export async function saveFeedback({category, description, source, username, ten
  * 修复已有的空 tenant_id 记录
  * 根据 username 和 source 反查租户ID
  */
-export async function repairEmptyTenantIds() {
+export async function repairEmptyTenantIds({findTenantByUsername} = {}) {
+    if (typeof findTenantByUsername !== 'function') return;
+
     const rows = await Feedback.findAll({
         where: {
             [Op.or]: [
@@ -154,7 +214,7 @@ export async function repairEmptyTenantIds() {
     for (const row of rows) {
         if (!row.username) continue;
         try {
-            const tenantId = await unifiedTenantManager.findTenantByUsername(row.username);
+            const tenantId = await findTenantByUsername(row.username);
             if (tenantId) {
                 await row.update({tenant_id: tenantId});
                 fixed++;
