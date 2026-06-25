@@ -1,3 +1,5 @@
+import {parseUpstreamJson as parseRelayUpstreamJson} from '../shared/upstream-json.js';
+
 export function createRelayResponsesAPIHandler({
     authenticateAndGetUpstream,
     sendOpenAIError,
@@ -157,7 +159,7 @@ export function createRelayResponsesAPIHandler({
                 }
 
                 const responseBody = await readResponseBody(response.body);
-                const parsed = JSON.parse(responseBody);
+                const parsed = parseRelayUpstreamJson(responseBody);
                 const chatResponse = anthropicResponseToChat(parsed, responsesReq.model);
                 recordUsage(
                     tenantId,
@@ -338,7 +340,7 @@ export function createRelayResponsesAPIHandler({
                 }
 
                 const responseBody = await readResponseBody(response.body);
-                const parsed = JSON.parse(responseBody);
+                const parsed = parseRelayUpstreamJson(responseBody);
                 recordCompletedResponseState(tenantId, stateConversationKey, parsed);
                 recordUsage(
                     tenantId,

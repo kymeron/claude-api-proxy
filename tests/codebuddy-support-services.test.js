@@ -47,12 +47,21 @@ test('CodeBuddy response writer emits OpenAI and Anthropic error shapes', () => 
         error: {type: 'api_error', message: 'Upstream failed'}
     });
 
+    const overloadedRes = createResponse();
+    sendCodebuddyAnthropicError(overloadedRes, 503, 'Busy');
+    assert.equal(overloadedRes.status, 503);
+    assert.deepEqual(JSON.parse(overloadedRes.body), {
+        type: 'error',
+        error: {type: 'overloaded_error', message: 'Busy'}
+    });
+
     const jsonRes = createResponse();
     sendCodebuddyJsonResponse(jsonRes, 200, {ok: true});
     assert.deepEqual(JSON.parse(jsonRes.body), {ok: true});
 });
 
 test('CodeBuddy upstream error status maps network errors to 502', () => {
+    assert.equal(codebuddyUpstreamErrorStatus(Object.assign(new Error('invalid json'), {status: 502})), 502);
     assert.equal(codebuddyUpstreamErrorStatus({code: 'ECONNRESET'}), 502);
     assert.equal(codebuddyUpstreamErrorStatus(new Error('plain')), 500);
 });

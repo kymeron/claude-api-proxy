@@ -1,3 +1,5 @@
+import {parseUpstreamJson} from '../shared/upstream-json.js';
+
 export function createCopilotResponsesCompactHandler({
     getCopilotNetworkOptions,
     ensureCopilotAuth,
@@ -44,7 +46,7 @@ export function createCopilotResponsesCompactHandler({
             }
 
             const responseBody = await readBody(response.body);
-            const chatResponse = JSON.parse(responseBody);
+            const chatResponse = parseUpstreamJson(responseBody);
             const inputTokens = chatResponse.usage?.prompt_tokens || 0;
             const outputTokens = chatResponse.usage?.completion_tokens || 0;
             const cacheHitTokens = extractCacheHitTokens(chatResponse.usage);

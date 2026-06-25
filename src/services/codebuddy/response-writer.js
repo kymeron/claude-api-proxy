@@ -21,15 +21,17 @@ export function sendCodebuddyOpenAIError(res, status, message, type = 'api_error
 }
 
 export function sendCodebuddyAnthropicError(res, status, message) {
+    const errorType = status === 401 ? 'authentication_error' : status === 503 ? 'overloaded_error' : 'api_error';
     sendCodebuddyJsonResponse(res, status, {
         type: 'error',
         error: {
-            type: status === 401 ? 'authentication_error' : 'api_error',
+            type: errorType,
             message
         }
     });
 }
 
 export function codebuddyUpstreamErrorStatus(error) {
+    if (Number.isInteger(error?.status) && error.status >= 400) return error.status;
     return isNetworkError(error) ? 502 : 500;
 }

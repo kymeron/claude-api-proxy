@@ -1,3 +1,5 @@
+import {parseUpstreamJson as parseRelayUpstreamJson} from '../shared/upstream-json.js';
+
 export function createRelayChatCompletionsHandler({
     authenticateAndGetUpstream,
     tenantDirectory,
@@ -110,7 +112,7 @@ export function createRelayChatCompletionsHandler({
                     });
                     let finalUsage = null;
                     const chatAccumulator = createChatStreamAccumulator({model: openAIPayload.model});
-                    for await (const chatChunk of streamAnthropicSSEToChatChunks(response.body, parseSSEBlock)) {
+                    for await (const chatChunk of streamAnthropicSSEToChatChunks(response.body, parseSSEBlock, req.signal)) {
                         if (chatChunk.usage) finalUsage = chatChunk.usage;
                         chatAccumulator.feed(chatChunk);
                         res.write(`data: ${JSON.stringify(chatChunk)}\n\n`);
@@ -140,7 +142,7 @@ export function createRelayChatCompletionsHandler({
                 }
 
                 const responseBody = await readResponseBody(response.body);
-                const parsed = JSON.parse(responseBody);
+                const parsed = parseRelayUpstreamJson(responseBody);
                 const chatResponse = anthropicResponseToChat(parsed, openAIPayload.model);
                 relayConversationStore.recordAnthropicResponse({
                     tenantId,

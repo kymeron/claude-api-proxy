@@ -89,3 +89,21 @@ test('anthropicRequestToChat supports Copilot system ordering and tool argument 
     assert.equal(converted.messages[0].content, 'static instructions\n\ndynamic instructions');
     assert.equal(converted.messages[1].tool_calls[0].function.arguments, undefined);
 });
+
+test('anthropicRequestToChat ignores null system and content blocks', () => {
+    const converted = anthropicRequestToChat({
+        model: 'claude-haiku-4',
+        system: [null, {type: 'text', text: 'System text'}],
+        messages: [{
+            role: 'user',
+            content: [null, {type: 'text', text: 'Hello'}]
+        }]
+    }, {
+        prioritizeCacheControlSystemBlocks: true
+    });
+
+    assert.deepEqual(converted.messages, [
+        {role: 'system', content: 'System text'},
+        {role: 'user', content: 'Hello'}
+    ]);
+});

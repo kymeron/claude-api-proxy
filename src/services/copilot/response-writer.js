@@ -17,7 +17,11 @@ export function sendCopilotAnthropicError(res, status, message) {
 }
 
 export function isCopilotResponsesProtocolError(err) {
-    return err instanceof ResponsesWebSocketError && err?.event?.type === 'error';
+    return (
+        err instanceof ResponsesWebSocketError
+        || err?.name === 'ResponsesWebSocketError'
+        || err?.name === 'ResponsesWSError'
+    ) && err?.event?.type === 'error';
 }
 
 export function sendCopilotResponsesProtocolError(res, err) {
@@ -41,5 +45,6 @@ export function sendCopilotResponsesProtocolError(res, err) {
 }
 
 export function copilotUpstreamErrorStatus(err) {
+    if (Number.isInteger(err?.status) && err.status >= 400) return err.status;
     return isNetworkError(err) ? 502 : 500;
 }

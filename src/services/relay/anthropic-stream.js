@@ -4,6 +4,7 @@ import {
 } from './protocol-adapter.js';
 
 export function writeRelayAnthropicEvent(res, event) {
+    if (!res || res.writableEnded || res.destroyed) return;
     res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
 }
 

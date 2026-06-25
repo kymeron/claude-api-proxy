@@ -1,3 +1,5 @@
+import {parseUpstreamJson} from '../shared/upstream-json.js';
+
 function writeResponsesSSE(res, event) {
     res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
 }
@@ -224,7 +226,7 @@ export function createCopilotResponsesAPIHandler({
                     });
                 } else {
                     const responseBody = await readBody(response.body);
-                    const chatResponse = JSON.parse(responseBody);
+                    const chatResponse = parseUpstreamJson(responseBody);
 
                     const inputTokens = chatResponse.usage?.prompt_tokens || 0;
                     const outputTokens = chatResponse.usage?.completion_tokens || 0;

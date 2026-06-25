@@ -409,8 +409,8 @@ function translateAnthropicMessagesToChat(anthropicMessages = [], system, option
 
 function anthropicSystemToChatContent(system, options = {}) {
     if (options.prioritizeCacheControlSystemBlocks) {
-        const cacheableBlocks = system.filter((block) => block.type === 'text' && block.text && block.cache_control);
-        const dynamicBlocks = system.filter((block) => block.type === 'text' && block.text && !block.cache_control);
+        const cacheableBlocks = system.filter((block) => block?.type === 'text' && block.text && block.cache_control);
+        const dynamicBlocks = system.filter((block) => block?.type === 'text' && block.text && !block.cache_control);
         const staticText = cacheableBlocks.map((block) => block.text).join('\n\n');
         const dynamicText = dynamicBlocks.map((block) => block.text).join('\n\n');
         return [staticText, dynamicText].filter(Boolean).join('\n\n');
@@ -428,8 +428,8 @@ function handleAnthropicUserMessage(message, previousAssistantMessage = null, op
     if (typeof message.content === 'string') {
         messages.push({role: 'user', content: prependThinkingHint(message.content)});
     } else if (Array.isArray(message.content)) {
-        const toolResults = message.content.filter((block) => block.type === 'tool_result');
-        const otherBlocks = message.content.filter((block) => block.type !== 'tool_result');
+        const toolResults = message.content.filter((block) => block?.type === 'tool_result');
+        const otherBlocks = message.content.filter((block) => block?.type !== 'tool_result');
 
         if (toolResults.length > 0) {
             const resultMap = new Map();
@@ -486,9 +486,9 @@ function handleAnthropicAssistantMessage(message, options = {}) {
         return [{role: 'assistant', content: null}];
     }
 
-    const toolUseBlocks = message.content.filter((block) => block.type === 'tool_use');
-    const textBlocks = message.content.filter((block) => block.type === 'text');
-    const thinkingBlocks = message.content.filter((block) => block.type === 'thinking');
+    const toolUseBlocks = message.content.filter((block) => block?.type === 'tool_use');
+    const textBlocks = message.content.filter((block) => block?.type === 'text');
+    const thinkingBlocks = message.content.filter((block) => block?.type === 'thinking');
 
     const allText = textBlocks
         .map((block) => block.text)

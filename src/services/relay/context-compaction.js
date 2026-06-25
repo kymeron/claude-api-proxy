@@ -2,6 +2,7 @@ import {
     compactChatRequestIfNeeded as defaultCompactChatRequestIfNeeded,
     isContextWindowExceededError as defaultIsContextWindowExceededError
 } from '../session/index.js';
+import {parseUpstreamJson as parseRelayUpstreamJson} from '../shared/upstream-json.js';
 
 export async function generateRelayContextSummary({
     summaryRequest,
@@ -47,7 +48,7 @@ export async function generateRelayContextSummary({
             )
         );
         const responseBody = await readResponseBody(response.body);
-        const parsed = JSON.parse(responseBody);
+        const parsed = parseRelayUpstreamJson(responseBody);
         const chatResponse = anthropicResponseToChat(parsed, originalModel || model);
         recordUsage(
             tenantId,
@@ -63,7 +64,7 @@ export async function generateRelayContextSummary({
         createChatCompletions(payload, up, compactMeta)
     );
     const responseBody = await readResponseBody(response.body);
-    const parsed = JSON.parse(responseBody);
+    const parsed = parseRelayUpstreamJson(responseBody);
     recordUsage(
         tenantId,
         parsed.usage?.prompt_tokens || 0,

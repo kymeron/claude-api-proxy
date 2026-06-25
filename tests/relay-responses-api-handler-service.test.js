@@ -109,3 +109,24 @@ test('handleResponsesAPI aggregates non-stream Chat upstream responses', async (
     );
     assert.equal(deps.calls.some((call) => call[0] === 'recordCompletedResponseState'), true);
 });
+
+test('handleResponsesAPI maps invalid upstream JSON to 502', async () => {
+    const res = createResponse();
+    const deps = createBaseDeps({
+        isAnthropicUpstream: () => true,
+        chatRequestToAnthropic: (payload) => payload,
+        createAnthropicMessages: (payload) => payload,
+        getAnthropicRequestHeaders: () => ({}),
+        readResponseBody: async () => 'not-json'
+    });
+    const handleResponsesAPI = createRelayResponsesAPIHandler(deps);
+
+    await handleResponsesAPI({headers: {}}, res);
+
+    assert.deepEqual(res.calls, [[
+        'openai-error',
+        502,
+        'Upstream returned invalid JSON',
+        undefined
+    ]]);
+});

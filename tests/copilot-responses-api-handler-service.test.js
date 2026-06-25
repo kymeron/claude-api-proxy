@@ -145,6 +145,26 @@ test('handleResponsesAPI returns non-stream Responses WS completions as Response
     assert.deepEqual(res.calls[0], ['json', 200, {id: 'resp-1', usage: {input_tokens: 5, output_tokens: 7}}]);
 });
 
+test('handleResponsesAPI maps invalid fallback upstream JSON to 502', async () => {
+    const res = createResponse();
+    const deps = createBaseDeps({
+        ensureResponsesWebSocketSupported: () => {
+            throw new Error('unsupported');
+        },
+        readBody: async () => 'not-json'
+    });
+    const handler = createCopilotResponsesAPIHandler(deps);
+
+    await handler({headers: {}}, res);
+
+    assert.deepEqual(res.calls, [[
+        'openai-error',
+        502,
+        'Upstream returned invalid JSON',
+        undefined
+    ]]);
+});
+
 test('handleResponsesAPI streams Responses WS events as Responses SSE', async () => {
     const res = createResponse();
     const deps = createBaseDeps({

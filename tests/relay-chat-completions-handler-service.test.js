@@ -96,3 +96,44 @@ test('handleOpenAIChatCompletions records non-stream Chat passthrough responses'
     assert.equal(deps.calls.some((call) => call[0] === 'saveChatRequest'), true);
     assert.equal(deps.calls.some((call) => call[0] === 'recordChatResponse'), true);
 });
+
+test('handleOpenAIChatCompletions passes request signal to Anthropic streaming bridge', async () => {
+    const controller = new AbortController();
+    const res = {
+        calls: [],
+        headersSent: false,
+        destroyed: false,
+        writableEnded: false,
+        writeHead: (...args) => res.calls.push(['writeHead', args]),
+        write: (chunk) => res.calls.push(['write', chunk]),
+        end: () => res.calls.push(['end'])
+    };
+    let seenSignal = null;
+    const deps = createBaseDeps({
+        parseBody: async () => JSON.stringify({
+            model: 'gpt-test',
+            messages: [{role: 'user', content: 'hello'}],
+            stream: true
+        }),
+        isAnthropicUpstream: () => true,
+        chatRequestToAnthropic: (payload) => payload,
+        getAnthropicRequestHeaders: () => ({}),
+        createAnthropicMessages: (payload) => payload,
+        callUpstream: async () => ({response: {body: {}}}),
+        createChatStreamAccumulator: () => ({
+            feed: () => {},
+            toChatResponse: () => null
+        }),
+        streamAnthropicSSEToChatChunks: async function* (_body, _parseSSEBlock, signal) {
+            seenSignal = signal;
+            yield {id: 'chunk_1', choices: [], usage: {prompt_tokens: 1, completion_tokens: 2}};
+        },
+        parseSSEBlock: () => {},
+        extractCacheHitTokens: () => 0
+    });
+    const handleOpenAIChatCompletions = createRelayChatCompletionsHandler(deps);
+
+    await handleOpenAIChatCompletions({headers: {}, signal: controller.signal}, res);
+
+    assert.equal(seenSignal, controller.signal);
+});

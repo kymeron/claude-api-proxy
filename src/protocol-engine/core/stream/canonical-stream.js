@@ -544,12 +544,8 @@ export function chatChunkToCanonicalStreamEvents(chunk = {}, state = createChatC
     if (!choice) return events;
     const delta = choice.delta || {};
 
-    const reasoningText = delta.reasoning_content
-        || delta.reasoning
-        || delta.thinking?.content
-        || delta.thinking
-        || delta.thought;
-    if (reasoningText) events.push({type: 'reasoning_delta', text: String(reasoningText)});
+    const reasoningText = extractChatReasoningText(delta);
+    if (reasoningText) events.push({type: 'reasoning_delta', text: reasoningText});
     if (delta.content && !delta.reasoning_content) events.push({type: 'text_delta', text: delta.content});
 
     if (Array.isArray(delta.tool_calls)) {
@@ -579,6 +575,17 @@ export function chatChunkToCanonicalStreamEvents(chunk = {}, state = createChatC
     }
 
     return events;
+}
+
+function extractChatReasoningText(delta = {}) {
+    for (const value of [delta.reasoning_content, delta.reasoning, delta.thinking, delta.thought]) {
+        if (typeof value === 'string' && value) return value;
+        if (value && typeof value === 'object') {
+            const text = value.content || value.text || value.thinking;
+            if (typeof text === 'string' && text) return text;
+        }
+    }
+    return '';
 }
 
 export function renderCanonicalStreamEventsToResponsesEvents(canonicalEvents = [], state = createCanonicalToResponsesStreamState()) {

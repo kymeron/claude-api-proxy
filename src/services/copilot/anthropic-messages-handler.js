@@ -1,3 +1,5 @@
+import {parseUpstreamJson} from '../shared/upstream-json.js';
+
 export function createCopilotAnthropicMessagesHandler({
     getCopilotNetworkOptions,
     ensureCopilotAuth,
@@ -271,7 +273,7 @@ export function createCopilotAnthropicMessagesHandler({
                     });
                 } else {
                     const responseBody = await readBody(response.body);
-                    const openAIResponse = JSON.parse(responseBody);
+                    const openAIResponse = parseUpstreamJson(responseBody);
                     const anthropicResponse = openAIToAnthropic(openAIResponse);
                     const inputTokens = openAIResponse.usage?.prompt_tokens || 0;
                     const outputTokens = openAIResponse.usage?.completion_tokens || 0;

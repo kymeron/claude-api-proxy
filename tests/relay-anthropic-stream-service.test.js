@@ -32,6 +32,22 @@ test('writeRelayAnthropicEvent writes Anthropic SSE frames', () => {
     ]);
 });
 
+test('writeRelayAnthropicEvent ignores writes after response is closed', () => {
+    const writes = [];
+    const res = {
+        writableEnded: true,
+        destroyed: false,
+        write: (chunk) => writes.push(chunk)
+    };
+
+    writeRelayAnthropicEvent(res, {
+        type: 'content_block_delta',
+        delta: {type: 'text_delta', text: 'ignored'}
+    });
+
+    assert.deepEqual(writes, []);
+});
+
 test('streamRelayResponsesEventsAsAnthropic bridges Responses events to Anthropic SSE and returns usage', async () => {
     const {writes, res} = createResponseRecorder();
     const accumulatorCalls = [];

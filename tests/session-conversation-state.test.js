@@ -59,6 +59,126 @@ test('default conversation state limits bound cached chat and canonical history'
     }
 });
 
+test('saveChatRequest trims stored input before cloning discarded messages', () => {
+    const store = new RelayConversationStore({
+        ttlMs: 60_000,
+        cleanupIntervalMs: 0,
+        maxStoredChatMessages: 2,
+        maxCanonicalTurns: 2
+    });
+    const discardedMessage = {
+        role: 'user',
+        content: 'discarded',
+        toJSON() {
+            throw new Error('discarded message should not be cloned');
+        }
+    };
+
+    assert.doesNotThrow(() => store.saveChatRequest({
+        tenantId: 'tenant-a',
+        conversationKey: 'conv-a',
+        request: {
+            model: 'client-model',
+            messages: [
+                discardedMessage,
+                {role: 'assistant', content: 'kept one'},
+                {role: 'user', content: 'kept two'}
+            ]
+        }
+    }));
+
+    const state = store.conversations.get('tenant-a:conv-a');
+    assert.equal(state.chatRequest.messages.length, 2);
+    assert.deepEqual(
+        state.chatRequest.messages.map((message) => message.content),
+        ['kept one', 'kept two']
+    );
+    assert.equal(state.canonicalSession.turns.length, 2);
+});
+
+test('conversation store evicts oldest conversations by configured count budgets', () => {
+    let now = 0;
+    const store = new RelayConversationStore({
+        ttlMs: 60_000,
+        cleanupIntervalMs: 0,
+        now: () => now,
+        maxConversations: 2
+    });
+
+    for (const conversationKey of ['conv-a', 'conv-b', 'conv-c']) {
+        now++;
+        store.saveChatRequest({
+            tenantId: 'tenant-a',
+            conversationKey,
+            request: {model: 'client-model', messages: [{role: 'user', content: conversationKey}]}
+        });
+        store.recordResponsesResponse({
+            tenantId: 'tenant-a',
+            conversationKey,
+            response: {id: `resp_${conversationKey}`, output: []}
+        });
+    }
+
+    assert.equal(store.conversations.has('tenant-a:conv-a'), false);
+    assert.equal(store.responseIndex.has('tenant-a:resp_conv-a'), false);
+    assert.equal(store.conversations.has('tenant-a:conv-b'), true);
+    assert.equal(store.conversations.has('tenant-a:conv-c'), true);
+
+    const tenantStore = new RelayConversationStore({
+        ttlMs: 60_000,
+        cleanupIntervalMs: 0,
+        now: () => now,
+        maxConversationsPerTenant: 1
+    });
+    for (const tenantId of ['tenant-a', 'tenant-b']) {
+        for (const conversationKey of ['old', 'new']) {
+            now++;
+            tenantStore.saveChatRequest({
+                tenantId,
+                conversationKey,
+                request: {model: 'client-model', messages: [{role: 'user', content: `${tenantId}:${conversationKey}`}]}
+            });
+        }
+    }
+
+    assert.equal(tenantStore.conversations.has('tenant-a:old'), false);
+    assert.equal(tenantStore.conversations.has('tenant-a:new'), true);
+    assert.equal(tenantStore.conversations.has('tenant-b:old'), false);
+    assert.equal(tenantStore.conversations.has('tenant-b:new'), true);
+});
+
+test('conversation store evicts memory hotspots by configured byte budgets', () => {
+    let now = 0;
+    const store = new RelayConversationStore({
+        ttlMs: 60_000,
+        cleanupIntervalMs: 0,
+        now: () => now,
+        maxConversationApproxBytes: 2000,
+        maxTotalApproxBytes: 3600
+    });
+
+    now++;
+    store.saveChatRequest({
+        tenantId: 'tenant-a',
+        conversationKey: 'too-large',
+        request: {model: 'client-model', messages: [{role: 'user', content: 'x'.repeat(2000)}]}
+    });
+    assert.equal(store.conversations.has('tenant-a:too-large'), false);
+
+    for (const conversationKey of ['conv-a', 'conv-b', 'conv-c']) {
+        now++;
+        store.saveChatRequest({
+            tenantId: 'tenant-a',
+            conversationKey,
+            request: {model: 'client-model', messages: [{role: 'user', content: 'x'.repeat(550)}]}
+        });
+    }
+
+    assert.equal(store.conversations.has('tenant-a:conv-a'), false);
+    assert.equal(store.conversations.has('tenant-a:conv-b'), true);
+    assert.equal(store.conversations.has('tenant-a:conv-c'), true);
+});
+
 test('hydrateResponsesForFullHistory appends Responses input to stored chat history', () => {
     const store = new RelayConversationStore({ttlMs: 60_000});
     const tenantId = 'tenant-a';

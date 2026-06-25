@@ -272,11 +272,12 @@ function extractPDFText(buffer) {
  * 支持 text、image、document（PDF/文本文件）类型
  */
 export function mapContent(blocks) {
-    if (blocks.length === 1 && blocks[0].type === 'text') {
-        return blocks[0].text;
+    const validBlocks = Array.isArray(blocks) ? blocks.filter(Boolean) : [];
+    if (validBlocks.length === 1 && validBlocks[0].type === 'text') {
+        return validBlocks[0].text;
     }
 
-    const mapped = blocks
+    const mapped = validBlocks
         .map((block) => {
             if (block.type === 'text') {
                 return {type: 'text', text: block.text};

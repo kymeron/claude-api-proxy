@@ -7,6 +7,7 @@ import {
     createResponsesToAnthropicStreamBridge,
     createResponsesToResponsesStreamBridge,
     createResponsesToChatStreamBridge,
+    chatChunkToCanonicalStreamEvents,
     createResponsesCanonicalStreamState,
     responsesEventToCanonicalStreamEvents
 } from '../src/protocol-engine/core/stream/canonical-stream.js';
@@ -42,6 +43,22 @@ test('responses stream events are normalized to canonical stream events', () => 
     assert.equal(toolDelta[0].ids.responsesItemId, 'fc_1');
     assert.equal(toolDelta[0].ids.responsesCallId, 'call_1');
     assert.equal(toolDelta[0].argumentsDelta, '{"path":"README.md"}');
+});
+
+test('chat stream reasoning ignores non-text thinking payload objects', () => {
+    const events = chatChunkToCanonicalStreamEvents({
+        id: 'chatcmpl_1',
+        model: 'gpt-test',
+        choices: [{
+            delta: {
+                thinking: {type: 'enabled'}
+            },
+            finish_reason: null
+        }]
+    });
+
+    assert.equal(events.some((event) => event.text === '[object Object]'), false);
+    assert.equal(events.some((event) => event.type === 'reasoning_delta'), false);
 });
 
 test('canonical stream bridge renders Responses text and tools as Chat chunks', () => {

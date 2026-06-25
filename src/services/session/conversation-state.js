@@ -15,6 +15,16 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_STORED_CHAT_MESSAGES = 200;
 const DEFAULT_MAX_CANONICAL_TURNS = 200;
+const DEFAULT_MAX_CONVERSATIONS = readNonNegativeIntegerEnv('RELAY_CONVERSATION_STATE_MAX_CONVERSATIONS', 0);
+const DEFAULT_MAX_CONVERSATIONS_PER_TENANT = readNonNegativeIntegerEnv(
+    'RELAY_CONVERSATION_STATE_MAX_CONVERSATIONS_PER_TENANT',
+    0
+);
+const DEFAULT_MAX_CONVERSATION_APPROX_BYTES = readNonNegativeIntegerEnv(
+    'RELAY_CONVERSATION_STATE_MAX_CONVERSATION_BYTES',
+    0
+);
+const DEFAULT_MAX_TOTAL_APPROX_BYTES = readNonNegativeIntegerEnv('RELAY_CONVERSATION_STATE_MAX_TOTAL_BYTES', 0);
 const DEFAULT_TTL_MS = readPositiveIntegerEnv('RELAY_CONVERSATION_STATE_TTL_MS', DAY_MS);
 const DEFAULT_CLEANUP_INTERVAL_MS = readPositiveIntegerEnv(
     'RELAY_CONVERSATION_STATE_CLEANUP_INTERVAL_MS',
@@ -42,7 +52,12 @@ export class RelayConversationStore {
         maxCanonicalTurns = readPositiveIntegerEnv(
             'RELAY_CONVERSATION_STATE_MAX_CANONICAL_TURNS',
             DEFAULT_MAX_CANONICAL_TURNS
-        )
+        ),
+        maxConversations = DEFAULT_MAX_CONVERSATIONS,
+        maxConversationsPerTenant = DEFAULT_MAX_CONVERSATIONS_PER_TENANT,
+        maxConversationApproxBytes = DEFAULT_MAX_CONVERSATION_APPROX_BYTES,
+        maxTotalApproxBytes = DEFAULT_MAX_TOTAL_APPROX_BYTES,
+        cloneStateOnReturn = false
     } = {}) {
         this.ttlMs = ttlMs;
         this.now = now;
@@ -52,6 +67,18 @@ export class RelayConversationStore {
         this.maxCanonicalTurns = Number.isFinite(maxCanonicalTurns) && maxCanonicalTurns > 0
             ? Math.floor(maxCanonicalTurns)
             : 0;
+        this.maxConversations = normalizeNonNegativeInteger(maxConversations);
+        this.maxConversationsPerTenant = normalizeNonNegativeInteger(maxConversationsPerTenant);
+        this.maxConversationApproxBytes = normalizeNonNegativeInteger(maxConversationApproxBytes);
+        this.maxTotalApproxBytes = normalizeNonNegativeInteger(maxTotalApproxBytes);
+        this.cloneStateOnReturn = cloneStateOnReturn === true;
+        this.evictions = {
+            expired: 0,
+            maxConversations: 0,
+            maxConversationsPerTenant: 0,
+            maxConversationApproxBytes: 0,
+            maxTotalApproxBytes: 0
+        };
         this.conversations = new Map();
         this.responseIndex = new Map();
         this.cleanupTimer = null;
@@ -69,6 +96,7 @@ export class RelayConversationStore {
 
         const existing = this._getByConversationKey(tenantId, conversationKey);
         const chatRequest = limitStoredChatRequest(request, this.maxStoredChatMessages);
+        const canonicalRequest = limitCanonicalChatRequestInput(request, this.maxCanonicalTurns);
         const state = {
             tenantId,
             conversationKey,
@@ -76,19 +104,18 @@ export class RelayConversationStore {
             chatRequestTruncated: chatRequest.truncated,
             chatRequestMessageCount: chatRequest.messageCount,
             ...storedCanonicalSessionFields(canonicalSessionForSave({
-                request,
+                request: canonicalRequest.request,
                 tenantId,
                 conversationKey,
                 existing,
                 sourceCanonicalSession: canonicalSession,
                 mappingCanonicalSession: canonicalMappingSession
-            }), this.maxCanonicalTurns),
+            }), this.maxCanonicalTurns, canonicalRequest.messageCount),
             responses: new Set(existing?.responses || []),
             lastResponseId: existing?.lastResponseId || null,
             updatedAt: this.now()
         };
-        this.conversations.set(key, state);
-        return cloneState(state);
+        return this._returnState(this._storeState(key, state));
     }
 
     hydrateResponsesForFullHistory({tenantId, conversationKey, request}) {
@@ -183,8 +210,7 @@ export class RelayConversationStore {
             this.responseIndex.set(this._responseKey(tenantId, response.id), key);
         }
 
-        this.conversations.set(key, state);
-        return cloneState(state);
+        return this._returnState(this._storeState(key, state));
     }
 
     recordChatResponse({tenantId, conversationKey, response, sourceCanonicalSession}) {
@@ -212,8 +238,7 @@ export class RelayConversationStore {
             lastResponseId: existing?.lastResponseId || null,
             updatedAt: this.now()
         };
-        this.conversations.set(key, state);
-        return cloneState(state);
+        return this._returnState(this._storeState(key, state));
     }
 
     recordAnthropicResponse({tenantId, conversationKey, response, chatResponse}) {
@@ -238,8 +263,7 @@ export class RelayConversationStore {
             lastResponseId: existing?.lastResponseId || null,
             updatedAt: this.now()
         };
-        this.conversations.set(key, state);
-        return cloneState(state);
+        return this._returnState(this._storeState(key, state));
     }
 
     cleanupExpired() {
@@ -247,6 +271,7 @@ export class RelayConversationStore {
         for (const [key, state] of [...this.conversations.entries()]) {
             if (this._isExpired(state)) {
                 this._deleteState(key, state);
+                this.evictions.expired++;
                 removed++;
             }
         }
@@ -275,6 +300,7 @@ export class RelayConversationStore {
 
         if (this._isExpired(state)) {
             this._deleteState(key, state);
+            this.evictions.expired++;
             return null;
         }
 
@@ -294,6 +320,7 @@ export class RelayConversationStore {
 
         if (this._isExpired(state)) {
             this._deleteState(stateKey, state);
+            this.evictions.expired++;
             return null;
         }
 
@@ -318,6 +345,106 @@ export class RelayConversationStore {
         }
     }
 
+    _storeState(key, state) {
+        if (!key || !state) return null;
+        this.conversations.set(key, state);
+        this._enforceBudgets();
+        return this.conversations.get(key) || null;
+    }
+
+    _returnState(state) {
+        if (!state) return null;
+        return this.cloneStateOnReturn ? cloneState(state) : state;
+    }
+
+    _enforceBudgets() {
+        this._enforceMaxConversationApproxBytes();
+        this._enforceMaxConversationsPerTenant();
+        this._enforceMaxConversations();
+        this._enforceMaxTotalApproxBytes();
+    }
+
+    _enforceMaxConversationApproxBytes() {
+        if (!this.maxConversationApproxBytes) return;
+        for (const [key, state] of [...this.conversations.entries()]) {
+            if (estimateConversationStateBytes(state) <= this.maxConversationApproxBytes) continue;
+            this._deleteState(key, state);
+            this.evictions.maxConversationApproxBytes++;
+        }
+    }
+
+    _enforceMaxConversationsPerTenant() {
+        if (!this.maxConversationsPerTenant) return;
+
+        const groups = new Map();
+        for (const entry of this._oldestConversationEntries()) {
+            const tenantId = entry[1]?.tenantId || '';
+            const group = groups.get(tenantId) || [];
+            group.push(entry);
+            groups.set(tenantId, group);
+        }
+
+        for (const entries of groups.values()) {
+            while (entries.length > this.maxConversationsPerTenant) {
+                const [key, state] = entries.shift();
+                if (!this.conversations.has(key)) continue;
+                this._deleteState(key, state);
+                this.evictions.maxConversationsPerTenant++;
+            }
+        }
+    }
+
+    _enforceMaxConversations() {
+        if (!this.maxConversations) return;
+
+        const entries = this._oldestConversationEntries();
+        while (this.conversations.size > this.maxConversations && entries.length > 0) {
+            const [key, state] = entries.shift();
+            if (!this.conversations.has(key)) continue;
+            this._deleteState(key, state);
+            this.evictions.maxConversations++;
+        }
+    }
+
+    _enforceMaxTotalApproxBytes() {
+        if (!this.maxTotalApproxBytes) return;
+
+        let totalBytes = 0;
+        const entries = this._oldestConversationEntries().map(([key, state]) => {
+            const approxBytes = estimateConversationStateBytes(state);
+            totalBytes += approxBytes;
+            return {key, state, approxBytes};
+        });
+
+        while (totalBytes > this.maxTotalApproxBytes && entries.length > 0) {
+            const {key, state, approxBytes} = entries.shift();
+            if (!this.conversations.has(key)) continue;
+            this._deleteState(key, state);
+            this.evictions.maxTotalApproxBytes++;
+            totalBytes -= approxBytes;
+        }
+    }
+
+    _oldestConversationEntries() {
+        return [...this.conversations.entries()]
+            .sort((left, right) => (left[1]?.updatedAt || 0) - (right[1]?.updatedAt || 0));
+    }
+
+    getBudgetSnapshot() {
+        return {
+            ttlMs: this.ttlMs,
+            maxStoredChatMessages: this.maxStoredChatMessages,
+            maxCanonicalTurns: this.maxCanonicalTurns,
+            maxConversations: this.maxConversations,
+            maxConversationsPerTenant: this.maxConversationsPerTenant,
+            maxConversationApproxBytes: this.maxConversationApproxBytes,
+            maxTotalApproxBytes: this.maxTotalApproxBytes,
+            approximateStoredBytes: [...this.conversations.values()]
+                .reduce((sum, state) => sum + estimateConversationStateBytes(state), 0),
+            evictions: {...this.evictions}
+        };
+    }
+
     _conversationKey(tenantId, conversationKey) {
         if (!tenantId || !conversationKey) return null;
         return `${tenantId}:${conversationKey}`;
@@ -333,6 +460,15 @@ export const relayConversationStore = new RelayConversationStore();
 function readPositiveIntegerEnv(name, fallback) {
     const value = Number.parseInt(process.env[name] || '', 10);
     return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function readNonNegativeIntegerEnv(name, fallback) {
+    const value = Number.parseInt(process.env[name] || '', 10);
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function normalizeNonNegativeInteger(value) {
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 function normalizeId(value) {
@@ -422,29 +558,79 @@ function storedChatRequestFields(request, maxStoredChatMessages) {
 }
 
 function limitStoredChatRequest(request, maxStoredChatMessages) {
-    const cloned = cloneChatRequest(request);
-    const messages = Array.isArray(cloned.messages) ? cloned.messages : [];
-    const messageCount = messages.length;
+    const source = request && typeof request === 'object' ? request : {messages: []};
+    const sourceMessages = Array.isArray(source.messages) ? source.messages : [];
+    const messageCount = sourceMessages.length;
     if (!maxStoredChatMessages || messageCount <= maxStoredChatMessages) {
-        return {request: cloned, truncated: false, messageCount};
+        return {request: cloneChatRequest(source), truncated: false, messageCount};
     }
 
+    const requestForStorage = {
+        ...source,
+        messages: sourceMessages.slice(-maxStoredChatMessages)
+    };
     return {
-        request: {
-            ...cloned,
-            messages: messages.slice(-maxStoredChatMessages)
-        },
+        request: cloneChatRequest(requestForStorage),
         truncated: true,
         messageCount
     };
 }
 
-function storedCanonicalSessionFields(session, maxCanonicalTurns) {
+function estimateConversationStateBytes(state) {
+    if (!state) return 0;
+    const responseBytes = state.responses instanceof Set ? state.responses.size * 96 : 0;
+    return safeJsonByteLength(state.chatRequest)
+        + safeJsonByteLength(state.canonicalSession)
+        + responseBytes
+        + 256;
+}
+
+function safeJsonByteLength(value) {
+    try {
+        return Buffer.byteLength(JSON.stringify(value) || '', 'utf8');
+    } catch {
+        return 0;
+    }
+}
+
+function limitCanonicalChatRequestInput(request, maxCanonicalTurns) {
+    const source = request && typeof request === 'object' ? request : {messages: []};
+    const sourceMessages = Array.isArray(source.messages) ? source.messages : [];
+    const messageCount = sourceMessages.length;
+    if (!maxCanonicalTurns || messageCount <= maxCanonicalTurns) {
+        return {request: source, messageCount, truncated: false};
+    }
+
+    const leadingSystemMessages = [];
+    for (const message of sourceMessages) {
+        if (message?.role !== 'system') break;
+        if (leadingSystemMessages.length < maxCanonicalTurns) leadingSystemMessages.push(message);
+    }
+
+    const remainingCapacity = Math.max(maxCanonicalTurns - leadingSystemMessages.length, 0);
+    const nonSystemMessages = sourceMessages.slice(leadingSystemMessages.length);
+    const retainedMessages = remainingCapacity > 0
+        ? [...leadingSystemMessages, ...nonSystemMessages.slice(-remainingCapacity)]
+        : leadingSystemMessages.slice(0, maxCanonicalTurns);
+
+    return {
+        request: {
+            ...source,
+            messages: retainedMessages
+        },
+        messageCount,
+        truncated: true
+    };
+}
+
+function storedCanonicalSessionFields(session, maxCanonicalTurns, originalTurnCount) {
     const stored = limitCanonicalSession(session, maxCanonicalTurns);
+    const storedTurnCount = Array.isArray(stored.session?.turns) ? stored.session.turns.length : 0;
+    const turnCount = Math.max(stored.turnCount, originalTurnCount || 0);
     return {
         canonicalSession: stored.session,
-        canonicalSessionTruncated: stored.truncated,
-        canonicalTurnCount: stored.turnCount
+        canonicalSessionTruncated: stored.truncated || turnCount > storedTurnCount,
+        canonicalTurnCount: turnCount
     };
 }
 

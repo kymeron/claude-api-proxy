@@ -1,3 +1,5 @@
+import {parseUpstreamJson as parseRelayUpstreamJson} from '../shared/upstream-json.js';
+
 export function createRelayMetadataHandlers({
     authenticateAndGetUpstream,
     getUpstreamModels,
@@ -72,7 +74,7 @@ export function createRelayMetadataHandlers({
                     createAnthropicCountTokens(anthropicPayload, up, getAnthropicRequestHeaders(req))
                 );
                 const responseBody = await readResponseBody(response.body);
-                sendJson(res, 200, JSON.parse(responseBody));
+                sendJson(res, 200, parseRelayUpstreamJson(responseBody));
                 return;
             }
 

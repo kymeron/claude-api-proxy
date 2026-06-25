@@ -74,7 +74,21 @@ test('Copilot response writer streams protocol errors after headers are sent', (
     assert.equal(res.calls[1][0], 'end');
 });
 
+test('Copilot response writer recognizes local ResponsesWSError protocol errors', () => {
+    const error = Object.assign(new Error('bad request'), {
+        name: 'ResponsesWSError',
+        event: {
+            type: 'error',
+            status: 400,
+            error: {message: 'bad request', code: 'bad_request'}
+        }
+    });
+
+    assert.equal(isCopilotResponsesProtocolError(error), true);
+});
+
 test('Copilot upstream error status maps network errors to 502', () => {
+    assert.equal(copilotUpstreamErrorStatus(Object.assign(new Error('invalid json'), {status: 502})), 502);
     assert.equal(copilotUpstreamErrorStatus({code: 'ECONNRESET'}), 502);
     assert.equal(copilotUpstreamErrorStatus(new Error('plain')), 500);
 });

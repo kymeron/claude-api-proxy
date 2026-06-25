@@ -150,6 +150,9 @@ export function getRelayConversationDiagnostics(store, options = {}) {
     const tenantId = options?.tenantId || null;
     const conversations = store?.conversations instanceof Map ? store.conversations : new Map();
     const responseIndex = store?.responseIndex instanceof Map ? store.responseIndex : new Map();
+    const budgetSnapshot = typeof store?.getBudgetSnapshot === 'function'
+        ? store.getBudgetSnapshot()
+        : null;
     const sessions = [];
 
     for (const [conversationId, state] of conversations.entries()) {
@@ -204,6 +207,19 @@ export function getRelayConversationDiagnostics(store, options = {}) {
         totalApproxBytes: sessions.reduce((sum, session) => sum + session.approxBytes, 0),
         totalCanonicalApproxBytes: sessions.reduce((sum, session) => sum + session.canonicalApproxBytes, 0),
         totalCombinedApproxBytes: sessions.reduce((sum, session) => sum + session.combinedApproxBytes, 0),
+        budgets: budgetSnapshot
+            ? {
+                ttlMs: budgetSnapshot.ttlMs,
+                maxStoredChatMessages: budgetSnapshot.maxStoredChatMessages,
+                maxCanonicalTurns: budgetSnapshot.maxCanonicalTurns,
+                maxConversations: budgetSnapshot.maxConversations,
+                maxConversationsPerTenant: budgetSnapshot.maxConversationsPerTenant,
+                maxConversationApproxBytes: budgetSnapshot.maxConversationApproxBytes,
+                maxTotalApproxBytes: budgetSnapshot.maxTotalApproxBytes,
+                approximateStoredBytes: budgetSnapshot.approximateStoredBytes,
+                evictions: budgetSnapshot.evictions || {}
+            }
+            : null,
         memoryHotspots: sessions.slice(0, 10).map((session) => ({
             conversationId: session.conversationId,
             messageCount: session.messageCount,

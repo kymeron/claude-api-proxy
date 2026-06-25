@@ -102,6 +102,7 @@ test('callRelayUpstream throws response body for failed upstream responses', asy
 
 test('relayUpstreamErrorStatus maps provider and network errors', () => {
     assert.equal(relayUpstreamErrorStatus(new ProviderUpstreamError('bad gateway', 429)), 429);
+    assert.equal(relayUpstreamErrorStatus(Object.assign(new Error('invalid json'), {status: 502})), 502);
     assert.equal(relayUpstreamErrorStatus(Object.assign(new Error('network'), {code: 'ECONNRESET'})), 502);
     assert.equal(relayUpstreamErrorStatus(new Error('unknown')), 500);
 });

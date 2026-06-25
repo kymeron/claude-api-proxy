@@ -12,6 +12,7 @@ import {isNetworkError, readBody} from '../../utils/http-client.js';
 
 export function relayUpstreamErrorStatus(error) {
     if (error instanceof ProviderUpstreamError && error.status) return error.status;
+    if (Number.isInteger(error?.status) && error.status >= 400) return error.status;
     if (isNetworkError(error)) return 502;
     return 500;
 }

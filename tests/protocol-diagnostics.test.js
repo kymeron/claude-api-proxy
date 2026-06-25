@@ -193,6 +193,31 @@ test('getRelayConversationDiagnostics ranks memory hotspots by chat and canonica
     assert.equal(typeof diagnostics.totalCombinedApproxBytes, 'number');
 });
 
+test('getRelayConversationDiagnostics reports store budgets and eviction counters', () => {
+    let now = 0;
+    const store = new RelayConversationStore({
+        ttlMs: 60_000,
+        cleanupIntervalMs: 0,
+        now: () => now,
+        maxConversations: 1
+    });
+
+    for (const conversationKey of ['old', 'new']) {
+        now++;
+        store.saveChatRequest({
+            tenantId: 'tenant-a',
+            conversationKey,
+            request: {model: 'gpt-test', messages: [{role: 'user', content: conversationKey}]}
+        });
+    }
+
+    const diagnostics = getRelayConversationDiagnostics(store);
+
+    assert.equal(diagnostics.budgets.maxConversations, 1);
+    assert.equal(diagnostics.budgets.evictions.maxConversations, 1);
+    assert.equal(typeof diagnostics.budgets.approximateStoredBytes, 'number');
+});
+
 test('getRelayConversationDiagnostics filters sessions by tenant', () => {
     const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
     store.saveChatRequest({
