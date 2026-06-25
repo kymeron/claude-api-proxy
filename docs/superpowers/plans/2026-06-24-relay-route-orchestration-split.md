@@ -4,7 +4,7 @@
 
 **Goal:** Move relay route orchestration support out of `src/routes/relay.js` into focused relay service modules without changing protocol behavior.
 
-**Architecture:** Keep protocol conversion in `src/core/protocol` and relay protocol facades in `src/services/relay/protocol-adapter.js`. Extract route orchestration helpers into `src/services/relay/*` modules so HTTP handlers gradually become thin entrypoints over service APIs.
+**Architecture:** Keep protocol conversion in `src/protocol-engine` and relay protocol facades in `src/services/relay/protocol-adapter.js`. Extract route orchestration helpers into `src/services/relay/*` modules so HTTP handlers gradually become thin entrypoints over service APIs.
 
 **Tech Stack:** Node.js ESM, `node:test`, existing service boundary tests, small commits after every green verification.
 

@@ -138,6 +138,10 @@ export async function routeFeedbackAdmin(req, res) {
             sendJson(res, 404, {error: '反馈不存在'});
             return true;
         }
+        if (!canManageFeedback(req.sessionUser, feedback)) {
+            sendJson(res, 403, {error: '只能下载自己提交的反馈附件'});
+            return true;
+        }
 
         const attachment = feedback.attachments.find(a => a.name === filename || repairMojibakeFilename(a.name) === filename);
         if (!attachment || !existsSync(attachment.path)) {

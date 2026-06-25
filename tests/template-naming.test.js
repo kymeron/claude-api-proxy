@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync, readFileSync} from 'fs';
+import {existsSync, readFileSync, readdirSync} from 'fs';
 import {join} from 'path';
 
 const root = process.cwd();
@@ -9,6 +9,19 @@ function extractInlineScripts(html) {
     return [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)]
         .map(match => match[1])
         .join('\n');
+}
+
+function collectTextFiles(dir, files = []) {
+    for (const entry of readdirSync(dir, {withFileTypes: true})) {
+        if (['.git', 'node_modules'].includes(entry.name)) continue;
+        const fullPath = join(dir, entry.name);
+        if (entry.isDirectory()) {
+            collectTextFiles(fullPath, files);
+        } else if (/\.(?:js|html|md|json|example|txt|css)$/.test(entry.name)) {
+            files.push(fullPath);
+        }
+    }
+    return files;
 }
 
 test('unified admin console includes all service management surfaces', () => {
@@ -339,11 +352,11 @@ test('admin Claude Code guides document auth compatibility and model pass-throug
     assert.doesNotMatch(readme, /x-api-key/);
 });
 
-test('removed browser PDF export dependencies stay out of runtime package dependencies', () => {
+test('removed browser PDF export and unused env parser dependencies stay out of runtime package dependencies', () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
 
-    for (const name of ['html2canvas', 'jspdf']) {
+    for (const name of ['html2canvas', 'jspdf', 'dotenv']) {
         assert.equal(pkg.dependencies?.[name], undefined);
         assert.equal(lock.packages?.['']?.dependencies?.[name], undefined);
         assert.equal(lock.packages?.[`node_modules/${name}`], undefined);
@@ -359,7 +372,16 @@ test('runtime configuration docs cover long task and session knobs', () => {
         'DASHBOARD_CORS_ORIGINS',
         'RELAY_CONVERSATION_STATE_MAX_CHAT_MESSAGES',
         'RELAY_CONVERSATION_STATE_MAX_CANONICAL_TURNS',
-        'RELAY_RESPONSES_INPUT_ITEMS_LIMIT'
+        'RELAY_RESPONSES_INPUT_ITEMS_LIMIT',
+        'RELAY_UPSTREAM_TEST_TIMEOUT_MS',
+        'RESPONSES_WS_MODE',
+        'RELAY_RESPONSES_WS_MODE',
+        'HTTP_PROXY',
+        'HTTPS_PROXY',
+        'DEPLOY_PASSWORD',
+        'PAYLOAD_INTERCEPT_DIR',
+        'PAYLOAD_INTERCEPT_MAX_FILES',
+        'PAYLOAD_INTERCEPT_PREFIX_CHARS'
     ];
 
     for (const key of requiredKeys) {
@@ -376,4 +398,36 @@ test('live architecture docs do not point to removed protocol paths', () => {
     ].map((file) => readFileSync(join(root, file), 'utf8')).join('\n');
 
     assert.doesNotMatch(docs, /(?:src\/)?transformer\/|src\/core\/protocol/);
+});
+
+test('project Chinese text does not contain mojibake markers', () => {
+    const files = collectTextFiles(root)
+        .filter(file => !file.includes(`${join(root, 'node_modules')}`))
+        .filter(file => !file.includes(`${join(root, '.git')}`));
+    const mojibake = new RegExp([
+        '\\uFFFD',
+        '[\\uE000-\\uF8FF]',
+        '\\u951b',
+        '\\u9286',
+        '\\u9225',
+        '\\u922e',
+        '\\u9239',
+        '\\u6fe1\\?',
+        '\\u7481\\u5267\\u7586',
+        '\\u6dbf\\u5a09\\u6cf6',
+        '\\u93c8\\uE047\\u7159',
+        '\\u93c8\\u5db6\\u59df'
+    ].join('|'));
+    const offenders = [];
+
+    for (const file of files) {
+        const lines = readFileSync(file, 'utf8').split(/\r?\n/);
+        lines.forEach((line, index) => {
+            if (mojibake.test(line)) {
+                offenders.push(`${file}:${index + 1}: ${line.trim().slice(0, 160)}`);
+            }
+        });
+    }
+
+    assert.deepEqual(offenders, []);
 });

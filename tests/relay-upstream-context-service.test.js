@@ -74,7 +74,7 @@ test('resolveRelayUpstreamContext rejects tenants without active upstream', asyn
     });
 
     assert.equal(result.error.status, 503);
-    assert.match(result.error.message, /上游|upstream|涓婃父/i);
+    assert.match(result.error.message, /上游|upstream/i);
 });
 
 test('callRelayUpstream returns successful upstream responses', async () => {

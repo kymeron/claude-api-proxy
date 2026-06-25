@@ -20,7 +20,8 @@
   - 在 Chat/Anthropic/Responses/Responses WS 入口接入状态读写。
   - 在 Chat/Anthropic 目标上游前强制 hydrate。
   - 在上游响应完成后记录 response id 和 assistant 输出。
-- Modify: `src/transformer/responses-translator.js`
+- Historical path note: protocol conversion now lives under `src/protocol-engine`; relay services should import it through `src/services/*/protocol-adapter.js`.
+- Modify: `src/protocol-engine/core/responses.js`
   - 保持现有 converter 公开行为不变；本计划当前不需要修改该文件，验证时确认无需新增导出。
 - Modify: `tests/responses-ws-stream-bridge.test.js`
   - 增加 WS 增量请求 hydrate 到 Chat/Anthropic 的覆盖。
@@ -149,7 +150,7 @@ Expected: FAIL，错误为 `Cannot find module '../src/services/relay/conversati
 创建 `src/services/relay/conversation-state.js`，导出：
 
 ```js
-import {responsesRequestToChat, responsesResponseToChat} from '../../transformer/responses-translator.js';
+import {responsesRequestToChat, responsesResponseToChat} from '../../protocol-engine/core/responses.js';
 
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -709,7 +710,7 @@ Expected: PASS。
 Run:
 
 ```bash
-git add -- src/services/relay/conversation-state.js src/routes/relay.js src/transformer/responses-translator.js tests/relay-conversation-state.test.js tests/responses-ws-stream-bridge.test.js README.md 本地安装部署.md
+git add -- src/services/relay/conversation-state.js src/routes/relay.js src/protocol-engine/core/responses.js tests/relay-conversation-state.test.js tests/responses-ws-stream-bridge.test.js README.md 本地安装部署.md
 git commit -m "Add relay conversation state hydration"
 ```
 

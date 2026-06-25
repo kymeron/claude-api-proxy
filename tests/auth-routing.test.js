@@ -269,6 +269,26 @@ test('feedback requires a logged-in session but not administrator role', async t
     }
 });
 
+test('legacy standalone upload routes are removed', async t => {
+    const base = await startServer(t);
+
+    const page = await fetch(`${base}/uploadFE`, {
+        headers: {accept: 'text/html'},
+        redirect: 'manual'
+    });
+    assert.equal(page.status, 404);
+    assert.match(await page.text(), /HTTP 404/);
+
+    const api = await fetch(`${base}/api/upload`, {
+        method: 'POST',
+        headers: {...sessionHeaders(), accept: 'application/json'}
+    });
+    assert.equal(api.status, 404);
+
+    const serverSource = readFileSync('src/server.js', 'utf8');
+    assert.doesNotMatch(serverSource, /\/uploadFE|\/api\/upload|Busboy/);
+});
+
 test('stats root no longer serves a standalone dashboard page', async t => {
     const base = await startServer(t);
 

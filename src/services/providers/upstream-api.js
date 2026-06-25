@@ -1,6 +1,6 @@
 /**
  * Provider API 调用模块
- * 向上�?LLM API 发送请求，支持 per-upstream 代理（HTTP/HTTPS/SOCKS5）及 agent 缓存
+ * 向上游 LLM API 发送请求，支持 per-upstream 代理（HTTP/HTTPS/SOCKS5）及 agent 缓存
  * @module services/providers/upstream-api
  */
 
@@ -40,17 +40,17 @@ export class ProviderUpstreamError extends Error {
 // ==================== 代理 Agent 缓存 ====================
 
 /**
- * �?"proxyUrl|tls-mode" 联合 key 缓存�?agent 实例，避免每次请求重复创�?
- * - tls-mode: skip-tls 表示 rejectUnauthorized=false（跳�?TLS 校验�?
+ * 以 "proxyUrl|tls-mode" 联合 key 缓存 agent 实例，避免每次请求重复创建
+ * - tls-mode: skip-tls 表示 rejectUnauthorized=false（跳过 TLS 校验）
  * @type {Map<string, HttpsProxyAgent|SocksProxyAgent|https.Agent>}
  */
 const proxyAgentCache = new Map();
 
 /**
- * 获取代理 / TLS Agent（带缓存�?
- * - �?proxy 且非 skip_tls_verify：返�?undefined（直连，使用 Node 默认 agent�?
- * - �?proxy �?skip_tls_verify：返�?https.Agent({rejectUnauthorized:false})（仅作用�?HTTPS�?
- * - �?proxy：根据协议构�?HttpsProxyAgent / SocksProxyAgent，并�?rejectUnauthorized 透传
+ * 获取代理 / TLS Agent（带缓存）
+ * - 无 proxy 且非 skip_tls_verify：返回 undefined（直连，使用 Node 默认 agent）
+ * - 无 proxy 且 skip_tls_verify：返回 https.Agent({rejectUnauthorized:false})（仅作用于 HTTPS）
+ * - 有 proxy：根据协议构造 HttpsProxyAgent / SocksProxyAgent，并将 rejectUnauthorized 透传
  *
  * @param {object} upstream - 上游配置
  * @param {string} [upstream.proxy] - 代理地址
@@ -68,7 +68,7 @@ export function getProxyAgent(upstream) {
         return proxyAgentCache.get(cacheKey);
     }
 
-    // �?proxy 分支：只有需要跳�?TLS 校验时才创建专用 Agent；否则直�?
+    // 无 proxy 分支：只有需要跳过 TLS 校验时才创建专用 Agent；否则直连
     if (!proxyUrl) {
         if (!skipTls) return undefined;
         const agent = new https.Agent({rejectUnauthorized: false});
@@ -76,7 +76,7 @@ export function getProxyAgent(upstream) {
         return agent;
     }
 
-    // �?proxy 分支
+    // 有 proxy 分支
     let agent;
     try {
         const agentOptions = skipTls ? {rejectUnauthorized: false} : {};
@@ -223,8 +223,8 @@ async function requestJson(url, upstream, {method = 'POST', headers = {}, body, 
         timeout
     };
 
-    // skip_tls_verify 需要同时传给底�?http-client，否�?request() 会独立计�?
-    // rejectUnauthorized=true，覆�?agent 里的设置
+    // skip_tls_verify 需要同时传给底层 http-client，否则 request() 会独立计算
+    // rejectUnauthorized=true，覆盖 agent 里的设置
     if (upstream.skip_tls_verify === true) {
         options.rejectUnauthorized = false;
     }
@@ -238,9 +238,9 @@ async function requestJson(url, upstream, {method = 'POST', headers = {}, body, 
 }
 
 /**
- * 向上游发�?OpenAI 格式的聊天请�?
+ * 向上游发送 OpenAI 格式的聊天请求
  *
- * @param {object} payload - OpenAI chat completions 请求�?
+ * @param {object} payload - OpenAI chat completions 请求体
  * @param {object} upstream - 上游配置
  * @param {string} upstream.name - 上游名称
  * @param {string} upstream.base_url - 上游基础 URL
@@ -248,7 +248,7 @@ async function requestJson(url, upstream, {method = 'POST', headers = {}, body, 
  * @param {string} [upstream.proxy] - 代理地址
  * @param {boolean} [upstream.enabled] - 是否启用
  * @returns {Promise<{status: number, headers: object, body: import('stream').Readable}>}
- * @throws {Error} 上游返回�?2xx 时抛出包含响应体的错�?
+ * @throws {Error} 上游返回非 2xx 时抛出包含响应体的错误
  */
 export async function createChatCompletions(payload, upstream, meta = {}) {
     const url = buildProtocolAwareUrl(upstream, 'chat/completions');
@@ -260,7 +260,7 @@ export async function createChatCompletions(payload, upstream, meta = {}) {
         `[${upstream.name}]: ${upstream.base_url}, model: ${payload.model || 'unknown'}, effort: ${reasoningEffort}, proxy: ${proxyMode}, ${userInfo}`
     );
 
-    // 腾讯云文档要求：prompt_cache_key 标识相同上下文的请求，提升缓存复�?
+    // 腾讯云文档要求：prompt_cache_key 标识相同上下文的请求，提升缓存复用
     if (meta.conversationKey && !payload.prompt_cache_key) {
         payload.prompt_cache_key = meta.conversationKey;
     }
@@ -293,7 +293,7 @@ export async function createChatCompletions(payload, upstream, meta = {}) {
         timeout: 300000
     });
 
-    // �?2xx 时读取响应体并抛出异�?
+    // 非 2xx 时读取响应体并抛出异常
     if (response.status < 200 || response.status >= 300) {
         const errorBody = await readBody(response.body);
         const errorMsg = errorBody.length > 500 ? errorBody.substring(0, 500) + '...' : errorBody;
@@ -313,7 +313,7 @@ export async function createResponses(payload, upstream, meta = {}, endpoint = '
         `[${upstream.name}]: ${url}, model: ${payload.model || 'unknown'}, protocol: responses, proxy: ${proxyMode}, ${userInfo}`
     );
 
-    // 腾讯云文档要求：prompt_cache_key 标识相同上下文的请求，提升缓存复�?
+    // 腾讯云文档要求：prompt_cache_key 标识相同上下文的请求，提升缓存复用
     if (meta.conversationKey && !payload.prompt_cache_key) {
         payload.prompt_cache_key = meta.conversationKey;
     }
@@ -372,7 +372,7 @@ export async function createResponsesWebSocket(payload, upstream, meta = {}, end
     );
 
     // Chat→Responses 转换路径允许 auto-link（连接池自动注入 previous_response_id + 差集截断），
-    // 客户端直�?Responses 格式时不�?auto-link（input 由客户端自行管理�?
+    // 客户端直传 Responses 格式时不做 auto-link（input 由客户端自行管理）
     const autoLink = meta.autoLink !== false && !payload.previous_response_id;
 
     const conn = await acquireResponsesWS({
@@ -465,7 +465,7 @@ export async function createAnthropicCountTokens(payload, upstream, requestHeade
 // ==================== 获取上游模型列表 ====================
 
 /**
- * 从上游获取模型列�?
+ * 从上游获取模型列表
  *
  * @param {object} upstream - 上游配置
  * @param {string} upstream.base_url - 上游基础 URL
@@ -494,7 +494,7 @@ export async function getUpstreamModels(upstream, requestHeaders = {}) {
         timeout: 15000
     });
 
-    // �?2xx 时读取响应体并抛出异�?
+    // 非 2xx 时读取响应体并抛出异常
     if (response.status < 200 || response.status >= 300) {
         const errorBody = await readBody(response.body);
         const errorMsg = errorBody.length > 500 ? errorBody.substring(0, 500) + '...' : errorBody;

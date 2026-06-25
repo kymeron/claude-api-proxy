@@ -29,8 +29,12 @@ export function repairMojibakeFilename(filename) {
     }
 }
 
+function canViewAllFeedback(sessionUser = {}) {
+    return sessionUser.role === 'admin' || sessionUser.role === 'superadmin';
+}
+
 export function canManageFeedback(sessionUser = {}, feedback) {
-    return sessionUser.role === 'admin' || (sessionUser.username && feedback?.username === sessionUser.username);
+    return canViewAllFeedback(sessionUser) || (sessionUser.username && feedback?.username === sessionUser.username);
 }
 
 export function toFeedbackAdminView(sessionUser, feedback) {
@@ -55,6 +59,9 @@ export async function listFeedbackForAdmin({
     sessionUser = {}
 } = {}) {
     const where = {};
+    if (!canViewAllFeedback(sessionUser)) {
+        where.username = sessionUser.username || '';
+    }
     if (status) where.status = status;
     if (category) where.category = category;
     if (keyword) {
@@ -76,7 +83,7 @@ export async function listFeedbackForAdmin({
         page,
         pageSize,
         current_user: sessionUser.username || '',
-        is_admin: sessionUser.role === 'admin',
+        is_admin: canViewAllFeedback(sessionUser),
         list: rows.map(row => toFeedbackAdminView(sessionUser, row))
     };
 }

@@ -320,7 +320,7 @@ export async function routeAdminFrontend(req, res) {
             }
             const {enabled} = await readRequestBody(req);
             const serviceType = serviceMatch[1];
-            if (!SERVICES.has(serviceType)) return sendJson(res, 400, {error: '鏈煡鏈嶅姟'});
+            if (!SERVICES.has(serviceType)) return sendJson(res, 400, {error: '未知服务'});
             await unifiedTenantManager.setServiceEnabled(tenantId, serviceType, enabled === true);
             return sendJson(res, 200, {message: '服务状态已更新'});
         }

@@ -9,10 +9,7 @@ import {
     isResponsesUpstream,
     isResponsesWebSocketUpstream
 } from '../src/services/providers/upstream-api.js';
-import {
-    normalizeResponsesWebSocketMode,
-    shouldUseResponsesWebSocketPassthrough
-} from '../src/services/shared/responses-ws-mode.js';
+import {normalizeResponsesWebSocketMode} from '../src/services/shared/responses-ws-mode.js';
 
 test('responses_ws protocol is distinct from HTTP responses protocol', () => {
     assert.equal(isResponsesWebSocketUpstream({protocol: 'responses_ws'}), true);
@@ -117,25 +114,11 @@ test('Responses WebSocket mode normalizes current and legacy values', () => {
     assert.equal(normalizeResponsesWebSocketMode('unknown'), 'ctx_pool');
 });
 
-test('passthrough compatibility mode stays on the stateful relay path', () => {
-    assert.equal(
-        shouldUseResponsesWebSocketPassthrough({protocol: 'responses_ws', ws_mode: 'passthrough'}),
-        false
-    );
-    assert.equal(
-        shouldUseResponsesWebSocketPassthrough({protocol: 'responses', ws_mode: 'passthrough'}),
-        false
-    );
-    assert.equal(
-        shouldUseResponsesWebSocketPassthrough({protocol: 'responses_ws', ws_mode: 'ctx_pool'}),
-        false
-    );
-    assert.equal(
-        shouldUseResponsesWebSocketPassthrough({protocol: 'responses_ws', base_url: 'https://api.example.com/v1?ws_mode=passthrough'}),
-        false
-    );
-
+test('passthrough compatibility stays as normalization without a runtime branch helper', () => {
+    const modeSource = readFileSync(join(process.cwd(), 'src/services/shared/responses-ws-mode.js'), 'utf8');
     const relaySource = readFileSync(join(process.cwd(), 'src/routes/relay.js'), 'utf8');
+
+    assert.doesNotMatch(modeSource, /shouldUseResponsesWebSocketPassthrough|RESPONSES_WS_MODE_PASSTHROUGH/);
     assert.equal(relaySource.includes('passthroughResponsesWebSocket'), false);
 });
 
