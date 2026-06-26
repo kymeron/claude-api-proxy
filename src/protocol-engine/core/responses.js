@@ -979,6 +979,101 @@ export function limitResponsesInputItems(payload, {limit, previousResponseId} = 
     };
 }
 
+export function createResponsesInputDelta(input, previousInput) {
+    const originalLength = Array.isArray(input) ? input.length : 0;
+    if (!Array.isArray(input) || !Array.isArray(previousInput) || previousInput.length === 0) {
+        return {
+            input,
+            deltaApplied: false,
+            originalLength,
+            retainedLength: originalLength,
+            coveredLength: 0,
+            droppedCount: 0
+        };
+    }
+
+    const coveredLength = findCoveredResponsesInputLength(input, previousInput);
+    if (coveredLength <= 0) {
+        return {
+            input,
+            deltaApplied: false,
+            originalLength,
+            retainedLength: originalLength,
+            coveredLength: 0,
+            droppedCount: 0
+        };
+    }
+
+    const deltaInput = input.slice(coveredLength);
+    return {
+        input: deltaInput,
+        deltaApplied: true,
+        originalLength,
+        retainedLength: deltaInput.length,
+        coveredLength,
+        droppedCount: coveredLength
+    };
+}
+
+function findCoveredResponsesInputLength(input, previousInput) {
+    const normalizedInput = input.map(normalizeResponsesInputForDelta);
+    const normalizedPrevious = previousInput.map(normalizeResponsesInputForDelta);
+
+    if (previousInput.length <= input.length) {
+        const lastPossibleStart = input.length - previousInput.length;
+        for (let start = lastPossibleStart; start >= 0; start--) {
+            let matched = true;
+            for (let offset = 0; offset < normalizedPrevious.length; offset++) {
+                if (normalizedInput[start + offset] !== normalizedPrevious[offset]) {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) return start + previousInput.length;
+        }
+    }
+
+    return findCoveredResponsesInputPrefixLength(input, normalizedInput, normalizedPrevious);
+}
+
+function findCoveredResponsesInputPrefixLength(input, normalizedInput, normalizedPrevious) {
+    let coveredInputLength = 0;
+    for (const previousItem of normalizedPrevious) {
+        if (coveredInputLength >= normalizedInput.length) break;
+        if (normalizedInput[coveredInputLength] === previousItem) coveredInputLength++;
+    }
+
+    if (coveredInputLength <= 0) return 0;
+    if (coveredInputLength >= normalizedInput.length) return coveredInputLength;
+    return isFreshResponsesContinuationItem(input[coveredInputLength]) ? coveredInputLength : 0;
+}
+
+function isFreshResponsesContinuationItem(item) {
+    if (!item || typeof item !== 'object') return false;
+    if (item.role === 'user' || item.role === 'tool') return true;
+    return item.type === 'function_call_output';
+}
+
+function normalizeResponsesInputForDelta(value) {
+    return stableResponsesInputStringify(stripResponsesInputReferenceFields(value));
+}
+
+function stripResponsesInputReferenceFields(value) {
+    if (Array.isArray(value)) return value.map(stripResponsesInputReferenceFields);
+    if (!value || typeof value !== 'object') return value;
+
+    const result = {};
+    for (const key of Object.keys(value).sort()) {
+        if (key === 'id' || key === 'status' || key === 'annotations' || key === 'partial') continue;
+        result[key] = stripResponsesInputReferenceFields(value[key]);
+    }
+    return result;
+}
+
+function stableResponsesInputStringify(value) {
+    return JSON.stringify(value);
+}
+
 function normalizeExplicitInputItemsLimit(value) {
     if (value === undefined || value === null) return resolveResponsesInputItemsLimit();
     const parsed = Number.parseInt(value, 10);

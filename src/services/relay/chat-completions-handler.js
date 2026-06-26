@@ -181,6 +181,7 @@ export function createRelayChatCompletionsHandler({
                     originalModel: openAIPayload.model,
                     contextKey: stateConversationKey,
                     sessionId: stateConversationKey,
+                    autoLink: continuation.autoLink,
                     rejectUnauthorized: !upstream.skip_tls_verify,
                     ...tenantMeta
                 });

@@ -137,3 +137,39 @@ test('handleOpenAIChatCompletions passes request signal to Anthropic streaming b
 
     assert.equal(seenSignal, controller.signal);
 });
+
+test('handleOpenAIChatCompletions disables Responses WS auto-link after continuation mismatch', async () => {
+    const res = createResponse();
+    let capturedMeta = null;
+    const deps = createBaseDeps({
+        isResponsesWebSocketUpstream: () => true,
+        chatRequestToRelayResponses: (payload) => ({
+            model: payload.model,
+            input: [{role: 'user', content: 'hello'}]
+        }),
+        prepareResponsesContinuationPayload: ({request, conversationKey}) => ({
+            request,
+            conversationKey,
+            deltaAttempted: true,
+            deltaApplied: false,
+            autoLink: false
+        }),
+        createResponsesWebSocket: (payload, upstream, meta) => {
+            capturedMeta = meta;
+            return {payload, upstream};
+        },
+        collectResponsesWebSocketResponse: async () => ({
+            id: 'resp_1',
+            usage: {input_tokens: 1, output_tokens: 2}
+        }),
+        recordCompletedResponseState: (...args) => deps.calls.push(['recordCompletedResponseState', args]),
+        recordResponsesUsage: (...args) => deps.calls.push(['recordResponsesUsage', args]),
+        responsesResponseToRelayChat: (response) => ({id: `chat_from_${response.id}`})
+    });
+    const handleOpenAIChatCompletions = createRelayChatCompletionsHandler(deps);
+
+    await handleOpenAIChatCompletions({headers: {}}, res);
+
+    assert.equal(capturedMeta.autoLink, false);
+    assert.deepEqual(res.calls, [['json', 200, {id: 'chat_from_resp_1'}]]);
+});

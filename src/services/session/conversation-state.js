@@ -8,7 +8,8 @@ import {
     preserveCanonicalResponseToolMappings,
     preserveCanonicalToolMappings,
     convertResponsesUsageToChat,
-    renderCanonicalToChat
+    renderCanonicalToChat,
+    renderCanonicalToResponses
 } from './protocol-adapter.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -113,6 +114,7 @@ export class RelayConversationStore {
             }), this.maxCanonicalTurns, canonicalRequest.messageCount),
             responses: new Set(existing?.responses || []),
             lastResponseId: existing?.lastResponseId || null,
+            lastResponseInput: cloneResponsesInput(existing?.lastResponseInput),
             updatedAt: this.now()
         };
         return this._returnState(this._storeState(key, state));
@@ -172,7 +174,8 @@ export class RelayConversationStore {
         return {
             conversationKey: resolvedConversationKey,
             request: {...request},
-            lastResponseId: getLatestResponseId(state)
+            lastResponseId: getLatestResponseId(state),
+            lastResponseInput: cloneResponsesInput(state?.lastResponseInput)
         };
     }
 
@@ -201,12 +204,14 @@ export class RelayConversationStore {
             ...storedCanonicalSessionFields(canonicalSession, this.maxCanonicalTurns),
             responses: new Set(existing?.responses || []),
             lastResponseId: existing?.lastResponseId || null,
+            lastResponseInput: cloneResponsesInput(existing?.lastResponseInput),
             updatedAt: this.now()
         };
 
         if (response.id) {
             state.responses.add(response.id);
             state.lastResponseId = response.id;
+            state.lastResponseInput = cloneResponsesInput(renderCanonicalToResponses(canonicalSession).input);
             this.responseIndex.set(this._responseKey(tenantId, response.id), key);
         }
 
@@ -236,6 +241,7 @@ export class RelayConversationStore {
             ...storedCanonicalSessionFields(canonicalSession, this.maxCanonicalTurns),
             responses: new Set(existing?.responses || []),
             lastResponseId: existing?.lastResponseId || null,
+            lastResponseInput: cloneResponsesInput(existing?.lastResponseInput),
             updatedAt: this.now()
         };
         return this._returnState(this._storeState(key, state));
@@ -261,6 +267,7 @@ export class RelayConversationStore {
             ),
             responses: new Set(existing?.responses || []),
             lastResponseId: existing?.lastResponseId || null,
+            lastResponseInput: cloneResponsesInput(existing?.lastResponseInput),
             updatedAt: this.now()
         };
         return this._returnState(this._storeState(key, state));
@@ -581,6 +588,7 @@ function estimateConversationStateBytes(state) {
     const responseBytes = state.responses instanceof Set ? state.responses.size * 96 : 0;
     return safeJsonByteLength(state.chatRequest)
         + safeJsonByteLength(state.canonicalSession)
+        + safeJsonByteLength(state.lastResponseInput)
         + responseBytes
         + 256;
 }
@@ -732,8 +740,13 @@ function cloneState(state) {
         canonicalSessionTruncated: state.canonicalSessionTruncated === true,
         canonicalTurnCount: state.canonicalTurnCount || 0,
         responses: new Set(state.responses || []),
-        lastResponseId: state.lastResponseId || null
+        lastResponseId: state.lastResponseId || null,
+        lastResponseInput: cloneResponsesInput(state.lastResponseInput)
     };
+}
+
+function cloneResponsesInput(input) {
+    return Array.isArray(input) ? clone(input) : null;
 }
 
 function mergeChatRequests(base, visibleChat, originalResponsesRequest) {

@@ -12,8 +12,10 @@ export {
     canonicalFromResponsesRequest,
     canonicalFromResponsesResponse,
     convertResponsesUsageToChat,
+    createResponsesInputDelta,
     limitResponsesInputItems,
     preserveCanonicalResponseToolMappings,
     preserveCanonicalToolMappings,
-    renderCanonicalToChat
+    renderCanonicalToChat,
+    renderCanonicalToResponses
 } from '#protocol-engine';

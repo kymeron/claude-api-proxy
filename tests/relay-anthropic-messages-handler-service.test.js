@@ -103,3 +103,40 @@ test('handleAnthropicMessages aggregates non-stream Chat upstream responses', as
     assert.equal(deps.calls.some((call) => call[0] === 'saveChatRequest'), true);
     assert.equal(deps.calls.some((call) => call[0] === 'recordChatResponse'), true);
 });
+
+test('handleAnthropicMessages disables Responses WS auto-link after continuation mismatch', async () => {
+    const res = createResponse();
+    let capturedMeta = null;
+    const deps = createBaseDeps({
+        isResponsesWebSocketUpstream: () => true,
+        chatRequestToRelayResponses: (payload) => ({
+            model: payload.model,
+            input: [{role: 'user', content: 'hello'}],
+            stream: payload.stream
+        }),
+        prepareResponsesContinuationPayload: ({request, conversationKey}) => ({
+            request,
+            conversationKey,
+            deltaAttempted: true,
+            deltaApplied: false,
+            autoLink: false
+        }),
+        createResponsesWebSocket: (payload, upstream, meta) => {
+            capturedMeta = meta;
+            return {payload, upstream};
+        },
+        collectResponsesWebSocketResponse: async () => ({
+            id: 'resp_1',
+            usage: {input_tokens: 1, output_tokens: 2}
+        }),
+        recordCompletedResponseState: (...args) => deps.calls.push(['recordCompletedResponseState', args]),
+        recordResponsesUsage: (...args) => deps.calls.push(['recordResponsesUsage', args]),
+        responsesResponseToRelayChat: (response) => ({id: `chat_from_${response.id}`})
+    });
+    const handleAnthropicMessages = createRelayAnthropicMessagesHandler(deps);
+
+    await handleAnthropicMessages({headers: {}}, res);
+
+    assert.equal(capturedMeta.autoLink, false);
+    assert.deepEqual(res.calls, [['json', 200, {type: 'message', source: 'chat_from_resp_1'}]]);
+});
