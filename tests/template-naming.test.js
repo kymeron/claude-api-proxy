@@ -300,6 +300,12 @@ test('unified admin console includes all service management surfaces', () => {
     assert.match(adminHtml, /disable_responses_continuation:upProtocol\.value==='responses_ws'\?!upEnableResponsesIncremental\.checked:false/);
     assert.match(adminHtml, /增量裁剪/);
     assert.match(adminHtml, /完整 input/);
+    assert.doesNotMatch(adminHtml, /WS mode/);
+    assert.doesNotMatch(adminHtml, /id="upWsMode"/);
+    assert.doesNotMatch(adminHtml, /upWsMode(Field|\.value)/);
+    assert.doesNotMatch(adminHtml, /WS \$\{esc\(u\.ws_mode/);
+    assert.match(adminHtml, /function getRelayWsModeForSave\(\)/);
+    assert.match(adminHtml, /ws_mode:getRelayWsModeForSave\(\)/);
     assert.doesNotMatch(adminHtml, /请按链路最终调用的上游协议选择/);
     assert.doesNotMatch(adminHtml, /当前 responses_ws 上游只是中间桥接层/);
     assert.doesNotMatch(adminHtml, /桥接完整 input/);
