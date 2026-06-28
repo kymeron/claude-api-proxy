@@ -297,6 +297,10 @@ test('unified admin console includes all service management surfaces', () => {
     assert.match(adminHtml, /AbortController/);
     assert.match(adminHtml, /id="upEnableResponsesIncremental"/);
     assert.match(adminHtml, /id="upEnableResponsesIncrementalField"[^>]*><input id="upEnableResponsesIncremental"[^>]*> 每轮消息裁剪为增量（省token，只适用于模型上游服务支持responses协议）<\/label>/);
+    assert.match(adminHtml, /onchange="syncUpstreamResponsesOptionsVisibility\(true\)"/);
+    assert.match(adminHtml, /syncUpstreamResponsesOptionsVisibility\(false\);/);
+    assert.match(adminHtml, /function syncUpstreamResponsesOptionsVisibility\(enableIncrementalByDefault=false\)/);
+    assert.match(adminHtml, /if\(show&&enableIncrementalByDefault\)upEnableResponsesIncremental\.checked=true;/);
     assert.match(adminHtml, /disable_responses_continuation:upProtocol\.value==='responses_ws'\?!upEnableResponsesIncremental\.checked:false/);
     assert.match(adminHtml, /增量裁剪/);
     assert.match(adminHtml, /完整 input/);
