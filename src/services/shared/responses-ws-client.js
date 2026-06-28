@@ -11,14 +11,57 @@ const UPSTREAM_PING_INTERVAL = 25000;
 
 export class ResponsesWebSocketError extends Error {
     constructor(event) {
-        const errorInfo = event?.error || {};
+        const normalizedEvent = normalizeResponsesWebSocketErrorEvent(event);
+        const errorInfo = normalizedEvent?.error || {};
         super(errorInfo.message || 'Responses WebSocket request failed');
         this.name = 'ResponsesWebSocketError';
-        this.event = event;
-        this.status = event?.status;
+        this.event = normalizedEvent;
+        this.status = normalizedEvent?.status;
         this.code = errorInfo.code;
         this.param = errorInfo.param;
         this.type = errorInfo.type;
+    }
+}
+
+function normalizeResponsesWebSocketErrorEvent(event) {
+    if (!event || typeof event !== 'object') return event;
+    const normalized = {
+        ...event,
+        error: {...(event.error || {})}
+    };
+    const status = normalizeHttpStatus(normalized.status)
+        || inferHttpStatusFromMessage(normalized.error?.message);
+    if (status && !normalized.status) normalized.status = status;
+
+    const inferredCode = errorCodeForHttpStatus(status);
+    if (inferredCode && (!normalized.error.code || normalized.error.code === 'server_error')) {
+        normalized.error.code = inferredCode;
+    }
+    if (!normalized.error.code) normalized.error.code = 'server_error';
+    return normalized;
+}
+
+function normalizeHttpStatus(status) {
+    const numeric = Number(status);
+    return Number.isInteger(numeric) && numeric >= 100 && numeric <= 599 ? numeric : null;
+}
+
+function inferHttpStatusFromMessage(message) {
+    if (typeof message !== 'string') return null;
+    const match = message.match(/\bHTTP\s+(\d{3})\b/i);
+    return match ? normalizeHttpStatus(match[1]) : null;
+}
+
+function errorCodeForHttpStatus(status) {
+    switch (status) {
+        case 400: return 'bad_request';
+        case 401: return 'unauthorized';
+        case 403: return 'forbidden';
+        case 404: return 'not_found';
+        case 408: return 'timeout';
+        case 413: return 'request_too_large';
+        case 429: return 'rate_limit_exceeded';
+        default: return null;
     }
 }
 

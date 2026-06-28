@@ -164,6 +164,39 @@ test('handleWSConnection accepts response.completed from data.type when wrapper 
     }
 });
 
+test('handleWSConnection preserves upstream HTTP status in error events', async () => {
+    const ws = new FakeClientWebSocket();
+
+    try {
+        handleWSConnection(ws, {
+            req: {},
+            authenticate: () => ({tenantId: 1}),
+            handleRequest: async function* () {
+                throw Object.assign(new Error('upstream HTTP 429: Requests are too frequent'), {
+                    status: 429
+                });
+            }
+        });
+
+        ws.emit('message', Buffer.from(JSON.stringify({
+            type: 'response.create',
+            response: {model: 'glm-5.2', input: 'hello'}
+        })));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        assert.deepEqual(ws.sent, [{
+            type: 'error',
+            status: 429,
+            error: {
+                message: 'upstream HTTP 429: Requests are too frequent',
+                code: 'rate_limit_exceeded'
+            }
+        }]);
+    } finally {
+        ws.close();
+    }
+});
+
 class FakeClientWebSocket extends EventEmitter {
     constructor() {
         super();

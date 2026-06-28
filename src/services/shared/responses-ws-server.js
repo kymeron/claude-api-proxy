@@ -272,16 +272,10 @@ async function _processRequest(clientWs, message, authResult, handleRequest, ctx
             // 如果是 ResponsesWebSocketError，透传上游错误事件
             if (err.name === 'ResponsesWebSocketError' && err.event) {
                 logger.warn(`WS server: upstream error: ${err.message}`);
-                safeClientSend(clientWs, err.event);
+                safeClientSend(clientWs, normalizeErrorEvent(err.event, err));
             } else {
                 logger.warn(`WS server: request error: ${err.message}`);
-                safeClientSend(clientWs, {
-                    type: 'error',
-                    error: {
-                        message: err.message || 'Request failed',
-                        code: err.code || 'server_error'
-                    }
-                });
+                safeClientSend(clientWs, createErrorEventFromThrown(err));
             }
         }
     } finally {
@@ -300,5 +294,63 @@ async function _processRequest(clientWs, message, authResult, handleRequest, ctx
 
         ctx.setProcessing(false);
         ctx.setAbortController(null);
+    }
+}
+
+function createErrorEventFromThrown(error) {
+    const status = normalizeHttpStatus(error?.status)
+        || inferHttpStatusFromMessage(error?.message);
+    const event = {
+        type: 'error',
+        error: {
+            message: error?.message || 'Request failed',
+            code: error?.code || errorCodeForHttpStatus(status) || 'server_error'
+        }
+    };
+    if (status) event.status = status;
+    return event;
+}
+
+function normalizeErrorEvent(event, error) {
+    const normalized = {
+        ...(event || {type: 'error'}),
+        error: {...(event?.error || {})}
+    };
+    const status = normalizeHttpStatus(normalized.status)
+        || normalizeHttpStatus(error?.status)
+        || inferHttpStatusFromMessage(normalized.error?.message)
+        || inferHttpStatusFromMessage(error?.message);
+    if (status && !normalized.status) normalized.status = status;
+
+    const inferredCode = errorCodeForHttpStatus(status);
+    if (inferredCode && (!normalized.error.code || normalized.error.code === 'server_error')) {
+        normalized.error.code = inferredCode;
+    }
+    if (!normalized.error.code) normalized.error.code = error?.code || 'server_error';
+    if (!normalized.error.message) normalized.error.message = error?.message || 'Request failed';
+    return normalized;
+}
+
+function normalizeHttpStatus(status) {
+    const numeric = Number(status);
+    return Number.isInteger(numeric) && numeric >= 100 && numeric <= 599 ? numeric : null;
+}
+
+function inferHttpStatusFromMessage(message) {
+    if (typeof message !== 'string') return null;
+    const match = message.match(/\bHTTP\s+(\d{3})\b/i);
+    return match ? normalizeHttpStatus(match[1]) : null;
+}
+
+function errorCodeForHttpStatus(status) {
+    switch (status) {
+        case 400: return 'bad_request';
+        case 401: return 'unauthorized';
+        case 403: return 'forbidden';
+        case 404: return 'not_found';
+        case 408: return 'timeout';
+        case 413: return 'request_too_large';
+        case 429: return 'rate_limit_exceeded';
+        default: return null;
     }
 }

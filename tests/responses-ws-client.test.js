@@ -172,6 +172,31 @@ test('sendResponsesWebSocketRequest surfaces upstream error events', async () =>
     );
 });
 
+test('sendResponsesWebSocketRequest infers rate limit from legacy server_error messages', async () => {
+    const socket = new FakeWebSocket([
+        {
+            type: 'error',
+            error: {
+                message: '[upstream]: Anthropic 上游返回 HTTP 429: {"error":{"type":"TooManyRequests"}}',
+                code: 'server_error'
+            }
+        }
+    ]);
+
+    await assert.rejects(
+        async () => {
+            for await (const _event of sendResponsesWebSocketRequest(socket, {model: 'gpt-5.4', input: 'hello'})) {
+            }
+        },
+        (error) =>
+            error instanceof ResponsesWebSocketError
+            && error.status === 429
+            && error.code === 'rate_limit_exceeded'
+            && error.event.status === 429
+            && error.event.error.code === 'rate_limit_exceeded'
+    );
+});
+
 test('connectionPoolKey separates auth and network dimensions', () => {
     const directKey = connectionPoolKey('token-a', 'wss://api.example.com/v1/responses:direct');
     const proxiedKey = connectionPoolKey('token-a', 'wss://api.example.com/v1/responses:http://127.0.0.1:7890');
