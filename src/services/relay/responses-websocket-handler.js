@@ -54,6 +54,13 @@ export function createRelayResponsesWebSocketHandler({
             }
             let chatReq = hydrated.chatRequest;
             chatReq.stream = true;
+            ensureChatMessagesForResponsesWebSocketFallback({
+                chatRequest: chatReq,
+                payload,
+                targetProtocol: 'anthropic',
+                RelayStateMissingError,
+                toResponsesWebSocketStateMissingError
+            });
             const stateConversationKey = hydrated.conversationKey || conversationKey;
             const stateRelayMeta = {...relayMeta, conversationKey: stateConversationKey};
             const invocation = await invokeWithRelayContextCompaction({
@@ -74,6 +81,12 @@ export function createRelayResponsesWebSocketHandler({
                         stream: true
                     });
                     const anthropicPayload = chatRequestToAnthropic(outboundChatReq);
+                    ensureAnthropicMessagesForResponsesWebSocketFallback({
+                        anthropicPayload,
+                        payload,
+                        RelayStateMissingError,
+                        toResponsesWebSocketStateMissingError
+                    });
                     return callUpstream(upstream, (up) =>
                         createAnthropicMessages(
                             anthropicPayload,
@@ -264,6 +277,13 @@ export function createRelayResponsesWebSocketHandler({
         }
         let chatReq = hydrated.chatRequest;
         chatReq.stream = true;
+        ensureChatMessagesForResponsesWebSocketFallback({
+            chatRequest: chatReq,
+            payload,
+            targetProtocol: 'chat',
+            RelayStateMissingError,
+            toResponsesWebSocketStateMissingError
+        });
         const stateConversationKey = hydrated.conversationKey || conversationKey;
         const stateRelayMeta = {...relayMeta, conversationKey: stateConversationKey};
         const invocation = await invokeWithRelayContextCompaction({
@@ -278,17 +298,27 @@ export function createRelayResponsesWebSocketHandler({
                 requestType: 'ResponsesWSViaChat',
                 req
             },
-            invoke: (readyChatReq) => callUpstream(upstream, (up) =>
-                createChatCompletions(prepareRelayOutboundChatRequest(readyChatReq, {
+            invoke: (readyChatReq) => {
+                const outboundChatReq = prepareRelayOutboundChatRequest(readyChatReq, {
                     model: resolvedModel,
                     stream: true
-                }), up, {
-                    requestType: 'ResponsesWS',
-                    stream: true,
-                    originalModel: payload.model,
-                    ...stateRelayMeta
-                })
-            )
+                });
+                ensureChatMessagesForResponsesWebSocketFallback({
+                    chatRequest: outboundChatReq,
+                    payload,
+                    targetProtocol: 'chat',
+                    RelayStateMissingError,
+                    toResponsesWebSocketStateMissingError
+                });
+                return callUpstream(upstream, (up) =>
+                    createChatCompletions(outboundChatReq, up, {
+                        requestType: 'ResponsesWS',
+                        stream: true,
+                        originalModel: payload.model,
+                        ...stateRelayMeta
+                    })
+                );
+            }
         });
         chatReq = invocation.chatRequest;
         const {response} = invocation.result;
@@ -373,4 +403,49 @@ export function createRelayResponsesWebSocketHandler({
             }
         });
     };
+}
+
+function ensureChatMessagesForResponsesWebSocketFallback({
+    chatRequest,
+    payload,
+    targetProtocol,
+    RelayStateMissingError,
+    toResponsesWebSocketStateMissingError
+}) {
+    if (Array.isArray(chatRequest?.messages) && chatRequest.messages.length > 0) return;
+    throw createResponsesWebSocketStateMissingError({
+        payload,
+        targetProtocol,
+        RelayStateMissingError,
+        toResponsesWebSocketStateMissingError
+    });
+}
+
+function ensureAnthropicMessagesForResponsesWebSocketFallback({
+    anthropicPayload,
+    payload,
+    RelayStateMissingError,
+    toResponsesWebSocketStateMissingError
+}) {
+    if (Array.isArray(anthropicPayload?.messages) && anthropicPayload.messages.length > 0) return;
+    throw createResponsesWebSocketStateMissingError({
+        payload,
+        targetProtocol: 'anthropic',
+        RelayStateMissingError,
+        toResponsesWebSocketStateMissingError
+    });
+}
+
+function createResponsesWebSocketStateMissingError({
+    payload,
+    targetProtocol,
+    RelayStateMissingError,
+    toResponsesWebSocketStateMissingError
+}) {
+    const previousResponseId = typeof payload?.previous_response_id === 'string' && payload.previous_response_id.trim()
+        ? payload.previous_response_id.trim()
+        : 'none';
+    const error = new RelayStateMissingError(previousResponseId);
+    error.message = `Missing relay conversation state for Responses WebSocket ${targetProtocol} request; full-history messages are empty`;
+    return toResponsesWebSocketStateMissingError(error);
 }

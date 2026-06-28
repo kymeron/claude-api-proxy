@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRelayResponsesWebSocketHandler} from '../src/services/relay/responses-websocket-handler.js';
-import {RelayConversationStore} from '../src/services/session/conversation-state.js';
+import {
+    RelayConversationStore,
+    RelayStateMissingError
+} from '../src/services/session/conversation-state.js';
 
 async function collect(iterable) {
     const events = [];
@@ -245,6 +248,85 @@ test('handleRelayResponsesWS hydrates tool-result deltas before Anthropic fallba
         );
         assert.equal(capturedChatPayload.messages[1].tool_calls[0].id, 'call_read');
         assert.equal(capturedChatPayload.messages[2].tool_call_id, 'call_read');
+    } finally {
+        store.dispose();
+    }
+});
+
+test('handleRelayResponsesWS rejects empty Chat fallback without calling upstream', async () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+
+    try {
+        const deps = createBaseDeps({
+            relayConversationStore: store,
+            RelayStateMissingError,
+            toResponsesWebSocketStateMissingError: (error) => Object.assign(error, {
+                name: 'ResponsesWebSocketError',
+                event: {
+                    type: 'error',
+                    error: {message: error.message, code: 'state_missing'}
+                }
+            }),
+            callUpstream: async () => {
+                assert.fail('empty Responses WS input should not be sent to Chat upstream');
+            }
+        });
+        const handleRelayResponsesWS = createRelayResponsesWebSocketHandler(deps);
+        const req = {tenantId: 42};
+
+        await handleRelayResponsesWS({id: 'client'}, req);
+
+        await assert.rejects(
+            () => collect(deps.capturedOptions.handleRequest({
+                model: 'gpt-test',
+                input: []
+            }, null, {signal: {aborted: false}})),
+            (error) => {
+                assert.equal(error.name, 'ResponsesWebSocketError');
+                assert.equal(error.event.error.code, 'state_missing');
+                return true;
+            }
+        );
+    } finally {
+        store.dispose();
+    }
+});
+
+test('handleRelayResponsesWS rejects empty Anthropic fallback without calling upstream', async () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+
+    try {
+        const deps = createBaseDeps({
+            isAnthropicUpstream: () => true,
+            relayConversationStore: store,
+            RelayStateMissingError,
+            toResponsesWebSocketStateMissingError: (error) => Object.assign(error, {
+                name: 'ResponsesWebSocketError',
+                event: {
+                    type: 'error',
+                    error: {message: error.message, code: 'state_missing'}
+                }
+            }),
+            callUpstream: async () => {
+                assert.fail('empty Responses WS input should not be sent to Anthropic upstream');
+            }
+        });
+        const handleRelayResponsesWS = createRelayResponsesWebSocketHandler(deps);
+        const req = {tenantId: 42};
+
+        await handleRelayResponsesWS({id: 'client'}, req);
+
+        await assert.rejects(
+            () => collect(deps.capturedOptions.handleRequest({
+                model: 'gpt-test',
+                input: []
+            }, null, {signal: {aborted: false}})),
+            (error) => {
+                assert.equal(error.name, 'ResponsesWebSocketError');
+                assert.equal(error.event.error.code, 'state_missing');
+                return true;
+            }
+        );
     } finally {
         store.dispose();
     }

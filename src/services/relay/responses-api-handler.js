@@ -71,6 +71,12 @@ export function createRelayResponsesAPIHandler({
                 });
                 let chatReq = hydrated.chatRequest;
                 chatReq.stream = responsesReq.stream;
+                ensureChatMessagesForResponsesFallback({
+                    chatRequest: chatReq,
+                    request: responsesReq,
+                    targetProtocol: 'anthropic',
+                    RelayStateMissingError
+                });
                 const tenant = await tenantDirectory.getTenant(tenantId);
                 const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
                 const stateConversationKey = hydrated.conversationKey || conversationKey;
@@ -92,6 +98,11 @@ export function createRelayResponsesAPIHandler({
                             stream: responsesReq.stream
                         });
                         const anthropicPayload = chatRequestToAnthropic(outboundChatReq);
+                        ensureAnthropicMessagesForResponsesFallback({
+                            anthropicPayload,
+                            request: responsesReq,
+                            RelayStateMissingError
+                        });
                         return callUpstream(upstream, (up) =>
                             createAnthropicMessages(
                                 anthropicPayload,
@@ -360,6 +371,12 @@ export function createRelayResponsesAPIHandler({
                 request: responsesReq
             });
             let chatReq = hydrated.chatRequest;
+            ensureChatMessagesForResponsesFallback({
+                chatRequest: chatReq,
+                request: responsesReq,
+                targetProtocol: 'chat',
+                RelayStateMissingError
+            });
 
             const tenant = await tenantDirectory.getTenant(tenantId);
             const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
@@ -388,6 +405,12 @@ export function createRelayResponsesAPIHandler({
                         const payload = prepareRelayOutboundChatRequest(readyChatReq, {
                             model: upstreamManager.resolveModel(readyChatReq.model, up.index),
                             stream: responsesReq.stream
+                        });
+                        ensureChatMessagesForResponsesFallback({
+                            chatRequest: payload,
+                            request: responsesReq,
+                            targetProtocol: 'chat',
+                            RelayStateMissingError
                         });
                         return createChatCompletions(payload, up, {
                             requestType: 'Responses',
@@ -476,6 +499,12 @@ export function createRelayResponsesAPIHandler({
                             model: upstreamManager.resolveModel(readyChatReq.model, up.index),
                             stream: true
                         });
+                        ensureChatMessagesForResponsesFallback({
+                            chatRequest: payload,
+                            request: responsesReq,
+                            targetProtocol: 'chat',
+                            RelayStateMissingError
+                        });
                         return createChatCompletions(payload, up, {
                             requestType: 'Responses',
                             stream: false,
@@ -533,4 +562,32 @@ export function createRelayResponsesAPIHandler({
             sendOpenAIError(res, upstreamErrorStatus(error), error.message || 'Internal server error');
         }
     };
+}
+
+function ensureChatMessagesForResponsesFallback({
+    chatRequest,
+    request,
+    targetProtocol,
+    RelayStateMissingError
+}) {
+    if (Array.isArray(chatRequest?.messages) && chatRequest.messages.length > 0) return;
+    throw createResponsesStateMissingError({request, targetProtocol, RelayStateMissingError});
+}
+
+function ensureAnthropicMessagesForResponsesFallback({
+    anthropicPayload,
+    request,
+    RelayStateMissingError
+}) {
+    if (Array.isArray(anthropicPayload?.messages) && anthropicPayload.messages.length > 0) return;
+    throw createResponsesStateMissingError({request, targetProtocol: 'anthropic', RelayStateMissingError});
+}
+
+function createResponsesStateMissingError({request, targetProtocol, RelayStateMissingError}) {
+    const previousResponseId = typeof request?.previous_response_id === 'string' && request.previous_response_id.trim()
+        ? request.previous_response_id.trim()
+        : 'none';
+    const error = new RelayStateMissingError(previousResponseId);
+    error.message = `Missing relay conversation state for Responses ${targetProtocol} request; full-history messages are empty`;
+    return error;
 }
