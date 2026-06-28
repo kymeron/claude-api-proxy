@@ -292,6 +292,50 @@ test('handleRelayResponsesWS rejects empty Chat fallback without calling upstrea
     }
 });
 
+test('handleRelayResponsesWS rejects system-only Chat fallback without calling upstream', async () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+
+    try {
+        const deps = createBaseDeps({
+            relayConversationStore: {
+                hydrateResponsesForFullHistory: ({request, conversationKey}) => ({
+                    chatRequest: {model: request.model, messages: [{role: 'system', content: 'relay rules'}]},
+                    conversationKey
+                })
+            },
+            RelayStateMissingError,
+            toResponsesWebSocketStateMissingError: (error) => Object.assign(error, {
+                name: 'ResponsesWebSocketError',
+                event: {
+                    type: 'error',
+                    error: {message: error.message, code: 'state_missing'}
+                }
+            }),
+            callUpstream: async () => {
+                assert.fail('system-only Responses WS input should not be sent to Chat upstream');
+            }
+        });
+        const handleRelayResponsesWS = createRelayResponsesWebSocketHandler(deps);
+        const req = {tenantId: 42};
+
+        await handleRelayResponsesWS({id: 'client'}, req);
+
+        await assert.rejects(
+            () => collect(deps.capturedOptions.handleRequest({
+                model: 'gpt-test',
+                input: []
+            }, null, {signal: {aborted: false}})),
+            (error) => {
+                assert.equal(error.name, 'ResponsesWebSocketError');
+                assert.equal(error.event.error.code, 'state_missing');
+                return true;
+            }
+        );
+    } finally {
+        store.dispose();
+    }
+});
+
 test('handleRelayResponsesWS rejects empty Anthropic fallback without calling upstream', async () => {
     const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
 

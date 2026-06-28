@@ -570,8 +570,16 @@ function ensureChatMessagesForResponsesFallback({
     targetProtocol,
     RelayStateMissingError
 }) {
-    if (Array.isArray(chatRequest?.messages) && chatRequest.messages.length > 0) return;
+    if (hasChatConversationAnchorMessage(chatRequest?.messages)) return;
     throw createResponsesStateMissingError({request, targetProtocol, RelayStateMissingError});
+}
+
+function hasChatConversationAnchorMessage(messages) {
+    if (!Array.isArray(messages)) return false;
+    return messages.some((message) => {
+        const role = typeof message?.role === 'string' ? message.role.trim().toLowerCase() : '';
+        return role === 'user' || role === 'assistant';
+    });
 }
 
 function ensureAnthropicMessagesForResponsesFallback({
@@ -588,6 +596,6 @@ function createResponsesStateMissingError({request, targetProtocol, RelayStateMi
         ? request.previous_response_id.trim()
         : 'none';
     const error = new RelayStateMissingError(previousResponseId);
-    error.message = `Missing relay conversation state for Responses ${targetProtocol} request; full-history messages are empty`;
+    error.message = `Missing relay conversation state for Responses ${targetProtocol} request; full-history conversation messages are empty`;
     return error;
 }

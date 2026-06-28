@@ -159,6 +159,34 @@ test('handleResponsesAPI rejects empty Chat fallback without calling upstream', 
     assert.equal(res.calls[0][0], 'state-missing');
 });
 
+test('handleResponsesAPI rejects system-only Chat fallback without calling upstream', async () => {
+    const res = createResponse();
+    const RelayStateMissingError = class RelayStateMissingError extends Error {};
+    const deps = createBaseDeps({
+        RelayStateMissingError,
+        parseBody: async () => JSON.stringify({
+            model: 'gpt-test',
+            input: [],
+            stream: false
+        }),
+        relayConversationStore: {
+            hydrateResponsesForFullHistory: ({request, conversationKey}) => ({
+                chatRequest: {model: request.model, messages: [{role: 'system', content: 'relay rules'}]},
+                conversationKey
+            })
+        },
+        callUpstream: async () => {
+            assert.fail('system-only Responses input should not be sent to Chat upstream');
+        }
+    });
+    const handleResponsesAPI = createRelayResponsesAPIHandler(deps);
+
+    await handleResponsesAPI({headers: {}}, res);
+
+    assert.equal(res.calls.length, 1);
+    assert.equal(res.calls[0][0], 'state-missing');
+});
+
 test('handleResponsesAPI rejects empty Anthropic fallback without calling upstream', async () => {
     const res = createResponse();
     const RelayStateMissingError = class RelayStateMissingError extends Error {};
