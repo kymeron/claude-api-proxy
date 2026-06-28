@@ -155,6 +155,7 @@ export class UpstreamManager {
             ws_mode: normalizeResponsesWebSocketMode(u.ws_mode),
             enabled: u.enabled !== false,
             skip_tls_verify: u.skip_tls_verify === true,
+            disable_responses_continuation: u.disable_responses_continuation === true,
             created_at: u.created_at,
             is_active: i === activeIdx
         }));
@@ -257,7 +258,8 @@ export class UpstreamManager {
             protocol: data.protocol || '',
             ws_mode: normalizeResponsesWebSocketMode(data.ws_mode),
             enabled: data.enabled !== false,
-            skip_tls_verify: data.skip_tls_verify === true
+            skip_tls_verify: data.skip_tls_verify === true,
+            disable_responses_continuation: data.disable_responses_continuation === true
         };
         if (!upstreamData.base_url) {
             throw new Error('base_url is required');
@@ -283,6 +285,9 @@ export class UpstreamManager {
         if (data.protocol !== undefined) updateData.protocol = data.protocol;
         if (data.ws_mode !== undefined) updateData.ws_mode = normalizeResponsesWebSocketMode(data.ws_mode);
         if (data.skip_tls_verify !== undefined) updateData.skip_tls_verify = data.skip_tls_verify === true;
+        if (data.disable_responses_continuation !== undefined) {
+            updateData.disable_responses_continuation = data.disable_responses_continuation === true;
+        }
 
         await models.TenantUpstream.update(updateData, {where: {id: upstream.id}});
         // 更新内存中的数据
@@ -362,7 +367,9 @@ export class UpstreamManager {
                         model_auto: u.model_auto,
                         protocol: u.protocol,
                         ws_mode: normalizeResponsesWebSocketMode(u.ws_mode),
-                        enabled: u.enabled
+                        enabled: u.enabled,
+                        skip_tls_verify: u.skip_tls_verify === true,
+                        disable_responses_continuation: u.disable_responses_continuation === true
                     })
                 );
             }

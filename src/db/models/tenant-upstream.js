@@ -65,6 +65,10 @@ export const TenantUpstream = sequelize.define('tenant_upstreams', {
     skip_tls_verify: {
         type: DataTypes.BOOLEAN,
         defaultValue: false
+    },
+    disable_responses_continuation: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false
     }
 }, {
     indexes: [

@@ -98,6 +98,13 @@ async function ensureTenantUpstreamColumns() {
             defaultValue: 'ctx_pool'
         });
     }
+    if (!columns.disable_responses_continuation) {
+        await queryInterface.addColumn(table, 'disable_responses_continuation', {
+            type: DataTypes.BOOLEAN,
+            allowNull: false,
+            defaultValue: false
+        });
+    }
 }
 
 export {sequelize};

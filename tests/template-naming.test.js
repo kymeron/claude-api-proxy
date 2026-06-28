@@ -295,6 +295,12 @@ test('unified admin console includes all service management surfaces', () => {
     assert.match(adminHtml, /function fetchWithTimeout\(/);
     assert.match(adminHtml, /timeoutMs:35000/);
     assert.match(adminHtml, /AbortController/);
+    assert.match(adminHtml, /id="upDisableResponsesContinuation"/);
+    assert.match(adminHtml, /disable_responses_continuation:upDisableResponsesContinuation\.checked/);
+    assert.match(adminHtml, /云站 relay/);
+    assert.match(adminHtml, /原生 Responses WebSocket/);
+    assert.match(upstreamManager, /disable_responses_continuation/);
+    assert.match(upstreamModel, /disable_responses_continuation/);
     assert.match(loginHtml, /id="forgotPasswordModal"/);
     assert.match(loginHtml, /function openForgotPassword\(\)/);
     const forgotPasswordModal = loginHtml.match(/id="forgotPasswordModal"[\s\S]*?<script>/)?.[0] || '';

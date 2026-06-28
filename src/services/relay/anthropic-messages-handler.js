@@ -196,7 +196,8 @@ export function createRelayAnthropicMessagesHandler({
                     tenantId,
                     conversationKey: baseConversationKey,
                     request: responsesPayload,
-                    requestType: 'AnthropicViaResponsesWebSocket'
+                    requestType: 'AnthropicViaResponsesWebSocket',
+                    disableContinuation: upstream.disable_responses_continuation === true
                 });
                 const stateConversationKey = continuation.conversationKey || baseConversationKey;
                 const wsResult = await createResponsesWebSocket(continuation.request, upstream, {

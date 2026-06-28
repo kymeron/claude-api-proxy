@@ -15,6 +15,7 @@ export function prepareResponsesContinuationPayload({
     conversationKey,
     request,
     requestType,
+    disableContinuation = false,
     logger: log = logger
 } = {}) {
     const prepared = conversationStore.prepareResponsesPassthrough({
@@ -23,6 +24,51 @@ export function prepareResponsesContinuationPayload({
         request
     });
     const stateConversationKey = prepared.conversationKey || conversationKey;
+    if (disableContinuation === true) {
+        const fullRequest = stripResponsesContinuationFields(prepared.request);
+        const limited = limitResponsesInputItems(fullRequest, {previousResponseId: null});
+        log.info(
+            `Responses continuation: disabled; sending full input items=${countResponsesInputItems(limited.payload?.input)}`
+            + `${requestType ? ` requestType=${requestType}` : ''}`
+            + `${stateConversationKey ? ` conversationKey=${stateConversationKey}` : ''}`
+        );
+        const delta = {
+            request: fullRequest,
+            deltaAttempted: false,
+            deltaApplied: false,
+            emptyDelta: false,
+            candidates: [],
+            originalLength: countResponsesInputItems(fullRequest?.input),
+            retainedLength: countResponsesInputItems(limited.payload?.input),
+            coveredLength: 0,
+            previousResponseId: null
+        };
+        writeContinuationDiagnostic({
+            tenantId,
+            conversationKey: stateConversationKey,
+            requestType,
+            sourceRequest: prepared.request,
+            outboundRequest: limited.payload,
+            delta,
+            limited,
+            logger: log
+        });
+        return {
+            request: limited.payload,
+            conversationKey: stateConversationKey,
+            lastResponseId: prepared.lastResponseId,
+            autoLink: false,
+            deltaApplied: false,
+            deltaAttempted: false,
+            emptyDelta: false,
+            deltaPreviousResponseId: null,
+            deltaCoveredLength: 0,
+            truncated: limited.truncated,
+            originalLength: limited.originalLength,
+            retainedLength: limited.retainedLength,
+            droppedCount: limited.droppedCount
+        };
+    }
     const delta = createContinuationDelta(prepared.request, prepared);
     const previousResponseId = delta.deltaApplied
         ? delta.previousResponseId
@@ -225,6 +271,13 @@ function getContinuationCandidates(request, prepared) {
 
 function normalizeResponseId(value) {
     return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function stripResponsesContinuationFields(request) {
+    if (!request || typeof request !== 'object') return request;
+    const next = {...request};
+    delete next.previous_response_id;
+    return next;
 }
 
 function countResponsesInputItems(input) {

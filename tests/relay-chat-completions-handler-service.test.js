@@ -173,3 +173,59 @@ test('handleOpenAIChatCompletions disables Responses WS auto-link after continua
     assert.equal(capturedMeta.autoLink, false);
     assert.deepEqual(res.calls, [['json', 200, {id: 'chat_from_resp_1'}]]);
 });
+
+test('handleOpenAIChatCompletions disables Responses WS continuation when upstream opts out', async () => {
+    const res = createResponse();
+    let capturedContinuationOptions = null;
+    let capturedMeta = null;
+    const deps = createBaseDeps({
+        authenticateAndGetUpstream: async () => ({
+            upstream: {index: 0, disable_responses_continuation: true},
+            tenantId: 42,
+            upstreamManager: {
+                resolveModel: (model) => `${model}-resolved`
+            }
+        }),
+        isResponsesWebSocketUpstream: () => true,
+        chatRequestToRelayResponses: (payload) => ({
+            model: payload.model,
+            input: [
+                {role: 'user', content: 'hello'},
+                {role: 'assistant', content: 'hi'},
+                {role: 'user', content: 'again'}
+            ],
+            previous_response_id: 'resp_prev'
+        }),
+        prepareResponsesContinuationPayload: (options) => {
+            capturedContinuationOptions = options;
+            return {
+                request: {
+                    ...options.request,
+                    previous_response_id: undefined
+                },
+                conversationKey: options.conversationKey,
+                deltaAttempted: false,
+                deltaApplied: false,
+                autoLink: false
+            };
+        },
+        createResponsesWebSocket: (payload, upstream, meta) => {
+            capturedMeta = meta;
+            return {payload, upstream};
+        },
+        collectResponsesWebSocketResponse: async () => ({
+            id: 'resp_1',
+            usage: {input_tokens: 1, output_tokens: 2}
+        }),
+        recordCompletedResponseState: (...args) => deps.calls.push(['recordCompletedResponseState', args]),
+        recordResponsesUsage: (...args) => deps.calls.push(['recordResponsesUsage', args]),
+        responsesResponseToRelayChat: (response) => ({id: `chat_from_${response.id}`})
+    });
+    const handleOpenAIChatCompletions = createRelayChatCompletionsHandler(deps);
+
+    await handleOpenAIChatCompletions({headers: {}}, res);
+
+    assert.equal(capturedContinuationOptions.disableContinuation, true);
+    assert.equal(capturedMeta.autoLink, false);
+    assert.deepEqual(res.calls, [['json', 200, {id: 'chat_from_resp_1'}]]);
+});

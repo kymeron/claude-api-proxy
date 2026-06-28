@@ -82,6 +82,23 @@ test('testRelayUpstream returns the same result envelope used by batch tests', a
     });
 });
 
+test('listUpstreams exposes Responses WS continuation opt-out', () => {
+    const manager = new UpstreamManager({tenantId: 1});
+    manager.upstreams = [{
+        name: 'Relay Bridge',
+        protocol: 'responses_ws',
+        base_url: 'wss://relay.example.com/api/relay/v1/responses',
+        api_key: 'sk-test',
+        models: ['gpt-test'],
+        enabled: true,
+        disable_responses_continuation: true
+    }];
+
+    const [upstream] = manager.listUpstreams();
+
+    assert.equal(upstream.disable_responses_continuation, true);
+});
+
 test('testUpstream times out responses_ws streams that never complete', async () => {
     const server = await createServer();
     const port = server.address().port;

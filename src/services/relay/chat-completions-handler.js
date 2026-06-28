@@ -172,7 +172,8 @@ export function createRelayChatCompletionsHandler({
                     tenantId,
                     conversationKey: baseConversationKey,
                     request: responsesPayload,
-                    requestType: 'ChatCompletionsViaResponsesWS'
+                    requestType: 'ChatCompletionsViaResponsesWS',
+                    disableContinuation: upstream.disable_responses_continuation === true
                 });
                 const stateConversationKey = continuation.conversationKey || baseConversationKey;
                 const wsResult = await createResponsesWebSocket(continuation.request, upstream, {

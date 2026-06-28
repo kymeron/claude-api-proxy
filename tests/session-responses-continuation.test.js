@@ -123,6 +123,61 @@ test('prepareResponsesContinuationPayload sends only new input after previous re
     );
 });
 
+test('prepareResponsesContinuationPayload sends full input when continuation is disabled', () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 'tenant-a';
+    const conversationKey = 'conv-a';
+    const logs = [];
+
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'client-model',
+            messages: [{role: 'user', content: 'first question'}]
+        }
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_1',
+            model: 'client-model',
+            output: [{
+                type: 'message',
+                role: 'assistant',
+                content: [{type: 'output_text', text: 'first answer'}]
+            }]
+        }
+    });
+
+    const fullHistoryInput = [
+        {role: 'user', content: [{type: 'input_text', text: 'first question'}]},
+        {role: 'assistant', content: [{type: 'output_text', text: 'first answer'}]},
+        {role: 'user', content: [{type: 'input_text', text: 'second question'}]}
+    ];
+    const result = prepareResponsesContinuationPayload({
+        conversationStore: store,
+        tenantId,
+        conversationKey,
+        request: {model: 'glm-5.2', previous_response_id: 'resp_1', input: fullHistoryInput},
+        requestType: 'AnthropicViaResponsesWebSocket',
+        disableContinuation: true,
+        logger: {info: (message) => logs.push(message)}
+    });
+
+    assert.equal(result.request.previous_response_id, undefined);
+    assert.deepEqual(result.request.input, fullHistoryInput);
+    assert.equal(result.deltaAttempted, false);
+    assert.equal(result.deltaApplied, false);
+    assert.equal(result.emptyDelta, false);
+    assert.equal(result.autoLink, false);
+    assert.match(
+        logs.join('\n'),
+        /Responses continuation: disabled; sending full input items=3 .*requestType=AnthropicViaResponsesWebSocket/
+    );
+});
+
 test('prepareResponsesContinuationPayload sends delta directly for long matched history', () => {
     const store = new RelayConversationStore({
         ttlMs: 60_000,
