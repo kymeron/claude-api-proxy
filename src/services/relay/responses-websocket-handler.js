@@ -23,7 +23,7 @@ export function createRelayResponsesWebSocketHandler({
     parseSSEBlock,
     canonicalFromAnthropicStreamChatResponse,
     recordCompletedResponseState,
-    limitResponsesPassthroughPayload,
+    prepareResponsesContinuationPayload,
     createResponsesWebSocket,
     discardResponsesWebSocketConnection,
     releaseResponsesWebSocketConnection,
@@ -152,18 +152,15 @@ export function createRelayResponsesWebSocketHandler({
 
         if (isResponsesWebSocketUpstream(upstream)) {
             const wsPayload = {...payload, model: resolvedModel};
-            const prepared = relayConversationStore.prepareResponsesPassthrough({
+            const continuation = prepareResponsesContinuationPayload({
+                conversationStore: relayConversationStore,
                 tenantId,
                 conversationKey,
-                request: wsPayload
+                request: wsPayload,
+                requestType: 'RelayResponsesWebSocketRelay'
             });
-            const stateConversationKey = prepared.conversationKey || conversationKey;
-            const limitedRequest = limitResponsesPassthroughPayload(prepared.request, {
-                previousResponseId: prepared.lastResponseId,
-                requestType: 'RelayResponsesWebSocketRelay',
-                conversationKey: stateConversationKey
-            });
-            const wsResult = await createResponsesWebSocket(limitedRequest, upstream, {
+            const stateConversationKey = continuation.conversationKey || conversationKey;
+            const wsResult = await createResponsesWebSocket(continuation.request, upstream, {
                 requestType: 'RelayResponsesWebSocketRelay',
                 stream: true,
                 originalModel: payload.model,
@@ -210,19 +207,16 @@ export function createRelayResponsesWebSocketHandler({
 
         if (isResponsesUpstream(upstream)) {
             const responsesPayload = {...payload, model: resolvedModel, stream: true, store: payload.store ?? true};
-            const prepared = relayConversationStore.prepareResponsesPassthrough({
+            const continuation = prepareResponsesContinuationPayload({
+                conversationStore: relayConversationStore,
                 tenantId,
                 conversationKey,
-                request: responsesPayload
+                request: responsesPayload,
+                requestType: 'ResponsesWS'
             });
-            const stateConversationKey = prepared.conversationKey || conversationKey;
-            const limitedRequest = limitResponsesPassthroughPayload(prepared.request, {
-                previousResponseId: prepared.lastResponseId,
-                requestType: 'ResponsesWS',
-                conversationKey: stateConversationKey
-            });
+            const stateConversationKey = continuation.conversationKey || conversationKey;
             const {response} = await callUpstream(upstream, (up) =>
-                createResponses(limitedRequest, up, {
+                createResponses(continuation.request, up, {
                     requestType: 'ResponsesWS',
                     stream: true,
                     originalModel: payload.model,

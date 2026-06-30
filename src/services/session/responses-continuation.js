@@ -1,6 +1,7 @@
 import {
     createResponsesInputDelta,
-    limitResponsesInputItems
+    limitResponsesInputItems,
+    resolveResponsesInputItemsLimit
 } from './protocol-adapter.js';
 import {appendFileSync, mkdirSync} from 'node:fs';
 import path from 'node:path';
@@ -8,6 +9,7 @@ import crypto from 'node:crypto';
 import logger from '../../utils/logger.js';
 
 const DEFAULT_DIAGNOSTIC_FILE = path.join('logs', 'responses-continuation-diagnostics.jsonl');
+const RESPONSES_PROVIDER_INPUT_ITEMS_LIMIT = 1000;
 
 export function prepareResponsesContinuationPayload({
     conversationStore,
@@ -80,12 +82,26 @@ export function prepareResponsesContinuationPayload({
         };
     }
     const delta = createContinuationDelta(prepared.request, prepared);
-    const previousResponseId = delta.deltaApplied
+    const chainReset = getContinuationChainReset(delta);
+    const outboundRequest = chainReset
+        ? stripResponsesContinuationFields(prepared.request)
+        : delta.request;
+    const previousResponseId = !chainReset && delta.deltaApplied
         ? delta.previousResponseId
         : delta.deltaAttempted
             ? null
             : prepared.lastResponseId;
-    const limited = limitResponsesInputItems(delta.request, {previousResponseId});
+    const limited = limitResponsesInputItems(outboundRequest, {previousResponseId});
+    const outboundDeltaApplied = delta.deltaApplied && !chainReset;
+    const diagnosticDelta = chainReset
+        ? {
+            ...delta,
+            deltaApplied: false,
+            chainReset: true,
+            chainInputLength: chainReset.chainInputLength,
+            chainLimit: chainReset.limit
+        }
+        : delta;
 
     if (limited.truncated) {
         log.info(
@@ -95,7 +111,25 @@ export function prepareResponsesContinuationPayload({
             + ` previous_response_id=${limited.previousResponseId}`
         );
     }
-    if (delta.deltaApplied) {
+    if (chainReset) {
+        log.info(
+            `Responses continuation: provider chain input items `
+            + `${chainReset.previousInputLength}+${chainReset.deltaInputLength}=${chainReset.chainInputLength}`
+            + ` exceeds limit ${chainReset.limit}; resetting previous_response_id`
+            + `${requestType ? ` requestType=${requestType}` : ''}`
+            + `${stateConversationKey ? ` conversationKey=${stateConversationKey}` : ''}`
+            + ` previous_response_id=${delta.previousResponseId}`
+        );
+        log.info(
+            `Responses continuation: upstream input items=${countResponsesInputItems(limited.payload?.input)}`
+            + ` source_input_items=${countResponsesInputItems(prepared.request?.input)}`
+            + ` retained_input_items=${limited.retainedLength}`
+            + `${requestType ? ` requestType=${requestType}` : ''}`
+            + `${stateConversationKey ? ` conversationKey=${stateConversationKey}` : ''}`
+            + ` previous_response_id=none`
+            + ` autoLink=false chainReset=true`
+        );
+    } else if (delta.deltaApplied) {
         log.info(
             `Responses continuation: delta input items ${delta.originalLength}->${delta.retainedLength}`
             + `${requestType ? ` requestType=${requestType}` : ''}`
@@ -131,7 +165,7 @@ export function prepareResponsesContinuationPayload({
             + ` autoLink=false`
         );
     }
-    const autoLink = !(delta.deltaAttempted && !delta.deltaApplied);
+    const autoLink = !chainReset && !(delta.deltaAttempted && !delta.deltaApplied);
 
     writeContinuationDiagnostic({
         tenantId,
@@ -139,7 +173,7 @@ export function prepareResponsesContinuationPayload({
         requestType,
         sourceRequest: prepared.request,
         outboundRequest: limited.payload,
-        delta,
+        delta: diagnosticDelta,
         limited,
         logger: log
     });
@@ -150,11 +184,14 @@ export function prepareResponsesContinuationPayload({
         lastResponseId: prepared.lastResponseId,
         autoLink,
         skipInputItemLimit: false,
-        deltaApplied: delta.deltaApplied,
+        deltaApplied: outboundDeltaApplied,
         deltaAttempted: delta.deltaAttempted,
         emptyDelta: delta.emptyDelta === true,
         deltaPreviousResponseId: delta.previousResponseId || null,
         deltaCoveredLength: delta.coveredLength,
+        chainReset: Boolean(chainReset),
+        chainInputLength: chainReset?.chainInputLength || null,
+        chainLimit: chainReset?.limit || null,
         truncated: limited.truncated,
         originalLength: limited.originalLength,
         retainedLength: limited.retainedLength,
@@ -178,6 +215,7 @@ function createContinuationDelta(request, prepared) {
             originalLength: Array.isArray(request?.input) ? request.input.length : 0,
             retainedLength: Array.isArray(request?.input) ? request.input.length : 0,
             coveredLength: 0,
+            previousInputLength: 0,
             previousResponseId: null
         };
     }
@@ -193,6 +231,7 @@ function createContinuationDelta(request, prepared) {
             originalLength: request.input.length,
             retainedLength: request.input.length,
             coveredLength: 0,
+            previousInputLength: candidates[0]?.input?.length || 0,
             previousResponseId: candidates[0]?.responseId || null
         };
     }
@@ -206,6 +245,7 @@ function createContinuationDelta(request, prepared) {
             originalLength: best.originalLength,
             retainedLength: best.retainedLength,
             coveredLength: best.coveredLength,
+            previousInputLength: best.previousInputLength,
             previousResponseId: best.responseId
         };
     }
@@ -223,6 +263,7 @@ function createContinuationDelta(request, prepared) {
         originalLength: best.originalLength,
         retainedLength: best.retainedLength,
         coveredLength: best.coveredLength,
+        previousInputLength: best.previousInputLength,
         previousResponseId: best.responseId
     };
 }
@@ -237,6 +278,7 @@ function selectBestContinuationDelta(input, candidates) {
         const matched = {
             ...delta,
             responseId: candidate.responseId,
+            previousInputLength: candidate.input.length,
             emptyDelta: delta.retainedLength <= 0
         };
         if (!best || matched.coveredLength > best.coveredLength) {
@@ -278,6 +320,27 @@ function getContinuationCandidates(request, prepared) {
     }
     addCandidate(prepared?.lastResponseId, prepared?.lastResponseInput);
     return candidates;
+}
+
+function getContinuationChainReset(delta) {
+    if (!delta?.deltaApplied) return null;
+    const previousInputLength = Number.isFinite(delta.previousInputLength)
+        ? delta.previousInputLength
+        : 0;
+    const sourceDeltaInputLength = Number.isFinite(delta.retainedLength)
+        ? delta.retainedLength
+        : countResponsesInputItems(delta.request?.input);
+    const deltaInputLength = Math.min(sourceDeltaInputLength, resolveResponsesInputItemsLimit());
+    const chainInputLength = previousInputLength + deltaInputLength;
+    const limit = RESPONSES_PROVIDER_INPUT_ITEMS_LIMIT;
+    if (chainInputLength <= limit) return null;
+    return {
+        previousInputLength,
+        deltaInputLength,
+        sourceDeltaInputLength,
+        chainInputLength,
+        limit
+    };
 }
 
 function normalizeResponseId(value) {
@@ -326,7 +389,10 @@ function writeContinuationDiagnostic({
             empty: delta?.emptyDelta === true,
             coveredLength: delta?.coveredLength || 0,
             originalLength: delta?.originalLength || 0,
-            retainedLength: delta?.retainedLength || 0
+            retainedLength: delta?.retainedLength || 0,
+            chainReset: delta?.chainReset === true,
+            chainInputLength: delta?.chainInputLength || null,
+            chainLimit: delta?.chainLimit || null
         },
         truncation: {
             truncated: limited?.truncated === true,
@@ -370,6 +436,7 @@ function resolveDiagnosticFilePath() {
 }
 
 function getDiagnosticDecision(delta) {
+    if (delta?.chainReset) return 'chain_reset';
     if (delta?.deltaApplied) return 'delta_applied';
     if (delta?.emptyDelta) return 'empty_delta';
     if (delta?.deltaAttempted) return 'mismatch';

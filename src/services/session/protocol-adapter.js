@@ -17,5 +17,6 @@ export {
     preserveCanonicalResponseToolMappings,
     preserveCanonicalToolMappings,
     renderCanonicalToChat,
-    renderCanonicalToResponses
+    renderCanonicalToResponses,
+    resolveResponsesInputItemsLimit
 } from '#protocol-engine';

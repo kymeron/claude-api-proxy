@@ -239,13 +239,22 @@ export function createRelayChatCompletionsHandler({
                 });
 
                 const conversationKey = extractConversationKey(req, responsesPayload, {tenantId});
+                const continuation = prepareResponsesContinuationPayload({
+                    conversationStore: relayConversationStore,
+                    tenantId,
+                    conversationKey,
+                    request: responsesPayload,
+                    requestType: 'ChatCompletionsViaResponses',
+                    disableContinuation: upstream.disable_responses_continuation === true
+                });
+                const stateConversationKey = continuation.conversationKey || conversationKey;
                 const relayMeta = {
                     ...tenantMeta,
-                    conversationKey,
-                    sessionId: conversationKey
+                    conversationKey: stateConversationKey,
+                    sessionId: stateConversationKey
                 };
                 const {response} = await callUpstream(upstream, (up) =>
-                    createResponses(responsesPayload, up, {
+                    createResponses(continuation.request, up, {
                         requestType: 'ChatCompletionsViaResponses',
                         stream: openAIPayload.stream,
                         originalModel: openAIPayload.model,
@@ -307,7 +316,7 @@ export function createRelayChatCompletionsHandler({
                             res.write('data: [DONE]\n\n');
                         }
                         const responseForState = completedResponse || responsesAccumulator.toResponsesResponse();
-                        recordCompletedResponseState(tenantId, conversationKey, responseForState);
+                        recordCompletedResponseState(tenantId, stateConversationKey, responseForState);
                         const usageForRecord = usage || responseForState?.usage;
                         recordUsage(
                             tenantId,
@@ -343,7 +352,7 @@ export function createRelayChatCompletionsHandler({
                     extractCacheHitTokens(parsed.usage),
                     relayStatsModel
                 );
-                recordCompletedResponseState(tenantId, conversationKey, parsed);
+                recordCompletedResponseState(tenantId, stateConversationKey, parsed);
                 sendJson(res, 200, responsesResponseToRelayChat(parsed));
                 return;
             }

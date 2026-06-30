@@ -487,29 +487,25 @@ test('relay routes expose cross-protocol bridges without protocol mismatch rejec
     assert.doesNotMatch(source, /getProtocolErrorMessage\(upstream, 'responses', '\/relay\/anthropic\/v1\/messages'\)/);
 });
 
-test('relay Responses-capable passthrough paths remember visible input before completion', () => {
-    const source = [
-        'src/routes/relay.js',
-        'src/services/relay/responses-api-handler.js',
-        'src/services/relay/responses-compact-handler.js',
-        'src/services/relay/responses-websocket-handler.js'
-    ].map((file) => readFileSync(join(root, file), 'utf8')).join('\n');
-    const prepareCalls = source.match(/prepareResponsesPassthrough/g) || [];
+test('relay Responses passthrough paths route visible input through continuation state', () => {
+    const responsesApi = readFileSync(join(root, 'src/services/relay/responses-api-handler.js'), 'utf8');
+    const responsesWs = readFileSync(join(root, 'src/services/relay/responses-websocket-handler.js'), 'utf8');
+    const continuation = readFileSync(join(root, 'src/services/session/responses-continuation.js'), 'utf8');
 
-    assert.equal(prepareCalls.length >= 4, true);
+    assert.match(responsesApi, /prepareResponsesContinuationPayload\(\{\s*conversationStore: relayConversationStore/s);
+    assert.match(responsesWs, /prepareResponsesContinuationPayload\(\{\s*conversationStore: relayConversationStore/s);
+    assert.match(continuation, /conversationStore\.prepareResponsesPassthrough\(\{/);
 });
 
-test('relay Responses passthrough paths limit oversized input before upstream transport', () => {
-    const source = [
-        'src/routes/relay.js',
-        'src/services/relay/responses-api-handler.js',
-        'src/services/relay/responses-compact-handler.js',
-        'src/services/relay/responses-websocket-handler.js'
-    ].map((file) => readFileSync(join(root, file), 'utf8')).join('\n');
-    const limitCalls = source.match(/limitResponsesPassthroughPayload/g) || [];
+test('relay Responses passthrough paths apply continuation limit before upstream transport', () => {
+    const responsesApi = readFileSync(join(root, 'src/services/relay/responses-api-handler.js'), 'utf8');
+    const responsesWs = readFileSync(join(root, 'src/services/relay/responses-websocket-handler.js'), 'utf8');
+    const continuation = readFileSync(join(root, 'src/services/session/responses-continuation.js'), 'utf8');
 
-    assert.equal(limitCalls.length >= 5, true);
-    assert.match(source, /lastResponseId/);
+    assert.doesNotMatch(responsesApi, /limitResponsesPassthroughPayload/);
+    assert.doesNotMatch(responsesWs, /limitResponsesPassthroughPayload/);
+    assert.match(continuation, /limitResponsesInputItems\(outboundRequest, \{previousResponseId\}\)/);
+    assert.match(continuation, /lastResponseId/);
 });
 
 test('relay Anthropic passthrough non-stream stats use split input token helper', () => {

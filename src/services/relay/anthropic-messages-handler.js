@@ -265,13 +265,22 @@ export function createRelayAnthropicMessagesHandler({
                     stream: anthropicPayload.stream
                 });
                 const conversationKey = extractConversationKey(req, responsesPayload, {tenantId});
+                const continuation = prepareResponsesContinuationPayload({
+                    conversationStore: relayConversationStore,
+                    tenantId,
+                    conversationKey,
+                    request: responsesPayload,
+                    requestType: 'AnthropicViaResponses',
+                    disableContinuation: upstream.disable_responses_continuation === true
+                });
+                const stateConversationKey = continuation.conversationKey || conversationKey;
                 const relayMeta = {
                     ...tenantMeta,
-                    conversationKey,
-                    sessionId: conversationKey
+                    conversationKey: stateConversationKey,
+                    sessionId: stateConversationKey
                 };
                 const {response} = await callUpstream(upstream, (up) =>
-                    createResponses(responsesPayload, up, {
+                    createResponses(continuation.request, up, {
                         requestType: 'AnthropicViaResponses',
                         stream: anthropicPayload.stream,
                         originalModel: anthropicPayload.model,
@@ -303,7 +312,7 @@ export function createRelayAnthropicMessagesHandler({
                         responsesAccumulator
                     );
                     const responseForState = completedResponse || responsesAccumulator.toResponsesResponse();
-                    recordCompletedResponseState(tenantId, conversationKey, responseForState);
+                    recordCompletedResponseState(tenantId, stateConversationKey, responseForState);
                     recordResponsesUsage(tenantId, usage || responseForState?.usage, relayStatsModel);
                     res.end();
                     return;
@@ -311,7 +320,7 @@ export function createRelayAnthropicMessagesHandler({
 
                 const responseBody = await readResponseBody(response.body);
                 const parsed = parseRelayUpstreamJson(responseBody);
-                recordCompletedResponseState(tenantId, conversationKey, parsed);
+                recordCompletedResponseState(tenantId, stateConversationKey, parsed);
                 recordResponsesUsage(tenantId, parsed.usage, relayStatsModel);
                 const chatResponse = responsesResponseToRelayChat(parsed);
                 sendJson(res, 200, chatResponseToAnthropic(chatResponse));

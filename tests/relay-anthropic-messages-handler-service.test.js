@@ -198,3 +198,57 @@ test('handleAnthropicMessages disables Responses WS continuation when upstream o
     assert.equal(capturedMeta.skipInputItemLimit, true);
     assert.deepEqual(res.calls, [['json', 200, {type: 'message', source: 'chat_from_resp_1'}]]);
 });
+
+test('handleAnthropicMessages applies continuation before HTTP Responses upstream', async () => {
+    const res = createResponse();
+    let capturedContinuationOptions = null;
+    let capturedCreatePayload = null;
+    let capturedCreateMeta = null;
+    const deps = createBaseDeps({
+        isResponsesUpstream: () => true,
+        chatRequestToRelayResponses: (payload) => ({
+            model: payload.model,
+            input: [
+                {role: 'user', content: 'old'},
+                {role: 'assistant', content: 'answer'},
+                {role: 'user', content: 'latest'}
+            ],
+            stream: payload.stream
+        }),
+        prepareResponsesContinuationPayload: (options) => {
+            capturedContinuationOptions = options;
+            return {
+                request: {
+                    ...options.request,
+                    input: [{role: 'user', content: 'latest'}],
+                    previous_response_id: 'resp_prev'
+                },
+                conversationKey: 'tenant:42:conv',
+                autoLink: true,
+                skipInputItemLimit: false
+            };
+        },
+        createResponses: (payload, upstream, meta) => {
+            capturedCreatePayload = payload;
+            capturedCreateMeta = meta;
+            return {payload, upstream, meta};
+        },
+        responsesResponseToRelayChat: (response) => ({id: `chat_from_${response.id}`}),
+        recordCompletedResponseState: (...args) => deps.calls.push(['recordCompletedResponseState', args]),
+        recordResponsesUsage: (...args) => deps.calls.push(['recordResponsesUsage', args]),
+        readResponseBody: async (body) => body,
+        callUpstream: async (upstream, invoke) => {
+            deps.calls.push(['callUpstream', invoke(upstream)]);
+            return {response: {body: '{"id":"resp_1","usage":{"input_tokens":1,"output_tokens":2}}'}};
+        }
+    });
+    const handleAnthropicMessages = createRelayAnthropicMessagesHandler(deps);
+
+    await handleAnthropicMessages({headers: {}}, res);
+
+    assert.equal(capturedContinuationOptions.requestType, 'AnthropicViaResponses');
+    assert.deepEqual(capturedCreatePayload.input, [{role: 'user', content: 'latest'}]);
+    assert.equal(capturedCreatePayload.previous_response_id, 'resp_prev');
+    assert.equal(capturedCreateMeta.conversationKey, 'tenant:42:conv');
+    assert.deepEqual(res.calls, [['json', 200, {type: 'message', source: 'chat_from_resp_1'}]]);
+});

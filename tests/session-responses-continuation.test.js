@@ -301,6 +301,83 @@ test('prepareResponsesContinuationPayload sends delta directly for long matched 
     assert.match(logs.join('\n'), /previous_response_id=resp_near_limit autoLink=true/);
 });
 
+test('prepareResponsesContinuationPayload resets provider chain when previous_response_id would exceed item limit', () => {
+    const store = new RelayConversationStore({
+        ttlMs: 60_000,
+        cleanupIntervalMs: 0,
+        maxStoredChatMessages: 1200,
+        maxCanonicalTurns: 1200
+    });
+    const tenantId = 'tenant-a';
+    const conversationKey = 'conv-a';
+    const logs = [];
+
+    const previousMessages = Array.from({length: 1000}, (_, index) => ({
+        role: 'user',
+        content: `question ${index}`
+    }));
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'client-model',
+            messages: previousMessages
+        }
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_large_chain',
+            model: 'client-model',
+            output: [{
+                type: 'message',
+                role: 'assistant',
+                content: [{type: 'output_text', text: 'previous answer'}]
+            }]
+        }
+    });
+
+    const previousInput = [
+        ...previousMessages.map((message) => ({
+            role: 'user',
+            content: [{type: 'input_text', text: message.content}]
+        })),
+        {role: 'assistant', content: [{type: 'output_text', text: 'previous answer'}]}
+    ];
+    const result = prepareResponsesContinuationPayload({
+        conversationStore: store,
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'glm-5.2',
+            input: [
+                ...previousInput,
+                {role: 'user', content: [{type: 'input_text', text: 'latest question'}]}
+            ]
+        },
+        requestType: 'ChatCompletionsViaResponsesWS',
+        logger: {info: (message) => logs.push(message)}
+    });
+
+    assert.equal(result.deltaAttempted, true);
+    assert.equal(result.deltaApplied, false);
+    assert.equal(result.chainReset, true);
+    assert.equal(result.autoLink, false);
+    assert.equal(result.truncated, true);
+    assert.equal('previous_response_id' in result.request, false);
+    assert.equal(result.request.input.length, 500);
+    assert.deepEqual(result.request.input[0], {
+        role: 'user',
+        content: [{type: 'input_text', text: 'question 502'}]
+    });
+    assert.deepEqual(result.request.input.at(-1), {
+        role: 'user',
+        content: [{type: 'input_text', text: 'latest question'}]
+    });
+    assert.match(logs.join('\n'), /provider chain input items 1001\+1=1002 exceeds limit 1000/);
+});
+
 test('prepareResponsesContinuationPayload ignores changed leading system reminder for delta coverage', () => {
     const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
     const tenantId = 'tenant-a';
@@ -496,6 +573,172 @@ test('prepareResponsesContinuationPayload keeps tool-result delta for native Res
         logs.join('\n'),
         /Responses continuation: upstream input items=2 source_input_items=4 .*previous_response_id=resp_tool_call autoLink=true/
     );
+});
+
+test('prepareResponsesContinuationPayload matches Ark message wrappers and string content as covered history', () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 'tenant-a';
+    const conversationKey = 'conv-a';
+
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'client-model',
+            messages: [{role: 'user', content: 'first question'}]
+        }
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_1',
+            model: 'client-model',
+            output: [{
+                type: 'message',
+                role: 'assistant',
+                content: [{type: 'output_text', text: 'first answer'}]
+            }]
+        }
+    });
+
+    const result = prepareResponsesContinuationPayload({
+        conversationStore: store,
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'glm-5.2',
+            input: [
+                {type: 'message', role: 'user', content: 'first question'},
+                {type: 'message', role: 'assistant', content: 'first answer'},
+                {type: 'message', role: 'user', content: 'second question'}
+            ]
+        },
+        requestType: 'ChatCompletionViaResponsesWebSocket',
+        logger: {info() {}}
+    });
+
+    assert.equal(result.deltaAttempted, true);
+    assert.equal(result.deltaApplied, true);
+    assert.equal(result.autoLink, true);
+    assert.equal(result.request.previous_response_id, 'resp_1');
+    assert.deepEqual(result.request.input, [
+        {type: 'message', role: 'user', content: 'second question'}
+    ]);
+});
+
+test('prepareResponsesContinuationPayload matches top-level Ark text items as covered history', () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 'tenant-a';
+    const conversationKey = 'conv-a';
+
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'client-model',
+            messages: [{role: 'user', content: 'first question'}]
+        }
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_1',
+            model: 'client-model',
+            output: [{
+                type: 'message',
+                role: 'assistant',
+                content: [{type: 'output_text', text: 'first answer'}]
+            }]
+        }
+    });
+
+    const result = prepareResponsesContinuationPayload({
+        conversationStore: store,
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'glm-5.2',
+            input: [
+                {type: 'input_text', text: 'first question'},
+                {type: 'output_text', text: 'first answer'},
+                {type: 'input_text', text: 'second question'}
+            ]
+        },
+        requestType: 'ChatCompletionViaResponsesWebSocket',
+        logger: {info() {}}
+    });
+
+    assert.equal(result.deltaAttempted, true);
+    assert.equal(result.deltaApplied, true);
+    assert.equal(result.autoLink, true);
+    assert.equal(result.request.previous_response_id, 'resp_1');
+    assert.deepEqual(result.request.input, [
+        {type: 'input_text', text: 'second question'}
+    ]);
+});
+
+test('prepareResponsesContinuationPayload matches Ark tool history with volatile function-call fields', () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 'tenant-a';
+    const conversationKey = 'conv-a';
+
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'client-model',
+            messages: [{role: 'user', content: 'read relay adapter'}]
+        }
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_tool_call',
+            model: 'client-model',
+            output: [{
+                type: 'function_call',
+                id: 'fc_prev',
+                status: 'completed',
+                call_id: 'call_read',
+                name: 'Read',
+                arguments: '{"file_path":"src/services/relay/protocol-adapter.js"}'
+            }]
+        }
+    });
+
+    const fullHistoryInput = [
+        {type: 'message', role: 'user', content: 'read relay adapter'},
+        {
+            type: 'function_call',
+            id: 'fc_current_copy',
+            status: 'completed',
+            call_id: 'call_read',
+            name: 'Read',
+            arguments: '{"file_path":"src/services/relay/protocol-adapter.js"}'
+        },
+        {
+            type: 'function_call_output',
+            call_id: 'call_read',
+            output: 'src/services/relay/protocol-adapter.js:30: limitResponsesInputItems'
+        }
+    ];
+    const result = prepareResponsesContinuationPayload({
+        conversationStore: store,
+        tenantId,
+        conversationKey,
+        request: {model: 'glm-5.2', input: fullHistoryInput},
+        requestType: 'AnthropicViaResponsesWebSocket',
+        logger: {info() {}}
+    });
+
+    assert.equal(result.deltaAttempted, true);
+    assert.equal(result.deltaApplied, true);
+    assert.equal(result.autoLink, true);
+    assert.equal(result.request.previous_response_id, 'resp_tool_call');
+    assert.deepEqual(result.request.input, fullHistoryInput.slice(2));
 });
 
 test('prepareResponsesContinuationPayload disables websocket auto-link when stored input is not a prefix', () => {

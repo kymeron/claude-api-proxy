@@ -5,6 +5,7 @@ import {
     RelayConversationStore,
     RelayStateMissingError
 } from '../src/services/session/conversation-state.js';
+import {prepareResponsesContinuationPayload} from '../src/services/session/responses-continuation.js';
 
 async function collect(iterable) {
     const events = [];
@@ -81,6 +82,7 @@ function createBaseDeps(overrides = {}) {
             toResponsesResponse: () => ({id: 'resp_accumulated'})
         }),
         recordCompletedResponseState: (...args) => calls.push(['recordCompletedResponseState', args]),
+        prepareResponsesContinuationPayload,
         ...overrides
     };
     return deps;
@@ -131,7 +133,6 @@ test('handleRelayResponsesWS passes native Responses continuation payload throug
     let capturedResponsesPayload = null;
     const deps = createBaseDeps({
         isResponsesUpstream: () => true,
-        limitResponsesPassthroughPayload: (request) => request,
         createResponses: (payload) => {
             capturedResponsesPayload = payload;
             return {payload};
@@ -179,6 +180,94 @@ test('handleRelayResponsesWS passes native Responses continuation payload throug
             response: {id: 'resp_native', usage: {input_tokens: 1, output_tokens: 2}}
         }
     }]);
+});
+
+test('handleRelayResponsesWS deltas visible full history before forwarding to Responses upstream', async () => {
+    const store = new RelayConversationStore({
+        ttlMs: 60_000,
+        cleanupIntervalMs: 0,
+        maxStoredChatMessages: 800,
+        maxCanonicalTurns: 800
+    });
+    const tenantId = 42;
+    const conversationKey = 'tenant:42:ws';
+    let capturedResponsesPayload = null;
+
+    try {
+        const previousMessages = Array.from({length: 600}, (_, index) => ({
+            role: 'user',
+            content: `question ${index}`
+        }));
+        store.saveChatRequest({
+            tenantId,
+            conversationKey,
+            request: {model: 'gpt-test-resolved', messages: previousMessages}
+        });
+        store.recordResponsesResponse({
+            tenantId,
+            conversationKey,
+            response: {
+                id: 'resp_1',
+                model: 'gpt-test-resolved',
+                output: [{
+                    type: 'message',
+                    role: 'assistant',
+                    content: [{type: 'output_text', text: 'previous answer'}]
+                }]
+            }
+        });
+
+        const fullHistoryInput = [
+            ...previousMessages.map((message) => ({
+                role: 'user',
+                content: [{type: 'input_text', text: message.content}]
+            })),
+            {role: 'assistant', content: [{type: 'output_text', text: 'previous answer'}]},
+            {role: 'user', content: [{type: 'input_text', text: 'latest question'}]}
+        ];
+        const deps = createBaseDeps({
+            isResponsesUpstream: () => true,
+            relayConversationStore: store,
+            createResponses: (payload) => {
+                capturedResponsesPayload = payload;
+                return {payload};
+            },
+            callUpstream: async (upstream, invoke) => {
+                deps.calls.push(['callUpstream', invoke(upstream)]);
+                return {
+                    response: {
+                        body: chunks(
+                            'event: response.completed\n'
+                            + 'data: {"type":"response.completed","response":{"id":"resp_2","usage":{"input_tokens":1,"output_tokens":2}}}\n\n'
+                        )
+                    }
+                };
+            },
+            parseSSEBlock: (part) => {
+                const lines = part.split(/\r?\n/);
+                const event = lines.find((line) => line.startsWith('event: '))?.slice(7);
+                const data = lines.find((line) => line.startsWith('data: '))?.slice(6);
+                return {event, data};
+            },
+            getSSEEventType: (event, parsed) => event || parsed?.type
+        });
+        const handleRelayResponsesWS = createRelayResponsesWebSocketHandler(deps);
+        const req = {tenantId};
+
+        await handleRelayResponsesWS({id: 'client'}, req);
+        await collect(deps.capturedOptions.handleRequest({
+            model: 'gpt-test',
+            input: fullHistoryInput,
+            store: true
+        }, null, {signal: {aborted: false}}));
+
+        assert.equal(capturedResponsesPayload.previous_response_id, 'resp_1');
+        assert.deepEqual(capturedResponsesPayload.input, [
+            {role: 'user', content: [{type: 'input_text', text: 'latest question'}]}
+        ]);
+    } finally {
+        store.dispose();
+    }
 });
 
 test('handleRelayResponsesWS hydrates tool-result deltas before Anthropic fallback conversion', async () => {

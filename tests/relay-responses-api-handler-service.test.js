@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRelayResponsesAPIHandler} from '../src/services/relay/responses-api-handler.js';
+import {RelayConversationStore} from '../src/services/session/conversation-state.js';
+import {prepareResponsesContinuationPayload} from '../src/services/session/responses-continuation.js';
 
 function createResponse() {
     return {calls: [], headersSent: false, destroyed: false, writableEnded: false};
@@ -63,6 +65,7 @@ function createBaseDeps(overrides = {}) {
         recordUsage: (...args) => calls.push(['recordUsage', args]),
         chatResponseToRelayResponses: (response) => ({id: 'resp_1', source: response.id, usage: response.usage}),
         recordCompletedResponseState: (...args) => calls.push(['recordCompletedResponseState', args]),
+        prepareResponsesContinuationPayload,
         RelayStateMissingError: class RelayStateMissingError extends Error {},
         isResponsesWebSocketProtocolError: () => false,
         logger: {error: (...args) => calls.push(['logError', args]), warn: (...args) => calls.push(['logWarn', args])},
@@ -129,6 +132,91 @@ test('handleResponsesAPI maps invalid upstream JSON to 502', async () => {
         'Upstream returned invalid JSON',
         undefined
     ]]);
+});
+
+test('handleResponsesAPI deltas visible full history before forwarding to Responses upstream', async () => {
+    const store = new RelayConversationStore({
+        ttlMs: 60_000,
+        cleanupIntervalMs: 0,
+        maxStoredChatMessages: 800,
+        maxCanonicalTurns: 800
+    });
+    const tenantId = 42;
+    const conversationKey = 'tenant:42:conv';
+    let capturedResponsesPayload = null;
+
+    try {
+        const previousMessages = Array.from({length: 600}, (_, index) => ({
+            role: 'user',
+            content: `question ${index}`
+        }));
+        store.saveChatRequest({
+            tenantId,
+            conversationKey,
+            request: {model: 'gpt-test-resolved', messages: previousMessages}
+        });
+        store.recordResponsesResponse({
+            tenantId,
+            conversationKey,
+            response: {
+                id: 'resp_1',
+                model: 'gpt-test-resolved',
+                output: [{
+                    type: 'message',
+                    role: 'assistant',
+                    content: [{type: 'output_text', text: 'previous answer'}]
+                }]
+            }
+        });
+
+        const fullHistoryInput = [
+            ...previousMessages.map((message) => ({
+                role: 'user',
+                content: [{type: 'input_text', text: message.content}]
+            })),
+            {role: 'assistant', content: [{type: 'output_text', text: 'previous answer'}]},
+            {role: 'user', content: [{type: 'input_text', text: 'latest question'}]}
+        ];
+        const deps = createBaseDeps({
+            isResponsesUpstream: () => true,
+            relayConversationStore: store,
+            parseBody: async () => JSON.stringify({
+                model: 'gpt-test',
+                input: fullHistoryInput,
+                stream: false
+            }),
+            createResponses: (payload) => {
+                capturedResponsesPayload = payload;
+                return {payload};
+            },
+            callUpstream: async (upstream, invoke) => {
+                deps.calls.push(['callUpstream', invoke(upstream)]);
+                return {
+                    response: {
+                        body: '{"id":"resp_2","usage":{"input_tokens":1,"output_tokens":2}}'
+                    }
+                };
+            },
+            readResponseBody: async (body) => body,
+            extractInputTokens: (usage) => usage?.input_tokens || 0
+        });
+        const handleResponsesAPI = createRelayResponsesAPIHandler(deps);
+        const res = createResponse();
+
+        await handleResponsesAPI({headers: {}}, res);
+
+        assert.equal(capturedResponsesPayload.previous_response_id, 'resp_1');
+        assert.deepEqual(capturedResponsesPayload.input, [
+            {role: 'user', content: [{type: 'input_text', text: 'latest question'}]}
+        ]);
+        assert.deepEqual(res.calls[0], [
+            'json',
+            200,
+            {id: 'resp_2', usage: {input_tokens: 1, output_tokens: 2}}
+        ]);
+    } finally {
+        store.dispose();
+    }
 });
 
 test('handleResponsesAPI rejects empty Chat fallback without calling upstream', async () => {

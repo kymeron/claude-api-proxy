@@ -34,7 +34,7 @@ export function createRelayResponsesAPIHandler({
     chatResponseToRelayResponses,
     canonicalFromAnthropicResponse,
     createResponsesWebSocket,
-    limitResponsesPassthroughPayload,
+    prepareResponsesContinuationPayload,
     createResponsesToResponsesStreamBridge,
     releaseResponsesWebSocketConnection,
     discardResponsesWebSocketConnection,
@@ -195,18 +195,15 @@ export function createRelayResponsesAPIHandler({
                 const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
                 const wsPayload = {...responsesReq, model: upstreamManager.resolveModel(responsesReq.model, upstream.index)};
                 const conversationKey = extractConversationKey(req, wsPayload, {tenantId});
-                const prepared = relayConversationStore.prepareResponsesPassthrough({
+                const continuation = prepareResponsesContinuationPayload({
+                    conversationStore: relayConversationStore,
                     tenantId,
                     conversationKey,
-                    request: wsPayload
+                    request: wsPayload,
+                    requestType: 'ResponsesWebSocketPassthrough'
                 });
-                const stateConversationKey = prepared.conversationKey || conversationKey;
-                const limitedRequest = limitResponsesPassthroughPayload(prepared.request, {
-                    previousResponseId: prepared.lastResponseId,
-                    requestType: 'ResponsesWebSocket',
-                    conversationKey: stateConversationKey
-                });
-                const wsResult = await createResponsesWebSocket(limitedRequest, upstream, {
+                const stateConversationKey = continuation.conversationKey || conversationKey;
+                const wsResult = await createResponsesWebSocket(continuation.request, upstream, {
                     requestType: 'ResponsesWebSocket',
                     stream: responsesReq.stream,
                     originalModel: responsesReq.model,
@@ -265,17 +262,14 @@ export function createRelayResponsesAPIHandler({
                 const tenantMeta = {tenantName: tenant?.name, tenantUsername: tenant?.username};
                 const conversationKey = extractConversationKey(req, responsesReq, {tenantId});
                 const responsesPayload = {...responsesReq, model: upstreamManager.resolveModel(responsesReq.model, upstream.index)};
-                const prepared = relayConversationStore.prepareResponsesPassthrough({
+                const continuation = prepareResponsesContinuationPayload({
+                    conversationStore: relayConversationStore,
                     tenantId,
                     conversationKey,
-                    request: responsesPayload
+                    request: responsesPayload,
+                    requestType: 'ResponsesPassthrough'
                 });
-                const stateConversationKey = prepared.conversationKey || conversationKey;
-                const limitedRequest = limitResponsesPassthroughPayload(prepared.request, {
-                    previousResponseId: prepared.lastResponseId,
-                    requestType: 'ResponsesPassthrough',
-                    conversationKey: stateConversationKey
-                });
+                const stateConversationKey = continuation.conversationKey || conversationKey;
                 const relayMeta = {
                     ...tenantMeta,
                     conversationKey: stateConversationKey,
@@ -283,7 +277,7 @@ export function createRelayResponsesAPIHandler({
                 };
                 const {response} = await callUpstream(upstream, (up) =>
                     createResponses(
-                        {...limitedRequest, model: upstreamManager.resolveModel(responsesReq.model, up.index)},
+                        {...continuation.request, model: upstreamManager.resolveModel(responsesReq.model, up.index)},
                         up,
                         {
                             requestType: 'ResponsesPassthrough',

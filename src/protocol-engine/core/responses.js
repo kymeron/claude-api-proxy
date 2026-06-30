@@ -1064,18 +1064,21 @@ function isIgnorableLeadingResponsesInputItem(item) {
 function isSkippableCoveredResponsesOutput(item) {
     if (!item || typeof item !== 'object') return false;
     if (item.role === 'assistant') return true;
-    return item.type === 'reasoning' || item.type === 'function_call';
+    return item.type === 'reasoning' || item.type === 'function_call' || item.type === 'output_text';
 }
 
 function isFreshResponsesContinuationItem(item) {
     if (!item || typeof item !== 'object') return false;
     if (item.role === 'user' || item.role === 'tool') return true;
-    return item.type === 'function_call_output';
+    return item.type === 'function_call_output' || item.type === 'input_text';
 }
 
 function normalizeResponsesInputForDelta(value) {
     return stableResponsesInputStringify(stripResponsesInputReferenceFields(value));
 }
+
+const RESPONSES_DELTA_REFERENCE_FIELDS = new Set(['id', 'status', 'annotations', 'partial']);
+const RESPONSES_DELTA_TEXT_PART_TYPES = new Set(['text', 'input_text', 'output_text']);
 
 function stripResponsesInputReferenceFields(value) {
     if (Array.isArray(value)) return value.map(stripResponsesInputReferenceFields);
@@ -1089,10 +1092,116 @@ function stripResponsesInputReferenceFields(value) {
         };
     }
 
+    if (isResponsesMessageItem(value)) {
+        return normalizeResponsesMessageItemForDelta(value);
+    }
+    if (value.type === 'input_text' || value.type === 'output_text') {
+        return {
+            content: [normalizeResponsesTextPartForDelta(normalizeResponsesTextValue(value))],
+            role: value.type === 'output_text' ? 'assistant' : 'user'
+        };
+    }
+
     const result = {};
     for (const key of Object.keys(value).sort()) {
-        if (key === 'id' || key === 'status' || key === 'annotations' || key === 'partial') continue;
+        if (RESPONSES_DELTA_REFERENCE_FIELDS.has(key)) continue;
         result[key] = stripResponsesInputReferenceFields(value[key]);
+    }
+    return result;
+}
+
+function isResponsesMessageItem(value) {
+    return Boolean(
+        value
+        && typeof value === 'object'
+        && typeof value.role === 'string'
+        && Object.prototype.hasOwnProperty.call(value, 'content')
+    );
+}
+
+function normalizeResponsesMessageItemForDelta(item) {
+    const result = {};
+    for (const key of Object.keys(item).sort()) {
+        if (RESPONSES_DELTA_REFERENCE_FIELDS.has(key)) continue;
+        if (key === 'type' && item.type === 'message') continue;
+        result[key] = key === 'content'
+            ? normalizeResponsesMessageContentForDelta(item.content)
+            : stripResponsesInputReferenceFields(item[key]);
+    }
+    return result;
+}
+
+function normalizeResponsesMessageContentForDelta(content) {
+    if (typeof content === 'string') return [normalizeResponsesTextPartForDelta(content)];
+    if (!Array.isArray(content)) return stripResponsesInputReferenceFields(content);
+    return content.map(normalizeResponsesContentPartForDelta);
+}
+
+function normalizeResponsesContentPartForDelta(part) {
+    if (typeof part === 'string') return normalizeResponsesTextPartForDelta(part);
+    if (!part || typeof part !== 'object') return part;
+
+    if (RESPONSES_DELTA_TEXT_PART_TYPES.has(part.type) || hasResponsesTextValue(part)) {
+        return normalizeResponsesTextPartForDelta(normalizeResponsesTextValue(part));
+    }
+    if (part.type === 'input_image' || part.type === 'image' || part.type === 'image_url') {
+        return sortResponsesDeltaObject({
+            type: 'image',
+            image_url: normalizeResponsesMediaUrl(part.image_url) || part.url || part.source?.url,
+            file_id: part.file_id || part.source?.file_id,
+            media_type: part.media_type || part.source?.media_type
+        });
+    }
+    if (part.type === 'input_video' || part.type === 'video' || part.type === 'video_url') {
+        return sortResponsesDeltaObject({
+            type: 'video',
+            video_url: normalizeResponsesMediaUrl(part.video_url) || part.url || part.source?.url,
+            file_id: part.file_id || part.source?.file_id,
+            media_type: part.media_type || part.source?.media_type
+        });
+    }
+    if (part.type === 'input_file' || part.type === 'file') {
+        const file = part.file && typeof part.file === 'object' ? part.file : {};
+        const fileRef = typeof part.file === 'string' ? part.file : undefined;
+        return sortResponsesDeltaObject({
+            type: 'file',
+            file_data: part.file_data || file.file_data || fileRef,
+            file_id: part.file_id || file.file_id,
+            file_url: part.file_url || part.url || file.file_url || file.url,
+            filename: part.filename || file.filename,
+            media_type: part.media_type || file.media_type
+        });
+    }
+
+    return stripResponsesInputReferenceFields(part);
+}
+
+function normalizeResponsesTextPartForDelta(text) {
+    return {text, type: 'text'};
+}
+
+function hasResponsesTextValue(part) {
+    return Object.prototype.hasOwnProperty.call(part, 'text')
+        || Object.prototype.hasOwnProperty.call(part, 'input_text')
+        || Object.prototype.hasOwnProperty.call(part, 'output_text');
+}
+
+function normalizeResponsesTextValue(part) {
+    return String(part.text ?? part.input_text ?? part.output_text ?? '');
+}
+
+function normalizeResponsesMediaUrl(value) {
+    if (typeof value === 'string') return value;
+    if (!value || typeof value !== 'object') return undefined;
+    return value.url || value.href;
+}
+
+function sortResponsesDeltaObject(value) {
+    const result = {};
+    for (const key of Object.keys(value).sort()) {
+        if (value[key] !== undefined && value[key] !== null && value[key] !== '') {
+            result[key] = stripResponsesInputReferenceFields(value[key]);
+        }
     }
     return result;
 }
