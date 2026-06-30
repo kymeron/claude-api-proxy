@@ -358,7 +358,7 @@
         <div class="field"><label>名称</label><input id="upName" autocomplete="off" placeholder="例如 DeepSeek"></div>
         <div class="field"><label>协议</label><div class="select-control"><select id="upProtocol" onchange="syncUpstreamResponsesOptionsVisibility(true)"><option value="openai">OpenAI Chat</option><option value="responses">Responses API</option><option value="responses_ws">Responses WebSocket</option><option value="anthropic">Anthropic Messages</option></select></div></div>
     </div>
-    <label id="upEnableResponsesIncrementalField" style="display:none"><input id="upEnableResponsesIncremental" type="checkbox" autocomplete="off" style="width:auto" checked> 每轮消息裁剪为增量（省token，只适用于模型上游服务支持responses协议）</label>
+    <label id="upEnableResponsesIncrementalField" style="display:none"><input id="upEnableResponsesIncremental" type="checkbox" autocomplete="off" style="width:auto" checked> 本跳启用 Responses continuation（使用 previous_response_id 只发送新增输入）</label>
     <div class="field"><label>Base URL</label><input id="upUrl" autocomplete="off" placeholder="https://api.example.com"></div>
     <div class="field"><label for="upKey">API Key</label><div class="secret-control"><input id="upKey" type="password" placeholder="填写上游密钥" autocomplete="off" data-lpignore="true" data-1p-ignore><button type="button" class="secret-toggle" id="upKeyToggle" aria-controls="upKey" aria-pressed="false" aria-label="显示 API Key" onclick="toggleApiKeyVisibility()">显示</button></div></div>
     <div class="field"><label>代理地址（可选）</label><input id="upProxy" autocomplete="off" placeholder="http://127.0.0.1:7890"></div>
@@ -606,7 +606,7 @@ async function loadRelay(){try{const d=await api(`/dashboard/tenants/${S.tenant.
 function renderRelayList(){
     const el=document.getElementById('relayList');if(!el)return;
     if(!S.upstreams.length){el.innerHTML='<div class="empty">还没有上游。添加第一个上游后，Relay 即可开始转发请求。</div>';return;}
-    el.innerHTML=S.upstreams.map((u,i)=>{const result=S.relayTestResults[i];const protocol=esc(u.protocol||'openai');const responsesInfo=u.protocol==='responses_ws'?`${u.disable_responses_continuation?' · 完整 input':' · 增量裁剪'}`:'';return `<div class="item ${u.is_active?'active':''}"><div><h3>${esc(u.name||'未命名')} ${u.is_active?'<span class="badge on">活跃</span>':''} ${testResultBadge(result)}</h3><p>${esc(u.base_url)} · ${protocol}${responsesInfo}</p><p>${u.enabled?'已启用':'已停用'} · Key ${esc(u.api_key_preview||'未配置')}${u.proxy?' · 代理 '+esc(u.proxy):''}</p>${renderTestResultMessage(result)}</div><div class="actions">
+    el.innerHTML=S.upstreams.map((u,i)=>{const result=S.relayTestResults[i];const protocol=esc(u.protocol||'openai');const responsesInfo=u.protocol==='responses_ws'?`${u.disable_responses_continuation?' · 本跳发送完整 input':' · 本跳 continuation'}`:'';return `<div class="item ${u.is_active?'active':''}"><div><h3>${esc(u.name||'未命名')} ${u.is_active?'<span class="badge on">活跃</span>':''} ${testResultBadge(result)}</h3><p>${esc(u.base_url)} · ${protocol}${responsesInfo}</p><p>${u.enabled?'已启用':'已停用'} · Key ${esc(u.api_key_preview||'未配置')}${u.proxy?' · 代理 '+esc(u.proxy):''}</p>${renderTestResultMessage(result)}</div><div class="actions">
         ${!u.is_active&&u.enabled?`<button class="btn btn-sm" onclick="setActive(${i})">设为活跃</button>`:''}
         <button class="btn btn-sm" ${(S.relayTesting&&S.relayTestResults[i]?.pending)||S.relaySingleTesting===i?'disabled':''} onclick="testUpstream(${i})">${(S.relayTesting&&S.relayTestResults[i]?.pending)||S.relaySingleTesting===i?'测试中...':'测试'}</button>
         <button class="btn btn-sm" onclick="openUpstream(${i})">编辑</button>
@@ -615,7 +615,7 @@ function renderRelayList(){
     </div></div>`;}).join('');
     return;
     if(!S.upstreams.length){el.innerHTML='<div class="empty">还没有上游。添加第一个上游后，Relay 即可开始转发请求。</div>';return;}
-    el.innerHTML=S.upstreams.map((u,i)=>`<div class="item ${u.is_active?'active':''}"><div><h3>${esc(u.name||'未命名')} ${u.is_active?'<span class="badge on">活跃</span>':''}</h3><p>${esc(u.base_url)} · ${esc(u.protocol||'openai')}${u.protocol==='responses_ws'?(u.disable_responses_continuation?' · 完整 input':' · 增量裁剪'):''}</p><p>${u.enabled?'已启用':'已停用'} · Key ${esc(u.api_key_preview||'未配置')}${u.proxy?' · 代理 '+esc(u.proxy):''}</p></div><div class="actions">
+    el.innerHTML=S.upstreams.map((u,i)=>`<div class="item ${u.is_active?'active':''}"><div><h3>${esc(u.name||'未命名')} ${u.is_active?'<span class="badge on">活跃</span>':''}</h3><p>${esc(u.base_url)} · ${esc(u.protocol||'openai')}${u.protocol==='responses_ws'?(u.disable_responses_continuation?' · 本跳发送完整 input':' · 本跳 continuation'):''}</p><p>${u.enabled?'已启用':'已停用'} · Key ${esc(u.api_key_preview||'未配置')}${u.proxy?' · 代理 '+esc(u.proxy):''}</p></div><div class="actions">
         ${!u.is_active&&u.enabled?`<button class="btn btn-sm" onclick="setActive(${i})">设为活跃</button>`:''}
         <button class="btn btn-sm" onclick="openUpstream(${i})">编辑</button>
         <button class="btn btn-sm" onclick="cloneUpstream(${i})">复制</button><button class="btn btn-sm" ${i===0?'disabled':''} onclick="moveUpstream(${i},'up')">上移</button>
