@@ -64,6 +64,7 @@ export function createRelayResponsesWebSocketHandler({
             });
             const stateConversationKey = hydrated.conversationKey || conversationKey;
             const stateRelayMeta = {...relayMeta, conversationKey: stateConversationKey};
+            const relayAnthropicRequest = sanitizeRelayAnthropicRequest(payload.x_relay_anthropic_request);
             const relayThinkingConfig = sanitizeRelayAnthropicThinkingConfig(payload.x_relay_anthropic_thinking_config);
             const signedCanonicalSession = canonicalSessionHasRelayAnthropicThinking(hydrated.canonicalSession)
                 ? hydrated.canonicalSession
@@ -90,10 +91,18 @@ export function createRelayResponsesWebSocketHandler({
                             session: signedCanonicalSession,
                             outboundChatReq,
                             resolvedModel,
+                            relayAnthropicRequest,
                             relayThinkingConfig,
                             renderCanonicalToAnthropic
                         })
                         : chatRequestToAnthropic(outboundChatReq);
+                    if (!signedCanonicalSession) {
+                        applyAnthropicPayloadControls(anthropicPayload, {
+                            relayAnthropicRequest,
+                            relayThinkingConfig,
+                            outboundChatReq
+                        });
+                    }
                     ensureAnthropicMessagesForResponsesWebSocketFallback({
                         anthropicPayload,
                         payload,
@@ -430,6 +439,7 @@ function canonicalSessionToAnthropicPayload({
     session,
     outboundChatReq,
     resolvedModel,
+    relayAnthropicRequest,
     relayThinkingConfig,
     renderCanonicalToAnthropic
 }) {
@@ -441,12 +451,65 @@ function canonicalSessionToAnthropicPayload({
         temperature: outboundChatReq.temperature,
         top_p: outboundChatReq.top_p
     };
-    const thinkingConfig = relayThinkingConfig
-        || anthropicThinkingConfigFromReasoningEffort(outboundChatReq.reasoning_effort, anthropicPayload.max_tokens);
-    if (thinkingConfig) anthropicPayload.thinking = thinkingConfig;
+    applyAnthropicPayloadControls(anthropicPayload, {
+        relayAnthropicRequest,
+        relayThinkingConfig,
+        outboundChatReq
+    });
     if (!anthropicPayload.tools || anthropicPayload.tools.length === 0) delete anthropicPayload.tools;
     if (!anthropicPayload.tool_choice) delete anthropicPayload.tool_choice;
     return anthropicPayload;
+}
+
+function applyAnthropicPayloadControls(payload, {
+    relayAnthropicRequest,
+    relayThinkingConfig,
+    outboundChatReq
+}) {
+    applyRelayAnthropicRequest(payload, relayAnthropicRequest);
+    if (!payload.stop_sequences && outboundChatReq.stop) {
+        payload.stop_sequences = Array.isArray(outboundChatReq.stop)
+            ? outboundChatReq.stop
+            : [outboundChatReq.stop];
+    }
+    const reasoningEffort = outboundChatReq.reasoning_effort || payload.reasoning?.effort;
+    const thinkingConfig = relayThinkingConfig
+        || anthropicThinkingConfigFromReasoningEffort(reasoningEffort, payload.max_tokens);
+    if (thinkingConfig) payload.thinking = thinkingConfig;
+    delete payload.reasoning;
+}
+
+const RELAY_ANTHROPIC_REQUEST_FIELDS = [
+    'system',
+    'top_k',
+    'stop_sequences',
+    'metadata',
+    'tools',
+    'tool_choice',
+    'container',
+    'context_management',
+    'service_tier',
+    'mcp_servers'
+];
+
+function sanitizeRelayAnthropicRequest(request) {
+    if (!request || typeof request !== 'object') return undefined;
+    const relay = {};
+    for (const field of RELAY_ANTHROPIC_REQUEST_FIELDS) {
+        if (request[field] !== undefined) {
+            relay[field] = cloneJson(request[field]);
+        }
+    }
+    return Object.keys(relay).length > 0 ? relay : undefined;
+}
+
+function applyRelayAnthropicRequest(payload, relayAnthropicRequest) {
+    if (!relayAnthropicRequest) return;
+    for (const field of RELAY_ANTHROPIC_REQUEST_FIELDS) {
+        if (relayAnthropicRequest[field] !== undefined) {
+            payload[field] = cloneJson(relayAnthropicRequest[field]);
+        }
+    }
 }
 
 function sanitizeRelayAnthropicThinkingConfig(thinking) {
@@ -474,12 +537,18 @@ function anthropicThinkingConfigFromReasoningEffort(effort, maxTokens) {
 }
 
 function stripRelayResponsesPrivateFields(payload) {
+    if (Array.isArray(payload)) return payload.map(stripRelayResponsesPrivateFields);
     if (!payload || typeof payload !== 'object') return payload;
-    const {
-        x_relay_anthropic_thinking_config,
-        ...rest
-    } = payload;
-    return rest;
+    const result = {};
+    for (const [key, value] of Object.entries(payload)) {
+        if (key.startsWith('x_relay_')) continue;
+        result[key] = stripRelayResponsesPrivateFields(value);
+    }
+    return result;
+}
+
+function cloneJson(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
 function ensureChatMessagesForResponsesWebSocketFallback({

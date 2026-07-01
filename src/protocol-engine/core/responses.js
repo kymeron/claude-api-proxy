@@ -1286,18 +1286,22 @@ export function sanitizeResponsesInput(input, model) {
         // 已是 EasyInputMessage 格式（有 role 但无 type），直接净化 content
         // developer (OpenAI 系统指令角色) → 上游通用 system
         if (item.role && !item.type) {
+            const relayContent = sanitizeRelayAnthropicContentBlocks(item.x_relay_anthropic_content);
             return {
                 role: item.role === 'developer' ? 'system' : item.role,
-                content: sanitizeContentParts(item.content)
+                content: sanitizeContentParts(item.content),
+                ...(relayContent.length > 0 ? {x_relay_anthropic_content: relayContent} : {})
             };
         }
 
         // message 类型（上一轮响应的 output message item）
         if (item.type === 'message') {
             const role = item.role || 'assistant';
+            const relayContent = sanitizeRelayAnthropicContentBlocks(item.x_relay_anthropic_content);
             return {
                 role: role === 'developer' ? 'system' : role,
-                content: sanitizeContentParts(item.content)
+                content: sanitizeContentParts(item.content),
+                ...(relayContent.length > 0 ? {x_relay_anthropic_content: relayContent} : {})
             };
         }
 
@@ -1313,10 +1317,12 @@ export function sanitizeResponsesInput(input, model) {
 
         // function_call_output → 保留 call_id
         if (item.type === 'function_call_output') {
+            const relayToolResult = sanitizeRelayAnthropicToolResult(item.x_relay_anthropic_tool_result);
             return {
                 type: 'function_call_output',
                 call_id: item.call_id || '',
-                output: typeof item.output === 'string' ? item.output : JSON.stringify(item.output || '')
+                output: typeof item.output === 'string' ? item.output : JSON.stringify(item.output || ''),
+                ...(relayToolResult ? {x_relay_anthropic_tool_result: relayToolResult} : {})
             };
         }
 
@@ -1386,6 +1392,25 @@ function sanitizeRelayAnthropicThinkingBlocks(blocks) {
             return null;
         })
         .filter(Boolean);
+}
+
+function sanitizeRelayAnthropicContentBlocks(blocks) {
+    if (!Array.isArray(blocks)) return [];
+    return blocks
+        .map((block) => {
+            if (!block || typeof block !== 'object') return null;
+            return cloneJson(block);
+        })
+        .filter(Boolean);
+}
+
+function sanitizeRelayAnthropicToolResult(block) {
+    if (!block || typeof block !== 'object' || block.type !== 'tool_result') return undefined;
+    return cloneJson(block);
+}
+
+function cloneJson(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
 /**

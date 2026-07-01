@@ -4,6 +4,7 @@ import {
     anthropicRequestToResponses,
     responsesResponseToAnthropic
 } from '../src/protocol-engine/core/http-converters.js';
+import {sanitizeResponsesInput} from '../src/protocol-engine/core/responses.js';
 
 test('anthropicRequestToResponses maps messages, tools, and reasoning into Responses input', () => {
     const converted = anthropicRequestToResponses({
@@ -62,6 +63,10 @@ test('anthropicRequestToResponses maps messages, tools, and reasoning into Respo
             content: [
                 {type: 'input_text', text: 'Inspect this'},
                 {type: 'input_image', image_url: 'data:image/png;base64,abc'}
+            ],
+            x_relay_anthropic_content: [
+                {type: 'text', text: 'Inspect this'},
+                {type: 'image', source: {media_type: 'image/png', data: 'abc'}}
             ]
         },
         {
@@ -134,6 +139,113 @@ test('anthropicRequestToResponses preserves signed thinking for relay Responses 
     assert.deepEqual(converted.x_relay_anthropic_thinking_config, {
         type: 'enabled',
         budget_tokens: 10000
+    });
+});
+
+test('anthropicRequestToResponses preserves Anthropic-only request fields for relay fallback', () => {
+    const converted = anthropicRequestToResponses({
+        model: 'claude-sonnet-4',
+        system: [
+            {type: 'text', text: 'static instructions', cache_control: {type: 'ephemeral'}},
+            {type: 'text', text: 'dynamic instructions'}
+        ],
+        top_k: 20,
+        stop_sequences: ['END'],
+        metadata: {user_id: 'user-1'},
+        tool_choice: {type: 'auto', disable_parallel_tool_use: true},
+        tools: [{
+            name: 'read_file',
+            description: 'Read a file',
+            input_schema: {type: 'object', properties: {path: {type: 'string'}}},
+            cache_control: {type: 'ephemeral'}
+        }],
+        messages: [
+            {
+                role: 'user',
+                content: [
+                    {type: 'text', text: 'Read this', cache_control: {type: 'ephemeral'}},
+                    {type: 'document', source: {type: 'base64', media_type: 'application/pdf', data: 'pdf-data'}}
+                ]
+            },
+            {
+                role: 'assistant',
+                content: [
+                    {type: 'tool_use', id: 'toolu_1', name: 'read_file', input: {path: 'README.md'}}
+                ]
+            },
+            {
+                role: 'user',
+                content: [{
+                    type: 'tool_result',
+                    tool_use_id: 'toolu_1',
+                    is_error: true,
+                    content: [{type: 'text', text: 'not found', cache_control: {type: 'ephemeral'}}],
+                    cache_control: {type: 'ephemeral'}
+                }]
+            }
+        ]
+    });
+
+    assert.deepEqual(converted.x_relay_anthropic_request, {
+        system: [
+            {type: 'text', text: 'static instructions', cache_control: {type: 'ephemeral'}},
+            {type: 'text', text: 'dynamic instructions'}
+        ],
+        top_k: 20,
+        stop_sequences: ['END'],
+        metadata: {user_id: 'user-1'},
+        tools: [{
+            name: 'read_file',
+            description: 'Read a file',
+            input_schema: {type: 'object', properties: {path: {type: 'string'}}},
+            cache_control: {type: 'ephemeral'}
+        }],
+        tool_choice: {type: 'auto', disable_parallel_tool_use: true}
+    });
+    assert.deepEqual(converted.input[0].x_relay_anthropic_content, [
+        {type: 'text', text: 'Read this', cache_control: {type: 'ephemeral'}},
+        {type: 'document', source: {type: 'base64', media_type: 'application/pdf', data: 'pdf-data'}}
+    ]);
+    const toolResultItem = converted.input.find((item) => item.type === 'function_call_output');
+    assert.deepEqual(toolResultItem.x_relay_anthropic_tool_result, {
+        type: 'tool_result',
+        tool_use_id: 'toolu_1',
+        is_error: true,
+        content: [{type: 'text', text: 'not found', cache_control: {type: 'ephemeral'}}],
+        cache_control: {type: 'ephemeral'}
+    });
+});
+
+test('sanitizeResponsesInput preserves relay Anthropic private fields for relay WebSocket transport', () => {
+    const input = sanitizeResponsesInput([
+        {
+            role: 'user',
+            content: [{type: 'input_text', text: 'Read this'}],
+            x_relay_anthropic_content: [
+                {type: 'text', text: 'Read this', cache_control: {type: 'ephemeral'}}
+            ]
+        },
+        {
+            type: 'function_call_output',
+            call_id: 'toolu_1',
+            output: 'failed',
+            x_relay_anthropic_tool_result: {
+                type: 'tool_result',
+                tool_use_id: 'toolu_1',
+                is_error: true,
+                content: [{type: 'text', text: 'failed'}]
+            }
+        }
+    ]);
+
+    assert.deepEqual(input[0].x_relay_anthropic_content, [
+        {type: 'text', text: 'Read this', cache_control: {type: 'ephemeral'}}
+    ]);
+    assert.deepEqual(input[1].x_relay_anthropic_tool_result, {
+        type: 'tool_result',
+        tool_use_id: 'toolu_1',
+        is_error: true,
+        content: [{type: 'text', text: 'failed'}]
     });
 });
 

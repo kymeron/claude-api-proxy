@@ -51,9 +51,9 @@ function normalizeRole(role) {
     return role === 'developer' ? 'system' : role;
 }
 
-function textBlock(text) {
+function textBlock(text, extra = {}) {
     if (text === undefined || text === null || text === '') return null;
-    return {type: 'text', text: String(text)};
+    return {type: 'text', text: String(text), ...extra};
 }
 
 function reasoningBlock(text, extra = {}) {
@@ -112,6 +112,52 @@ function contentToBlocks(content, defaultTextType = 'text') {
         }
         if (part.text) return {type: defaultTextType, text: part.text};
         return null;
+    }).filter(Boolean);
+}
+
+function relayAnthropicContentToBlocks(content, defaultTextType = 'text') {
+    if (!Array.isArray(content)) return contentToBlocks(content, defaultTextType);
+
+    return content.map((part) => {
+        if (typeof part === 'string') return textBlock(part);
+        if (!part || typeof part !== 'object') return null;
+        if (part.type === 'text' || part.type === 'input_text' || part.type === 'output_text') {
+            const {
+                type,
+                text,
+                input_text,
+                output_text,
+                ...anthropic
+            } = part;
+            return textBlock(text || input_text || output_text || '', Object.keys(anthropic).length > 0
+                ? {anthropic}
+                : {});
+        }
+        if (part.type === 'thinking') {
+            return reasoningBlock(part.thinking || '', {signature: part.signature});
+        }
+        if (part.type === 'redacted_thinking') {
+            return redactedThinkingBlock(part.data || '');
+        }
+        if (part.type === 'image') {
+            const {
+                type,
+                source,
+                ...anthropic
+            } = part;
+            return definedFields({
+                type: 'image',
+                mediaType: source?.media_type || part.media_type,
+                url: source?.url || part.image_url || part.url,
+                dataRef: source?.data || part.file_id,
+                anthropicSource: source ? clone(source) : undefined,
+                anthropic: Object.keys(anthropic).length > 0 ? anthropic : undefined
+            });
+        }
+        if (part.type === 'tool_use') {
+            return null;
+        }
+        return {type: 'anthropic_content', content: clone(part)};
     }).filter(Boolean);
 }
 
@@ -423,7 +469,10 @@ export function canonicalFromResponsesRequest(responsesReq = {}, meta = {}) {
         for (const item of input) {
             if (!item || typeof item !== 'object') continue;
             if (item.role) {
-                addResponsesTurn(session, normalizeRole(item.role), contentToBlocks(item.content));
+                const blocks = Array.isArray(item.x_relay_anthropic_content)
+                    ? relayAnthropicContentToBlocks(item.x_relay_anthropic_content)
+                    : contentToBlocks(item.content);
+                addResponsesTurn(session, normalizeRole(item.role), blocks);
                 continue;
             }
             if (item.type === 'reasoning') {
@@ -448,11 +497,15 @@ export function canonicalFromResponsesRequest(responsesReq = {}, meta = {}) {
             }
             if (item.type === 'function_call_output') {
                 const mapping = ensureToolMapping(session, {responsesCallId: item.call_id});
+                const relayToolResult = relayAnthropicToolResult(item.x_relay_anthropic_tool_result);
                 mapping.status = 'result_received';
                 addResponsesTurn(session, 'tool', [{
                     type: 'tool_result',
                     canonicalToolCallId: mapping.canonicalToolCallId,
-                    content: item.output
+                    content: relayToolResult?.content ?? item.output,
+                    ...(relayToolResult?.isError ? {isError: true} : {}),
+                    ...(relayToolResult?.anthropicContent !== undefined ? {anthropicContent: relayToolResult.anthropicContent} : {}),
+                    ...(relayToolResult?.anthropic ? {anthropic: relayToolResult.anthropic} : {})
                 }]);
                 continue;
             }
@@ -488,6 +541,23 @@ function responsesReasoningItemToBlocks(item = {}) {
     return [reasoningBlock(text, {responsesItemId: item.id})].filter(Boolean);
 }
 
+function relayAnthropicToolResult(block) {
+    if (!block || typeof block !== 'object' || block.type !== 'tool_result') return null;
+    const {
+        type,
+        tool_use_id,
+        content,
+        is_error,
+        ...anthropic
+    } = clone(block);
+    return {
+        content,
+        isError: Boolean(is_error),
+        ...(content !== undefined ? {anthropicContent: content} : {}),
+        ...(Object.keys(anthropic).length > 0 ? {anthropic} : {})
+    };
+}
+
 export function canonicalFromAnthropicRequest(anthropicReq = {}, meta = {}) {
     const session = createSession(anthropicReq, meta, 'anthropic');
     if (anthropicReq.system) {
@@ -509,7 +579,9 @@ export function canonicalFromAnthropicRequest(anthropicReq = {}, meta = {}) {
                         type: 'tool_result',
                         canonicalToolCallId: mapping.canonicalToolCallId,
                         content: block.content,
-                        isError: block.is_error || block.error || false
+                        isError: block.is_error || block.error || false,
+                        ...(block.content !== undefined ? {anthropicContent: clone(block.content)} : {}),
+                        ...anthropicToolResultExtra(block)
                     }]);
                 } else {
                     userBlocks.push(...contentToBlocks([block]));
@@ -548,6 +620,18 @@ export function canonicalFromAnthropicRequest(anthropicReq = {}, meta = {}) {
         addTurn(session, normalizeRole(message.role), contentToBlocks(message.content));
     }
     return session;
+}
+
+function anthropicToolResultExtra(block) {
+    const {
+        type,
+        tool_use_id,
+        content,
+        is_error,
+        error,
+        ...anthropic
+    } = block || {};
+    return Object.keys(anthropic).length > 0 ? {anthropic: clone(anthropic)} : {};
 }
 
 export function appendChatResponseToCanonical(session = {}, chatResponse = {}) {
@@ -802,11 +886,18 @@ function blocksToAnthropicContent(blocks) {
         } else if (block.type === 'redacted_thinking') {
             content.push({type: 'redacted_thinking', data: block.data || ''});
         } else if (block.type === 'text') {
-            content.push({type: 'text', text: block.text || ''});
+            content.push({type: 'text', text: block.text || '', ...(block.anthropic ? clone(block.anthropic) : {})});
         } else if (block.type === 'image') {
-            content.push({type: 'image', source: block.url ? {type: 'url', url: block.url} : {type: 'base64', data: block.dataRef || ''}});
+            const source = block.anthropicSource
+                ? clone(block.anthropicSource)
+                : block.url
+                    ? {type: 'url', url: block.url}
+                    : definedFields({type: 'base64', media_type: block.mediaType, data: block.dataRef || ''});
+            content.push({type: 'image', source, ...(block.anthropic ? clone(block.anthropic) : {})});
         } else if (block.type === 'file') {
             content.push({type: 'text', text: block.url || block.filename || block.dataRef || ''});
+        } else if (block.type === 'anthropic_content') {
+            content.push(clone(block.content));
         } else if (block.type === 'tool_call') {
             content.push({type: 'tool_use', id: block.canonicalToolCallId, name: block.name || '', input: parseJsonObject(block.argumentsText)});
         }
@@ -834,8 +925,11 @@ export function renderCanonicalToAnthropic(session = {}) {
                     content: [{
                         type: 'tool_result',
                         tool_use_id: toolTargetId(mapping, 'anthropic'),
-                        content: typeof block.content === 'string' ? block.content : JSON.stringify(block.content || ''),
-                        ...(block.isError ? {is_error: true} : {})
+                        content: block.anthropicContent !== undefined
+                            ? clone(block.anthropicContent)
+                            : typeof block.content === 'string' ? block.content : JSON.stringify(block.content || ''),
+                        ...(block.isError ? {is_error: true} : {}),
+                        ...(block.anthropic ? clone(block.anthropic) : {})
                     }]
                 });
             }

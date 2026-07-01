@@ -163,9 +163,19 @@ test('handleRelayResponsesWS passes native Responses continuation payload throug
     await handleRelayResponsesWS({id: 'client'}, req);
     const events = await collect(deps.capturedOptions.handleRequest({
         model: 'gpt-test',
+        x_relay_anthropic_request: {top_k: 20},
         x_relay_anthropic_thinking_config: {type: 'enabled', budget_tokens: 10000},
         previous_response_id: 'resp_prev',
-        input: [{type: 'function_call_output', call_id: 'call_1', output: 'tool result'}],
+        input: [{
+            type: 'function_call_output',
+            call_id: 'call_1',
+            output: 'tool result',
+            x_relay_anthropic_tool_result: {
+                type: 'tool_result',
+                tool_use_id: 'call_1',
+                content: 'tool result'
+            }
+        }],
         store: false
     }, null, {signal: {aborted: false}}));
 
@@ -174,6 +184,7 @@ test('handleRelayResponsesWS passes native Responses continuation payload throug
     assert.deepEqual(capturedResponsesPayload.input, [
         {type: 'function_call_output', call_id: 'call_1', output: 'tool result'}
     ]);
+    assert.equal(capturedResponsesPayload.x_relay_anthropic_request, undefined);
     assert.equal(capturedResponsesPayload.x_relay_anthropic_thinking_config, undefined);
     assert.equal(capturedResponsesPayload.store, false);
     assert.deepEqual(events, [{
@@ -345,6 +356,57 @@ test('handleRelayResponsesWS hydrates tool-result deltas before Anthropic fallba
     }
 });
 
+test('handleRelayResponsesWS converts Chat fallback reasoning into Anthropic thinking', async () => {
+    let capturedAnthropicPayload = null;
+    const deps = createBaseDeps({
+        isAnthropicUpstream: () => true,
+        relayConversationStore: {
+            hydrateResponsesForFullHistory: ({request, conversationKey}) => ({
+                chatRequest: {
+                    model: request.model,
+                    messages: [{role: 'user', content: 'hello'}],
+                    reasoning_effort: 'medium',
+                    max_tokens: 2000
+                },
+                conversationKey
+            })
+        },
+        chatRequestToAnthropic: (payload) => ({
+            messages: payload.messages,
+            max_tokens: payload.max_tokens,
+            stream: payload.stream,
+            reasoning: {effort: payload.reasoning_effort}
+        }),
+        createAnthropicMessages: (payload, upstream, meta) => {
+            capturedAnthropicPayload = payload;
+            return {payload, upstream, meta};
+        },
+        getAnthropicRequestHeaders: () => ({}),
+        createChatStreamAccumulator: () => ({
+            feed: () => {},
+            toChatResponse: () => ({choices: [{message: {role: 'assistant', content: 'ok'}}]})
+        }),
+        streamAnthropicSSEToChatChunks: async function* () {
+            yield {id: 'chunk_1'};
+        },
+        canonicalFromAnthropicStreamChatResponse: () => null
+    });
+    const handleRelayResponsesWS = createRelayResponsesWebSocketHandler(deps);
+    const req = {tenantId: 42};
+
+    await handleRelayResponsesWS({id: 'client'}, req);
+    await collect(deps.capturedOptions.handleRequest({
+        model: 'gpt-test',
+        input: [{role: 'user', content: [{type: 'input_text', text: 'hello'}]}]
+    }, null, {signal: {aborted: false}}));
+
+    assert.equal(capturedAnthropicPayload.reasoning, undefined);
+    assert.deepEqual(capturedAnthropicPayload.thinking, {
+        type: 'enabled',
+        budget_tokens: 1999
+    });
+});
+
 test('handleRelayResponsesWS preserves signed thinking in Anthropic fallback payload', async () => {
     const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
     const tenantId = 42;
@@ -378,9 +440,29 @@ test('handleRelayResponsesWS preserves signed thinking in Anthropic fallback pay
         await handleRelayResponsesWS({id: 'client'}, req);
         await collect(deps.capturedOptions.handleRequest({
             model: 'gpt-test',
+            x_relay_anthropic_request: {
+                system: [{type: 'text', text: 'static instructions', cache_control: {type: 'ephemeral'}}],
+                top_k: 20,
+                stop_sequences: ['END'],
+                metadata: {user_id: 'user-1'},
+                tools: [{
+                    name: 'read_file',
+                    description: 'Read a file',
+                    input_schema: {type: 'object', properties: {path: {type: 'string'}}},
+                    cache_control: {type: 'ephemeral'}
+                }],
+                tool_choice: {type: 'auto', disable_parallel_tool_use: true}
+            },
             x_relay_anthropic_thinking_config: {type: 'enabled', budget_tokens: 10000},
             input: [
-                {role: 'user', content: [{type: 'input_text', text: 'Read README'}]},
+                {
+                    role: 'user',
+                    content: [{type: 'input_text', text: 'Read README'}],
+                    x_relay_anthropic_content: [
+                        {type: 'text', text: 'Read README', cache_control: {type: 'ephemeral'}},
+                        {type: 'document', source: {type: 'base64', media_type: 'application/pdf', data: 'pdf-data'}}
+                    ]
+                },
                 {
                     type: 'reasoning',
                     summary: [{type: 'summary_text', text: 'Need file.'}],
@@ -389,10 +471,41 @@ test('handleRelayResponsesWS preserves signed thinking in Anthropic fallback pay
                     ]
                 },
                 {type: 'function_call', call_id: 'toolu_1', name: 'read_file', arguments: '{"path":"README.md"}'},
-                {type: 'function_call_output', call_id: 'toolu_1', output: 'README text'}
+                {
+                    type: 'function_call_output',
+                    call_id: 'toolu_1',
+                    output: 'README text',
+                    x_relay_anthropic_tool_result: {
+                        type: 'tool_result',
+                        tool_use_id: 'toolu_1',
+                        is_error: true,
+                        content: [{type: 'text', text: 'README text', cache_control: {type: 'ephemeral'}}],
+                        cache_control: {type: 'ephemeral'}
+                    }
+                }
             ]
         }, null, {signal: {aborted: false}}));
 
+        assert.deepEqual(capturedAnthropicPayload.system, [
+            {type: 'text', text: 'static instructions', cache_control: {type: 'ephemeral'}}
+        ]);
+        assert.equal(capturedAnthropicPayload.top_k, 20);
+        assert.deepEqual(capturedAnthropicPayload.stop_sequences, ['END']);
+        assert.deepEqual(capturedAnthropicPayload.metadata, {user_id: 'user-1'});
+        assert.deepEqual(capturedAnthropicPayload.tools, [{
+            name: 'read_file',
+            description: 'Read a file',
+            input_schema: {type: 'object', properties: {path: {type: 'string'}}},
+            cache_control: {type: 'ephemeral'}
+        }]);
+        assert.deepEqual(capturedAnthropicPayload.tool_choice, {
+            type: 'auto',
+            disable_parallel_tool_use: true
+        });
+        assert.deepEqual(capturedAnthropicPayload.messages[0].content, [
+            {type: 'text', text: 'Read README', cache_control: {type: 'ephemeral'}},
+            {type: 'document', source: {type: 'base64', media_type: 'application/pdf', data: 'pdf-data'}}
+        ]);
         assert.deepEqual(capturedAnthropicPayload.messages[1].content[0], {
             type: 'thinking',
             thinking: 'Need file.',
@@ -403,7 +516,13 @@ test('handleRelayResponsesWS preserves signed thinking in Anthropic fallback pay
             budget_tokens: 10000
         });
         assert.equal(capturedAnthropicPayload.messages[1].content[1].type, 'tool_use');
-        assert.equal(capturedAnthropicPayload.messages[2].content[0].tool_use_id, 'toolu_1');
+        assert.deepEqual(capturedAnthropicPayload.messages[2].content[0], {
+            type: 'tool_result',
+            tool_use_id: 'toolu_1',
+            content: [{type: 'text', text: 'README text', cache_control: {type: 'ephemeral'}}],
+            is_error: true,
+            cache_control: {type: 'ephemeral'}
+        });
     } finally {
         store.dispose();
     }

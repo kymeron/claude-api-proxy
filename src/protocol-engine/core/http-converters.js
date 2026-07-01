@@ -138,6 +138,10 @@ export function anthropicRequestToResponses(anthropicPayload = {}, options = {})
     if (relayThinkingConfig) {
         responsesPayload.x_relay_anthropic_thinking_config = relayThinkingConfig;
     }
+    const relayRequest = relayAnthropicRequest(anthropicPayload);
+    if (relayRequest) {
+        responsesPayload.x_relay_anthropic_request = relayRequest;
+    }
 
     if (Array.isArray(anthropicPayload.tools) && anthropicPayload.tools.length > 0) {
         responsesPayload.tools = anthropicPayload.tools.map((tool) => ({
@@ -168,6 +172,33 @@ function relayAnthropicThinkingConfig(thinking) {
     if (thinking.type === 'disabled') return {type: 'disabled'};
     if (thinking.type === 'adaptive') return {type: 'adaptive'};
     return undefined;
+}
+
+const RELAY_ANTHROPIC_REQUEST_FIELDS = [
+    'system',
+    'top_k',
+    'stop_sequences',
+    'metadata',
+    'tools',
+    'tool_choice',
+    'container',
+    'context_management',
+    'service_tier',
+    'mcp_servers'
+];
+
+function relayAnthropicRequest(anthropicPayload = {}) {
+    const relay = {};
+    for (const field of RELAY_ANTHROPIC_REQUEST_FIELDS) {
+        if (anthropicPayload[field] !== undefined) {
+            relay[field] = cloneRelayValue(anthropicPayload[field]);
+        }
+    }
+    return Object.keys(relay).length > 0 ? relay : undefined;
+}
+
+function cloneRelayValue(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
 export function responsesResponseToAnthropic(responsesRes = {}) {
@@ -273,18 +304,24 @@ function anthropicMessagesToResponsesInput(messages) {
             const otherBlocks = message.content.filter((block) => block?.type !== 'tool_result');
 
             for (const block of toolResults) {
-                input.push({
+                const item = {
                     type: 'function_call_output',
                     call_id: block.tool_use_id || '',
                     output: typeof block.content === 'string' ? block.content : JSON.stringify(block.content || '')
-                });
+                };
+                const relayToolResult = relayAnthropicToolResult(block);
+                if (relayToolResult) item.x_relay_anthropic_tool_result = relayToolResult;
+                input.push(item);
             }
 
             if (otherBlocks.length > 0) {
-                input.push({
+                const item = {
                     role: 'user',
                     content: anthropicContentToResponsesContent(otherBlocks, 'input_text')
-                });
+                };
+                const relayContent = relayAnthropicContent(otherBlocks);
+                if (relayContent) item.x_relay_anthropic_content = relayContent;
+                input.push(item);
             }
             continue;
         }
@@ -301,10 +338,13 @@ function anthropicMessagesToResponsesInput(messages) {
             }
 
             if (textBlocks.length > 0) {
-                input.push({
+                const item = {
                     role: 'assistant',
                     content: anthropicContentToResponsesContent(textBlocks, 'output_text')
-                });
+                };
+                const relayContent = relayAnthropicContent(textBlocks);
+                if (relayContent) item.x_relay_anthropic_content = relayContent;
+                input.push(item);
             }
 
             for (const block of toolUseBlocks) {
@@ -328,6 +368,40 @@ function anthropicMessagesToResponsesInput(messages) {
     }
 
     return input;
+}
+
+function relayAnthropicContent(blocks) {
+    if (!Array.isArray(blocks) || blocks.length === 0) return undefined;
+    return blocks.some(needsRelayAnthropicContent) ? cloneRelayValue(blocks) : undefined;
+}
+
+function needsRelayAnthropicContent(block) {
+    if (!block || typeof block !== 'object') return false;
+    if (block.type === 'text') return hasFieldsOutside(block, ['type', 'text']);
+    if (block.type === 'image') {
+        return hasFieldsOutside(block, ['type', 'source'])
+            || block.source?.type === 'base64'
+            || Boolean(block.source?.media_type);
+    }
+    if (block.type === 'input_text' || block.type === 'output_text') {
+        return hasFieldsOutside(block, ['type', 'text']);
+    }
+    return block.type !== 'tool_use'
+        && block.type !== 'thinking'
+        && block.type !== 'redacted_thinking';
+}
+
+function relayAnthropicToolResult(block) {
+    if (!block || typeof block !== 'object' || block.type !== 'tool_result') return undefined;
+    const needsRelay = hasFieldsOutside(block, ['type', 'tool_use_id', 'content'])
+        || Array.isArray(block.content)
+        || (block.content && typeof block.content === 'object');
+    return needsRelay ? cloneRelayValue(block) : undefined;
+}
+
+function hasFieldsOutside(value, allowedFields) {
+    const allowed = new Set(allowedFields);
+    return Object.keys(value || {}).some((key) => !allowed.has(key));
 }
 
 function anthropicThinkingBlocksToResponsesReasoning(blocks) {
