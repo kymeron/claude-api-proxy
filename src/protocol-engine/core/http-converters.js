@@ -224,14 +224,8 @@ export function responsesResponseToAnthropic(responsesRes = {}) {
                 name: item.name || '',
                 input
             });
-        } else if (item.type === 'reasoning' && Array.isArray(item.summary)) {
-            const summaryText = item.summary
-                .filter((summary) => summary.type === 'summary_text' && summary.text)
-                .map((summary) => summary.text)
-                .join('\n\n');
-            if (summaryText) {
-                content.push({type: 'thinking', thinking: summaryText});
-            }
+        } else if (item.type === 'reasoning') {
+            content.push(...responsesReasoningToAnthropicContent(item));
         }
     }
 
@@ -261,6 +255,28 @@ export function responsesResponseToAnthropic(responsesRes = {}) {
             cache_read_input_tokens: responsesRes.usage?.input_tokens_details?.cached_tokens || 0
         }
     };
+}
+
+function responsesReasoningToAnthropicContent(item = {}) {
+    if (!Array.isArray(item.x_relay_anthropic_thinking)) return [];
+    return item.x_relay_anthropic_thinking
+        .map((block) => {
+            if (block?.type === 'thinking' && block.signature) {
+                return {
+                    type: 'thinking',
+                    thinking: block.thinking || '',
+                    signature: block.signature
+                };
+            }
+            if (block?.type === 'redacted_thinking') {
+                return {
+                    type: 'redacted_thinking',
+                    data: block.data || ''
+                };
+            }
+            return null;
+        })
+        .filter(Boolean);
 }
 
 function anthropicContentToResponsesContent(content, textType = 'input_text') {

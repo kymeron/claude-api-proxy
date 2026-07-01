@@ -95,7 +95,7 @@ test('anthropic adapters keep tool_use-only assistant content as empty string', 
     }
 });
 
-test('openAIToAnthropic returns reasoning_content as a thinking block', () => {
+test('openAIToAnthropic does not expose unsigned reasoning_content as Anthropic thinking', () => {
     const converted = openAIToAnthropic({
         id: 'chatcmpl_1',
         model: 'kimi-k2.6',
@@ -116,8 +116,11 @@ test('openAIToAnthropic returns reasoning_content as a thinking block', () => {
         usage: {prompt_tokens: 10, completion_tokens: 5}
     });
 
-    assert.deepEqual(converted.content.map((block) => block.type), ['thinking', 'text', 'tool_use']);
-    assert.equal(converted.content[0].thinking, 'check the file first');
+    assert.deepEqual(converted.content.map((block) => block.type), ['text', 'tool_use']);
+    assert.equal(
+        converted.content.some((block) => block.type === 'thinking'),
+        false
+    );
 });
 
 test('openAIToAnthropic splits cached prompt tokens from Anthropic input_tokens', () => {

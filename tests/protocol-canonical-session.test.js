@@ -96,6 +96,35 @@ test('canonical session restores relay Anthropic thinking signatures from Respon
     assert.equal(anthropic.messages[2].content[0].tool_use_id, 'toolu_1');
 });
 
+test('canonical session omits unsigned Responses reasoning when rendering Anthropic messages', () => {
+    const session = canonicalFromResponsesRequest({
+        model: 'gpt-test',
+        input: [
+            {role: 'user', content: [{type: 'input_text', text: 'Read README'}]},
+            {
+                type: 'reasoning',
+                summary: [{type: 'summary_text', text: 'Need file contents.'}]
+            },
+            {
+                role: 'assistant',
+                content: [{type: 'output_text', text: 'I will read it.'}]
+            },
+            {type: 'function_call', call_id: 'toolu_1', name: 'read_file', arguments: '{"path":"README.md"}'}
+        ]
+    }, {tenantId: 'tenant-a', conversationKey: 'conv-a'});
+
+    const anthropic = renderCanonicalToAnthropic(session);
+
+    assert.deepEqual(
+        anthropic.messages[1].content.map((block) => block.type),
+        ['text', 'tool_use']
+    );
+    assert.equal(
+        anthropic.messages[1].content.some((block) => block.type === 'thinking'),
+        false
+    );
+});
+
 test('canonical session maps Anthropic tool_use_id to every renderer', () => {
     const session = canonicalFromAnthropicRequest({
         model: 'claude-test',
@@ -105,7 +134,7 @@ test('canonical session maps Anthropic tool_use_id to every renderer', () => {
             {
                 role: 'assistant',
                 content: [
-                    {type: 'thinking', thinking: 'Need file contents.'},
+                    {type: 'thinking', thinking: 'Need file contents.', signature: 'sig_1'},
                     {type: 'tool_use', id: 'toolu_1', name: 'read_file', input: {path: 'README.md'}}
                 ]
             },

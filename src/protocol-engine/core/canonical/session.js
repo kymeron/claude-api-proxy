@@ -879,7 +879,9 @@ function blocksToAnthropicContent(blocks) {
     const content = [];
     for (const block of blocks || []) {
         if (block.type === 'reasoning') {
-            content.push({type: 'thinking', thinking: block.text || '', ...(block.signature ? {signature: block.signature} : {})});
+            if (block.signature) {
+                content.push({type: 'thinking', thinking: block.text || '', signature: block.signature});
+            }
         } else if (block.type === 'redacted_thinking') {
             content.push({type: 'redacted_thinking', data: block.data || ''});
         } else if (block.type === 'text') {

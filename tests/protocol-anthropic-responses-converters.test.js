@@ -249,7 +249,7 @@ test('sanitizeResponsesInput preserves relay Anthropic private fields for relay 
     });
 });
 
-test('responsesResponseToAnthropic maps text, reasoning, tool calls, stop reason, and cache usage', () => {
+test('responsesResponseToAnthropic omits unsigned reasoning summaries from Anthropic thinking', () => {
     const converted = responsesResponseToAnthropic({
         id: 'resp_123',
         model: 'gpt-test',
@@ -282,9 +282,12 @@ test('responsesResponseToAnthropic maps text, reasoning, tool calls, stop reason
     assert.equal(converted.stop_reason, 'tool_use');
     assert.deepEqual(converted.content, [
         {type: 'text', text: 'I will read it.'},
-        {type: 'thinking', thinking: 'Need file.'},
         {type: 'tool_use', id: 'call_1', name: 'read_file', input: {path: 'README.md'}}
     ]);
+    assert.equal(
+        converted.content.some((block) => block.type === 'thinking'),
+        false
+    );
     assert.deepEqual(converted.usage, {
         input_tokens: 10,
         output_tokens: 5,

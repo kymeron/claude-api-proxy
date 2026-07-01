@@ -812,17 +812,6 @@ export function openAIToAnthropic(openAIResponse, options = {}) {
     const message = choice.message || {};
     const content = [];
 
-    const reasoningText = message.reasoning_content
-        || (typeof message.thinking === 'string' ? message.thinking : null)
-        || (typeof message.thinking === 'object' && message.thinking !== null ? message.thinking.content : null)
-        || (typeof message.reasoning === 'string' ? message.reasoning : null);
-    if (reasoningText) {
-        content.push({
-            type: 'thinking',
-            thinking: reasoningText
-        });
-    }
-
     if (message.content) {
         content.push({
             type: 'text',
