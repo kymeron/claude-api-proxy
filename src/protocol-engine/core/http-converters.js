@@ -134,6 +134,10 @@ export function anthropicRequestToResponses(anthropicPayload = {}, options = {})
     if (!thinkingConfig.disabled && thinkingConfig.effort) {
         responsesPayload.reasoning = {effort: thinkingConfig.effort};
     }
+    const relayThinkingConfig = relayAnthropicThinkingConfig(anthropicPayload.thinking);
+    if (relayThinkingConfig) {
+        responsesPayload.x_relay_anthropic_thinking_config = relayThinkingConfig;
+    }
 
     if (Array.isArray(anthropicPayload.tools) && anthropicPayload.tools.length > 0) {
         responsesPayload.tools = anthropicPayload.tools.map((tool) => ({
@@ -151,6 +155,19 @@ export function anthropicRequestToResponses(anthropicPayload = {}, options = {})
     if (anthropicPayload.metadata) responsesPayload.metadata = anthropicPayload.metadata;
 
     return responsesPayload;
+}
+
+function relayAnthropicThinkingConfig(thinking) {
+    if (!thinking || typeof thinking !== 'object') return undefined;
+    if (thinking.type === 'enabled') {
+        return {
+            type: 'enabled',
+            ...(Number.isFinite(thinking.budget_tokens) ? {budget_tokens: thinking.budget_tokens} : {})
+        };
+    }
+    if (thinking.type === 'disabled') return {type: 'disabled'};
+    if (thinking.type === 'adaptive') return {type: 'adaptive'};
+    return undefined;
 }
 
 export function responsesResponseToAnthropic(responsesRes = {}) {

@@ -163,6 +163,7 @@ test('handleRelayResponsesWS passes native Responses continuation payload throug
     await handleRelayResponsesWS({id: 'client'}, req);
     const events = await collect(deps.capturedOptions.handleRequest({
         model: 'gpt-test',
+        x_relay_anthropic_thinking_config: {type: 'enabled', budget_tokens: 10000},
         previous_response_id: 'resp_prev',
         input: [{type: 'function_call_output', call_id: 'call_1', output: 'tool result'}],
         store: false
@@ -173,6 +174,7 @@ test('handleRelayResponsesWS passes native Responses continuation payload throug
     assert.deepEqual(capturedResponsesPayload.input, [
         {type: 'function_call_output', call_id: 'call_1', output: 'tool result'}
     ]);
+    assert.equal(capturedResponsesPayload.x_relay_anthropic_thinking_config, undefined);
     assert.equal(capturedResponsesPayload.store, false);
     assert.deepEqual(events, [{
         type: 'response.completed',
@@ -376,6 +378,7 @@ test('handleRelayResponsesWS preserves signed thinking in Anthropic fallback pay
         await handleRelayResponsesWS({id: 'client'}, req);
         await collect(deps.capturedOptions.handleRequest({
             model: 'gpt-test',
+            x_relay_anthropic_thinking_config: {type: 'enabled', budget_tokens: 10000},
             input: [
                 {role: 'user', content: [{type: 'input_text', text: 'Read README'}]},
                 {
@@ -394,6 +397,10 @@ test('handleRelayResponsesWS preserves signed thinking in Anthropic fallback pay
             type: 'thinking',
             thinking: 'Need file.',
             signature: 'sig_1'
+        });
+        assert.deepEqual(capturedAnthropicPayload.thinking, {
+            type: 'enabled',
+            budget_tokens: 10000
         });
         assert.equal(capturedAnthropicPayload.messages[1].content[1].type, 'tool_use');
         assert.equal(capturedAnthropicPayload.messages[2].content[0].tool_use_id, 'toolu_1');

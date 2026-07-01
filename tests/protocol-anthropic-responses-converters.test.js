@@ -90,6 +90,7 @@ test('anthropicRequestToResponses maps messages, tools, and reasoning into Respo
 test('anthropicRequestToResponses preserves signed thinking for relay Responses bridge', () => {
     const converted = anthropicRequestToResponses({
         model: 'claude-sonnet-4',
+        thinking: {type: 'enabled', budget_tokens: 10000},
         messages: [
             {
                 role: 'user',
@@ -130,6 +131,10 @@ test('anthropicRequestToResponses preserves signed thinking for relay Responses 
             output: 'README text'
         }
     ]);
+    assert.deepEqual(converted.x_relay_anthropic_thinking_config, {
+        type: 'enabled',
+        budget_tokens: 10000
+    });
 });
 
 test('responsesResponseToAnthropic maps text, reasoning, tool calls, stop reason, and cache usage', () => {

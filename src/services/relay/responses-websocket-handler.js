@@ -64,6 +64,7 @@ export function createRelayResponsesWebSocketHandler({
             });
             const stateConversationKey = hydrated.conversationKey || conversationKey;
             const stateRelayMeta = {...relayMeta, conversationKey: stateConversationKey};
+            const relayThinkingConfig = sanitizeRelayAnthropicThinkingConfig(payload.x_relay_anthropic_thinking_config);
             const signedCanonicalSession = canonicalSessionHasRelayAnthropicThinking(hydrated.canonicalSession)
                 ? hydrated.canonicalSession
                 : null;
@@ -89,6 +90,7 @@ export function createRelayResponsesWebSocketHandler({
                             session: signedCanonicalSession,
                             outboundChatReq,
                             resolvedModel,
+                            relayThinkingConfig,
                             renderCanonicalToAnthropic
                         })
                         : chatRequestToAnthropic(outboundChatReq);
@@ -162,7 +164,7 @@ export function createRelayResponsesWebSocketHandler({
         }
 
         if (isResponsesWebSocketUpstream(upstream)) {
-            const wsPayload = {...payload, model: resolvedModel};
+            const wsPayload = stripRelayResponsesPrivateFields({...payload, model: resolvedModel});
             const continuation = prepareResponsesContinuationPayload({
                 conversationStore: relayConversationStore,
                 tenantId,
@@ -217,7 +219,12 @@ export function createRelayResponsesWebSocketHandler({
         }
 
         if (isResponsesUpstream(upstream)) {
-            const responsesPayload = {...payload, model: resolvedModel, stream: true, store: payload.store ?? true};
+            const responsesPayload = stripRelayResponsesPrivateFields({
+                ...payload,
+                model: resolvedModel,
+                stream: true,
+                store: payload.store ?? true
+            });
             const continuation = prepareResponsesContinuationPayload({
                 conversationStore: relayConversationStore,
                 tenantId,
@@ -423,6 +430,7 @@ function canonicalSessionToAnthropicPayload({
     session,
     outboundChatReq,
     resolvedModel,
+    relayThinkingConfig,
     renderCanonicalToAnthropic
 }) {
     const anthropicPayload = {
@@ -433,9 +441,45 @@ function canonicalSessionToAnthropicPayload({
         temperature: outboundChatReq.temperature,
         top_p: outboundChatReq.top_p
     };
+    const thinkingConfig = relayThinkingConfig
+        || anthropicThinkingConfigFromReasoningEffort(outboundChatReq.reasoning_effort, anthropicPayload.max_tokens);
+    if (thinkingConfig) anthropicPayload.thinking = thinkingConfig;
     if (!anthropicPayload.tools || anthropicPayload.tools.length === 0) delete anthropicPayload.tools;
     if (!anthropicPayload.tool_choice) delete anthropicPayload.tool_choice;
     return anthropicPayload;
+}
+
+function sanitizeRelayAnthropicThinkingConfig(thinking) {
+    if (!thinking || typeof thinking !== 'object') return undefined;
+    if (thinking.type === 'enabled') {
+        return {
+            type: 'enabled',
+            ...(Number.isFinite(thinking.budget_tokens) ? {budget_tokens: thinking.budget_tokens} : {})
+        };
+    }
+    if (thinking.type === 'disabled') return {type: 'disabled'};
+    if (thinking.type === 'adaptive') return {type: 'adaptive'};
+    return undefined;
+}
+
+function anthropicThinkingConfigFromReasoningEffort(effort, maxTokens) {
+    if (!effort) return undefined;
+    if (effort === 'minimal') return {type: 'disabled'};
+    const max = Number.isFinite(maxTokens) ? maxTokens : 4096;
+    const defaultBudget = effort === 'low' ? 1024 : effort === 'medium' ? 4096 : 8192;
+    return {
+        type: 'enabled',
+        budget_tokens: Math.max(1024, Math.min(defaultBudget, Math.max(max - 1, 1024)))
+    };
+}
+
+function stripRelayResponsesPrivateFields(payload) {
+    if (!payload || typeof payload !== 'object') return payload;
+    const {
+        x_relay_anthropic_thinking_config,
+        ...rest
+    } = payload;
+    return rest;
 }
 
 function ensureChatMessagesForResponsesWebSocketFallback({
