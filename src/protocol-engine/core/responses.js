@@ -1136,7 +1136,35 @@ function normalizeResponsesMessageItemForDelta(item) {
 function normalizeResponsesMessageContentForDelta(content) {
     if (typeof content === 'string') return [normalizeResponsesTextPartForDelta(content)];
     if (!Array.isArray(content)) return stripResponsesInputReferenceFields(content);
-    return content.map(normalizeResponsesContentPartForDelta);
+    const parts = content.map(normalizeResponsesContentPartForDelta);
+    return coalesceAdjacentResponsesTextParts(parts);
+}
+
+// 客户端（如 Claude Code）跨轮回传同一 user message 时，常把动态上下文
+// （system-reminder、ide_opened_file 等）拆成独立 input_text part，而快照侧
+// 渲染的是合并后的单个 part。逐 part 严格相等比较会让首个 part 就分叉，
+// 整链 mismatch → fallback 发全量逐轮膨胀。
+// 把相邻的纯文本 part 合并成一个，分隔符 \n\n 与快照侧 blocksToText 的 join 一致，
+// 使 part 划分差异不再影响覆盖匹配。图片/文件/video part 作为分隔边界，不跨它们合并。
+function coalesceAdjacentResponsesTextParts(parts) {
+    const result = [];
+    let buffer = null;
+    for (const part of parts) {
+        if (part && part.type === 'text') {
+            const text = part.text ?? '';
+            buffer = buffer === null ? text : `${buffer}\n\n${text}`;
+            continue;
+        }
+        if (buffer !== null) {
+            result.push({text: buffer, type: 'text'});
+            buffer = null;
+        }
+        result.push(part);
+    }
+    if (buffer !== null) {
+        result.push({text: buffer, type: 'text'});
+    }
+    return result;
 }
 
 function normalizeResponsesContentPartForDelta(part) {
@@ -1186,7 +1214,24 @@ function shouldIgnoreResponsesRelayPrivateFieldForDelta(owner, key) {
     if (key === 'x_relay_anthropic_tool_result') {
         return isRelayAnthropicToolResultRedundantForDelta(owner?.[key], owner);
     }
+    if (key === 'x_relay_anthropic_thinking') {
+        return isRelayAnthropicThinkingRedundantForDelta(owner?.[key], owner?.summary);
+    }
     return false;
+}
+
+// 快照侧 reasoning 在带 signature 时会渲染出 x_relay_anthropic_thinking，
+// 而出口 stripRelayResponsesPrivateFields 会把它剥掉，导致两侧规范化不对称 → delta mismatch。
+// 仅当 thinking 文本可由 summary 表达时忽略，使两侧退化为纯 {type:'reasoning', summary}。
+// redacted_thinking 无 summary 文本对应，保留以维持 mismatch 安全降级。
+function isRelayAnthropicThinkingRedundantForDelta(relayThinking, summary) {
+    if (!Array.isArray(relayThinking) || relayThinking.length !== 1) return false;
+    const block = relayThinking[0];
+    if (!block || block.type !== 'thinking') return false;
+    const summaryText = Array.isArray(summary)
+        ? summary.map((part) => part?.text || '').filter(Boolean).join('\n')
+        : '';
+    return String(block.thinking ?? '') === summaryText;
 }
 
 function isRelayAnthropicContentRedundantForDelta(relayContent, responsesContent) {

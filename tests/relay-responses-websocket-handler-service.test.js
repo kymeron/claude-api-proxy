@@ -285,6 +285,175 @@ test('handleRelayResponsesWS deltas visible full history before forwarding to Re
     }
 });
 
+test('handleRelayResponsesWS disables continuation when upstream disables_responses_continuation (Responses upstream)', async () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 42;
+    const conversationKey = 'tenant:42:ws';
+    let capturedContinuationOptions = null;
+    let capturedResponsesMeta = null;
+
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {model: 'gpt-test-resolved', messages: [{role: 'user', content: 'hi'}]}
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_1',
+            model: 'gpt-test-resolved',
+            output: [{type: 'message', role: 'assistant', content: [{type: 'output_text', text: 'answer'}]}]
+        }
+    });
+
+    const deps = createBaseDeps({
+        authenticateAndGetUpstream: async () => ({
+            upstream: {index: 0, disable_responses_continuation: true},
+            tenantId,
+            upstreamManager: {resolveModel: (model) => `${model}-resolved`}
+        }),
+        isResponsesUpstream: () => true,
+        relayConversationStore: store,
+        prepareResponsesContinuationPayload: (options) => {
+            capturedContinuationOptions = options;
+            return {
+                request: options.request,
+                conversationKey: options.conversationKey,
+                lastResponseId: 'resp_1',
+                autoLink: false,
+                skipInputItemLimit: false,
+                deltaApplied: false,
+                deltaAttempted: false,
+                emptyDelta: false,
+                deltaPreviousResponseId: null,
+                deltaCoveredLength: 0,
+                chainReset: false,
+                chainInputLength: null,
+                chainLimit: null,
+                truncated: false,
+                originalLength: 1,
+                retainedLength: 1,
+                droppedCount: 0
+            };
+        },
+        createResponses: (payload, upstream, meta) => {
+            capturedResponsesMeta = meta;
+            return {payload};
+        },
+        callUpstream: async (upstream, invoke) => {
+            await invoke(upstream);
+            return {
+                response: {
+                    body: chunks(
+                        'event: response.completed\n'
+                        + 'data: {"type":"response.completed","response":{"id":"resp_2","usage":{"input_tokens":1,"output_tokens":2}}}\n\n'
+                    )
+                }
+            };
+        },
+        parseSSEBlock: (part) => {
+            const lines = part.split(/\r?\n/);
+            const event = lines.find((line) => line.startsWith('event: '))?.slice(7);
+            const data = lines.find((line) => line.startsWith('data: '))?.slice(6);
+            return {event, data};
+        },
+        getSSEEventType: (event, parsed) => event || parsed?.type
+    });
+    const handleRelayResponsesWS = createRelayResponsesWebSocketHandler(deps);
+    const req = {tenantId};
+
+    await handleRelayResponsesWS({id: 'client'}, req);
+    await collect(deps.capturedOptions.handleRequest({
+        model: 'gpt-test',
+        input: [{role: 'user', content: [{type: 'input_text', text: 'latest question'}]}],
+        store: true
+    }, null, {signal: {aborted: false}}));
+
+    assert.equal(capturedContinuationOptions.disableContinuation, true);
+    assert.equal(capturedResponsesMeta.skipInputItemLimit, true);
+    store.dispose();
+});
+
+test('handleRelayResponsesWS disables continuation when upstream disables_responses_continuation (Responses WebSocket upstream)', async () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 42;
+    const conversationKey = 'tenant:42:ws';
+    let capturedContinuationOptions = null;
+    let capturedWsMeta = null;
+
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {model: 'gpt-test-resolved', messages: [{role: 'user', content: 'hi'}]}
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_1',
+            model: 'gpt-test-resolved',
+            output: [{type: 'message', role: 'assistant', content: [{type: 'output_text', text: 'answer'}]}]
+        }
+    });
+
+    const deps = createBaseDeps({
+        authenticateAndGetUpstream: async () => ({
+            upstream: {index: 0, disable_responses_continuation: true},
+            tenantId,
+            upstreamManager: {resolveModel: (model) => `${model}-resolved`}
+        }),
+        isResponsesWebSocketUpstream: () => true,
+        relayConversationStore: store,
+        prepareResponsesContinuationPayload: (options) => {
+            capturedContinuationOptions = options;
+            return {
+                request: options.request,
+                conversationKey: options.conversationKey,
+                lastResponseId: 'resp_1',
+                autoLink: false,
+                skipInputItemLimit: false,
+                deltaApplied: false,
+                deltaAttempted: false,
+                emptyDelta: false,
+                deltaPreviousResponseId: null,
+                deltaCoveredLength: 0,
+                chainReset: false,
+                chainInputLength: null,
+                chainLimit: null,
+                truncated: false,
+                originalLength: 1,
+                retainedLength: 1,
+                droppedCount: 0
+            };
+        },
+        createResponsesWebSocket: (payload, upstream, meta) => {
+            capturedWsMeta = meta;
+            return {
+                eventStream: (async function* () {
+                    yield {type: 'response.completed', data: {response: {id: 'resp_2', usage: {input_tokens: 1, output_tokens: 2}}}};
+                })(),
+                conn: {release() {}}
+            };
+        },
+        discardResponsesWebSocketConnection: () => {},
+        releaseResponsesWebSocketConnection: () => {}
+    });
+    const handleRelayResponsesWS = createRelayResponsesWebSocketHandler(deps);
+    const req = {tenantId};
+
+    await handleRelayResponsesWS({id: 'client'}, req);
+    await collect(deps.capturedOptions.handleRequest({
+        model: 'gpt-test',
+        input: [{role: 'user', content: [{type: 'input_text', text: 'latest question'}]}],
+        store: true
+    }, null, {signal: {aborted: false}}));
+
+    assert.equal(capturedContinuationOptions.disableContinuation, true);
+    assert.equal(capturedWsMeta.skipInputItemLimit, true);
+    store.dispose();
+});
+
 test('handleRelayResponsesWS hydrates tool-result deltas before Anthropic fallback conversion', async () => {
     const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
     const tenantId = 42;

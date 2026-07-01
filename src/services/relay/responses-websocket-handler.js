@@ -207,7 +207,8 @@ export function createRelayResponsesWebSocketHandler({
                 tenantId,
                 conversationKey,
                 request: wsPayload,
-                requestType: 'RelayResponsesWebSocketRelay'
+                requestType: 'RelayResponsesWebSocketRelay',
+                disableContinuation: upstream.disable_responses_continuation === true
             });
             const stateConversationKey = continuation.conversationKey || conversationKey;
             const wsResult = await createResponsesWebSocket(continuation.request, upstream, {
@@ -218,6 +219,7 @@ export function createRelayResponsesWebSocketHandler({
                 sessionId: stateConversationKey,
                 rejectUnauthorized: !upstream.skip_tls_verify,
                 autoLink: false,
+                skipInputItemLimit: upstream.disable_responses_continuation === true || continuation.skipInputItemLimit === true,
                 ...tenantMeta
             });
 
@@ -267,7 +269,8 @@ export function createRelayResponsesWebSocketHandler({
                 tenantId,
                 conversationKey,
                 request: responsesPayload,
-                requestType: 'ResponsesWS'
+                requestType: 'ResponsesWS',
+                disableContinuation: upstream.disable_responses_continuation === true
             });
             const stateConversationKey = continuation.conversationKey || conversationKey;
             const {response} = await callUpstream(upstream, (up) =>
@@ -276,7 +279,8 @@ export function createRelayResponsesWebSocketHandler({
                     stream: true,
                     originalModel: payload.model,
                     ...relayMeta,
-                    conversationKey: stateConversationKey
+                    conversationKey: stateConversationKey,
+                    skipInputItemLimit: upstream.disable_responses_continuation === true || continuation.skipInputItemLimit === true
                 })
             );
 

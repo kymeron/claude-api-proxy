@@ -123,6 +123,183 @@ test('prepareResponsesContinuationPayload sends only new input after previous re
     );
 });
 
+test('prepareResponsesContinuationPayload matches when user message split across text parts differently between rounds', () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 'tenant-a';
+    const conversationKey = 'conv-a';
+
+    // 第一轮：客户端以合并字符串发送 user message，快照侧渲染为单个 input_text part
+    // 文本 "first\n\nquestion" 对应本轮拆成两个 part 后用 \n\n 拼接的结果
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'client-model',
+            messages: [{role: 'user', content: 'first\n\nquestion'}]
+        }
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_1',
+            model: 'client-model',
+            output: [{
+                type: 'message',
+                role: 'assistant',
+                content: [{type: 'output_text', text: 'first answer'}]
+            }]
+        }
+    });
+
+    // 本轮：同一 user message 被拆成多个 input_text part（Claude Code 注入动态上下文时的常见形态）
+    const result = prepareResponsesContinuationPayload({
+        conversationStore: store,
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'glm-5.2',
+            input: [
+                {role: 'user', content: [
+                    {type: 'input_text', text: 'first'},
+                    {type: 'input_text', text: 'question'}
+                ]},
+                {role: 'assistant', content: [{type: 'output_text', text: 'first answer'}]},
+                {role: 'user', content: [{type: 'input_text', text: 'second question'}]}
+            ]
+        },
+        requestType: 'AnthropicViaResponsesWebSocket',
+        logger: {info() {}}
+    });
+
+    assert.equal(result.deltaApplied, true);
+    assert.equal(result.autoLink, true);
+    assert.equal(result.request.previous_response_id, 'resp_1');
+    assert.deepEqual(result.request.input, [
+        {role: 'user', content: [{type: 'input_text', text: 'second question'}]}
+    ]);
+});
+
+test('prepareResponsesContinuationPayload coalesces adjacent text parts around image parts', () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 'tenant-a';
+    const conversationKey = 'conv-a';
+
+    const imageUrl = 'https://example.com/image.png';
+    // 快照侧：图片前后各一段合并文本（与本轮拆分后用 \n\n 拼接一致）
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'client-model',
+            messages: [{role: 'user', content: [
+                {type: 'text', text: 'look\n\nat this'},
+                {type: 'image_url', image_url: {url: imageUrl}},
+                {type: 'text', text: 'describe\n\nit'}
+            ]}]
+        }
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_1',
+            model: 'client-model',
+            output: [{
+                type: 'message',
+                role: 'assistant',
+                content: [{type: 'output_text', text: 'a picture'}]
+            }]
+        }
+    });
+
+    // 本轮：图片两侧的文本 part 被各自再拆分，验证不跨图片合并
+    const result = prepareResponsesContinuationPayload({
+        conversationStore: store,
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'glm-5.2',
+            input: [
+                {role: 'user', content: [
+                    {type: 'input_text', text: 'look'},
+                    {type: 'input_text', text: 'at this'},
+                    {type: 'input_image', image_url: imageUrl},
+                    {type: 'input_text', text: 'describe'},
+                    {type: 'input_text', text: 'it'}
+                ]},
+                {role: 'assistant', content: [{type: 'output_text', text: 'a picture'}]},
+                {role: 'user', content: [{type: 'input_text', text: 'next question'}]}
+            ]
+        },
+        requestType: 'AnthropicViaResponsesWebSocket',
+        logger: {info() {}}
+    });
+
+    assert.equal(result.deltaApplied, true);
+    assert.equal(result.autoLink, true);
+    assert.equal(result.request.previous_response_id, 'resp_1');
+    assert.deepEqual(result.request.input, [
+        {role: 'user', content: [{type: 'input_text', text: 'next question'}]}
+    ]);
+});
+
+test('prepareResponsesContinuationPayload matches when adjacent text parts carry differing surrounding whitespace', () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 'tenant-a';
+    const conversationKey = 'conv-a';
+
+    // 快照侧文本含 \n\n\n\n，对应本轮 part 末尾的 \n\n 加上合并分隔符 \n\n
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'client-model',
+            messages: [{role: 'user', content: 'first\n\n\n\nquestion'}]
+        }
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_1',
+            model: 'client-model',
+            output: [{
+                type: 'message',
+                role: 'assistant',
+                content: [{type: 'output_text', text: 'first answer'}]
+            }]
+        }
+    });
+
+    // 本轮：第一个 part 以换行结尾，模拟动态注入产生的空白差异
+    const result = prepareResponsesContinuationPayload({
+        conversationStore: store,
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'glm-5.2',
+            input: [
+                {role: 'user', content: [
+                    {type: 'input_text', text: 'first\n\n'},
+                    {type: 'input_text', text: 'question'}
+                ]},
+                {role: 'assistant', content: [{type: 'output_text', text: 'first answer'}]},
+                {role: 'user', content: [{type: 'input_text', text: 'second question'}]}
+            ]
+        },
+        requestType: 'AnthropicViaResponsesWebSocket',
+        logger: {info() {}}
+    });
+
+    assert.equal(result.deltaApplied, true);
+    assert.equal(result.autoLink, true);
+    assert.equal(result.request.previous_response_id, 'resp_1');
+    assert.deepEqual(result.request.input, [
+        {role: 'user', content: [{type: 'input_text', text: 'second question'}]}
+    ]);
+});
+
 test('prepareResponsesContinuationPayload ignores relay private fields when matching covered history', () => {
     const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
     const tenantId = 'tenant-a';
@@ -178,6 +355,199 @@ test('prepareResponsesContinuationPayload ignores relay private fields when matc
     ]);
     assert.equal(result.deltaApplied, true);
     assert.equal(result.autoLink, true);
+});
+
+test('prepareResponsesContinuationPayload deltas when covered reasoning carries relay thinking signature', () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 'tenant-a';
+    const conversationKey = 'conv-a';
+
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'client-model',
+            messages: [{role: 'user', content: 'first question'}]
+        }
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_1',
+            model: 'client-model',
+            output: [
+                {
+                    type: 'reasoning',
+                    id: 'rs_1',
+                    summary: [{type: 'summary_text', text: 'reasoning about the question'}],
+                    x_relay_anthropic_thinking: [{
+                        type: 'thinking',
+                        thinking: 'reasoning about the question',
+                        signature: 'sig_abc'
+                    }]
+                },
+                {
+                    type: 'message',
+                    id: 'msg_1',
+                    status: 'completed',
+                    role: 'assistant',
+                    content: [{type: 'output_text', text: 'first answer'}]
+                }
+            ]
+        }
+    });
+
+    // 客户端回传的完整历史，reasoning 项已被出口 stripRelayResponsesPrivateFields
+    // 剥掉 x_relay_ 字段，只剩 summary（与快照侧不对称，曾导致 mismatch）。
+    const result = prepareResponsesContinuationPayload({
+        conversationStore: store,
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'glm-5.2',
+            input: [
+                {role: 'user', content: [{type: 'input_text', text: 'first question'}]},
+                {type: 'reasoning', summary: [{type: 'summary_text', text: 'reasoning about the question'}]},
+                {role: 'assistant', content: [{type: 'output_text', text: 'first answer'}]},
+                {role: 'user', content: [{type: 'input_text', text: 'second question'}]}
+            ]
+        },
+        requestType: 'AnthropicViaResponsesWebSocket',
+        logger: {info() {}}
+    });
+
+    assert.equal(result.deltaApplied, true);
+    assert.equal(result.autoLink, true);
+    assert.equal(result.request.previous_response_id, 'resp_1');
+    assert.deepEqual(result.request.input, [
+        {role: 'user', content: [{type: 'input_text', text: 'second question'}]}
+    ]);
+});
+
+test('prepareResponsesContinuationPayload does not ignore relay thinking when text diverges from summary', () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 'tenant-a';
+    const conversationKey = 'conv-a';
+
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'client-model',
+            messages: [{role: 'user', content: 'first question'}]
+        }
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_1',
+            model: 'client-model',
+            output: [
+                {
+                    type: 'reasoning',
+                    id: 'rs_1',
+                    summary: [{type: 'summary_text', text: 'summary text'}],
+                    x_relay_anthropic_thinking: [{
+                        type: 'thinking',
+                        thinking: 'different thinking content',
+                        signature: 'sig_abc'
+                    }]
+                },
+                {
+                    type: 'message',
+                    id: 'msg_1',
+                    status: 'completed',
+                    role: 'assistant',
+                    content: [{type: 'output_text', text: 'first answer'}]
+                }
+            ]
+        }
+    });
+
+    const result = prepareResponsesContinuationPayload({
+        conversationStore: store,
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'glm-5.2',
+            input: [
+                {role: 'user', content: [{type: 'input_text', text: 'first question'}]},
+                {type: 'reasoning', summary: [{type: 'summary_text', text: 'summary text'}]},
+                {role: 'assistant', content: [{type: 'output_text', text: 'first answer'}]},
+                {role: 'user', content: [{type: 'input_text', text: 'second question'}]}
+            ]
+        },
+        requestType: 'AnthropicViaResponsesWebSocket',
+        logger: {info() {}}
+    });
+
+    // thinking 文本与 summary 不一致 → 不忽略私有字段 → mismatch 安全降级
+    assert.equal(result.deltaApplied, false);
+    assert.equal(result.autoLink, false);
+});
+
+test('prepareResponsesContinuationPayload preserves redacted thinking field when not expressible by summary', () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 'tenant-a';
+    const conversationKey = 'conv-a';
+
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'client-model',
+            messages: [{role: 'user', content: 'first question'}]
+        }
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_1',
+            model: 'client-model',
+            output: [
+                {
+                    type: 'reasoning',
+                    id: 'rs_1',
+                    summary: [],
+                    x_relay_anthropic_thinking: [{
+                        type: 'redacted_thinking',
+                        data: 'redacted_data'
+                    }]
+                },
+                {
+                    type: 'message',
+                    id: 'msg_1',
+                    status: 'completed',
+                    role: 'assistant',
+                    content: [{type: 'output_text', text: 'first answer'}]
+                }
+            ]
+        }
+    });
+
+    const result = prepareResponsesContinuationPayload({
+        conversationStore: store,
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'glm-5.2',
+            input: [
+                {role: 'user', content: [{type: 'input_text', text: 'first question'}]},
+                {type: 'reasoning', summary: []},
+                {role: 'assistant', content: [{type: 'output_text', text: 'first answer'}]},
+                {role: 'user', content: [{type: 'input_text', text: 'second question'}]}
+            ]
+        },
+        requestType: 'AnthropicViaResponsesWebSocket',
+        logger: {info() {}}
+    });
+
+    // redacted_thinking 无 summary 文本对应 → 保留私有字段 → mismatch 安全降级
+    assert.equal(result.deltaApplied, false);
+    assert.equal(result.autoLink, false);
 });
 
 test('prepareResponsesContinuationPayload preserves semantic relay private fields when matching covered history', () => {
