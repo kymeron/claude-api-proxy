@@ -1105,6 +1105,7 @@ function stripResponsesInputReferenceFields(value) {
     const result = {};
     for (const key of Object.keys(value).sort()) {
         if (RESPONSES_DELTA_REFERENCE_FIELDS.has(key)) continue;
+        if (key.startsWith('x_relay_')) continue;
         result[key] = stripResponsesInputReferenceFields(value[key]);
     }
     return result;
@@ -1123,6 +1124,7 @@ function normalizeResponsesMessageItemForDelta(item) {
     const result = {};
     for (const key of Object.keys(item).sort()) {
         if (RESPONSES_DELTA_REFERENCE_FIELDS.has(key)) continue;
+        if (key.startsWith('x_relay_')) continue;
         if (key === 'type' && item.type === 'message') continue;
         result[key] = key === 'content'
             ? normalizeResponsesMessageContentForDelta(item.content)
