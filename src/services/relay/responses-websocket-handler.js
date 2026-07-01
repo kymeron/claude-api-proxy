@@ -22,6 +22,7 @@ export function createRelayResponsesWebSocketHandler({
     streamAnthropicSSEToChatChunks,
     parseSSEBlock,
     canonicalFromAnthropicStreamChatResponse,
+    renderCanonicalToAnthropic,
     recordCompletedResponseState,
     prepareResponsesContinuationPayload,
     createResponsesWebSocket,
@@ -63,6 +64,9 @@ export function createRelayResponsesWebSocketHandler({
             });
             const stateConversationKey = hydrated.conversationKey || conversationKey;
             const stateRelayMeta = {...relayMeta, conversationKey: stateConversationKey};
+            const signedCanonicalSession = canonicalSessionHasRelayAnthropicThinking(hydrated.canonicalSession)
+                ? hydrated.canonicalSession
+                : null;
             const invocation = await invokeWithRelayContextCompaction({
                 chatRequest: chatReq,
                 compactOptions: {
@@ -80,7 +84,14 @@ export function createRelayResponsesWebSocketHandler({
                         model: resolvedModel,
                         stream: true
                     });
-                    const anthropicPayload = chatRequestToAnthropic(outboundChatReq);
+                    const anthropicPayload = signedCanonicalSession && renderCanonicalToAnthropic
+                        ? canonicalSessionToAnthropicPayload({
+                            session: signedCanonicalSession,
+                            outboundChatReq,
+                            resolvedModel,
+                            renderCanonicalToAnthropic
+                        })
+                        : chatRequestToAnthropic(outboundChatReq);
                     ensureAnthropicMessagesForResponsesWebSocketFallback({
                         anthropicPayload,
                         payload,
@@ -397,6 +408,34 @@ export function createRelayResponsesWebSocketHandler({
             }
         });
     };
+}
+
+function canonicalSessionHasRelayAnthropicThinking(session) {
+    return (session?.turns || []).some((turn) =>
+        (turn?.blocks || []).some((block) =>
+            block?.type === 'redacted_thinking'
+            || (block?.type === 'reasoning' && block.signature)
+        )
+    );
+}
+
+function canonicalSessionToAnthropicPayload({
+    session,
+    outboundChatReq,
+    resolvedModel,
+    renderCanonicalToAnthropic
+}) {
+    const anthropicPayload = {
+        ...renderCanonicalToAnthropic(session),
+        model: resolvedModel,
+        max_tokens: outboundChatReq.max_tokens || outboundChatReq.max_completion_tokens || 4096,
+        stream: outboundChatReq.stream,
+        temperature: outboundChatReq.temperature,
+        top_p: outboundChatReq.top_p
+    };
+    if (!anthropicPayload.tools || anthropicPayload.tools.length === 0) delete anthropicPayload.tools;
+    if (!anthropicPayload.tool_choice) delete anthropicPayload.tool_choice;
+    return anthropicPayload;
 }
 
 function ensureChatMessagesForResponsesWebSocketFallback({

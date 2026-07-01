@@ -30,6 +30,7 @@ export function createRelayAnthropicMessagesHandler({
     extractInputTokens,
     extractCacheHitTokens,
     chatRequestToRelayResponses,
+    anthropicRequestToResponses,
     prepareResponsesContinuationPayload,
     createResponsesWebSocket,
     releaseResponsesWebSocketConnection,
@@ -186,10 +187,12 @@ export function createRelayAnthropicMessagesHandler({
             }
 
             if (isResponsesWebSocketUpstream(upstream)) {
-                const responsesPayload = chatRequestToRelayResponses({
-                    ...openAIPayload,
-                    model: upstreamManager.resolveModel(openAIPayload.model, upstream.index),
-                    stream: anthropicPayload.stream
+                const responsesPayload = createResponsesPayloadFromAnthropicBridge({
+                    anthropicPayload,
+                    openAIPayload,
+                    resolvedModel: upstreamManager.resolveModel(openAIPayload.model, upstream.index),
+                    chatRequestToRelayResponses,
+                    anthropicRequestToResponses
                 });
                 const continuation = prepareResponsesContinuationPayload({
                     conversationStore: relayConversationStore,
@@ -259,10 +262,12 @@ export function createRelayAnthropicMessagesHandler({
             }
 
             if (isResponsesUpstream(upstream)) {
-                const responsesPayload = chatRequestToRelayResponses({
-                    ...openAIPayload,
-                    model: upstreamManager.resolveModel(openAIPayload.model, upstream.index),
-                    stream: anthropicPayload.stream
+                const responsesPayload = createResponsesPayloadFromAnthropicBridge({
+                    anthropicPayload,
+                    openAIPayload,
+                    resolvedModel: upstreamManager.resolveModel(openAIPayload.model, upstream.index),
+                    chatRequestToRelayResponses,
+                    anthropicRequestToResponses
                 });
                 const conversationKey = extractConversationKey(req, responsesPayload, {tenantId});
                 const continuation = prepareResponsesContinuationPayload({
@@ -494,4 +499,92 @@ export function createRelayAnthropicMessagesHandler({
             }
         }
     };
+}
+
+function createResponsesPayloadFromAnthropicBridge({
+    anthropicPayload,
+    openAIPayload,
+    resolvedModel,
+    chatRequestToRelayResponses,
+    anthropicRequestToResponses
+}) {
+    if (anthropicRequestToResponses) {
+        return anthropicRequestToResponses({
+            ...anthropicPayload,
+            model: resolvedModel,
+            messages: stripAnthropicDynamicReminderMessages(anthropicPayload.messages),
+            stream: anthropicPayload.stream,
+            system: chatSystemMessagesToAnthropicSystem(openAIPayload.messages) ?? anthropicPayload.system
+        });
+    }
+    return chatRequestToRelayResponses({
+        ...openAIPayload,
+        model: resolvedModel,
+        stream: anthropicPayload.stream
+    });
+}
+
+function stripAnthropicDynamicReminderMessages(messages) {
+    if (!Array.isArray(messages)) return messages;
+
+    let changed = false;
+    const cleaned = messages.map((message) => {
+        if (!message || message.role !== 'user') return message;
+        if (typeof message.content === 'string') {
+            const content = stripLastActiveLine(message.content);
+            if (content !== message.content) {
+                changed = true;
+                if (!content.trim()) return null;
+                return {...message, content};
+            }
+            return message;
+        }
+        if (!Array.isArray(message.content)) return message;
+
+        let messageChanged = false;
+        const content = message.content
+            .map((block) => {
+                if (!block || block.type !== 'text' || typeof block.text !== 'string') return block;
+                const text = stripLastActiveLine(block.text);
+                if (text !== block.text) {
+                    messageChanged = true;
+                    if (!text.trim()) return null;
+                    return {...block, text};
+                }
+                return block;
+            })
+            .filter(Boolean);
+
+        if (!messageChanged) return message;
+        changed = true;
+        if (content.length === 0) return null;
+        return {...message, content};
+    }).filter(Boolean);
+
+    return changed ? cleaned : messages;
+}
+
+function stripLastActiveLine(text) {
+    return text.replace(/^Last active:.*$\n?/gm, '');
+}
+
+function chatSystemMessagesToAnthropicSystem(messages) {
+    const parts = (messages || [])
+        .filter((message) => message?.role === 'system')
+        .map((message) => chatMessageContentToText(message.content))
+        .filter(Boolean);
+    return parts.length > 0 ? parts.join('\n\n') : undefined;
+}
+
+function chatMessageContentToText(content) {
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return content == null ? '' : JSON.stringify(content);
+    return content
+        .map((part) => {
+            if (typeof part === 'string') return part;
+            if (!part || typeof part !== 'object') return '';
+            return part.text || part.input_text || part.output_text || '';
+        })
+        .filter(Boolean)
+        .join('\n');
 }

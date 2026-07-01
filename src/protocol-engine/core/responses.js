@@ -1327,9 +1327,11 @@ export function sanitizeResponsesInput(input, model) {
             const summary = Array.isArray(item.summary)
                 ? item.summary.map(s => ({type: s.type || 'summary_text', text: s.text || ''})).filter(s => s.text)
                 : [];
+            const relayThinking = sanitizeRelayAnthropicThinkingBlocks(item.x_relay_anthropic_thinking);
             return {
                 type: 'reasoning',
-                summary
+                summary,
+                ...(relayThinking.length > 0 ? {x_relay_anthropic_thinking: relayThinking} : {})
             };
         }
 
@@ -1362,6 +1364,28 @@ export function sanitizeResponsesInput(input, model) {
     }
 
     return result;
+}
+
+function sanitizeRelayAnthropicThinkingBlocks(blocks) {
+    if (!Array.isArray(blocks)) return [];
+    return blocks
+        .map((block) => {
+            if (block?.type === 'thinking') {
+                return {
+                    type: 'thinking',
+                    thinking: block.thinking || '',
+                    ...(block.signature ? {signature: block.signature} : {})
+                };
+            }
+            if (block?.type === 'redacted_thinking') {
+                return {
+                    type: 'redacted_thinking',
+                    data: block.data || ''
+                };
+            }
+            return null;
+        })
+        .filter(Boolean);
 }
 
 /**

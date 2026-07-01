@@ -83,6 +83,7 @@ import {
     createResponsesToResponsesStreamBridge,
     streamAnthropicSSEToChatChunks,
     createResponsesStreamAccumulator,
+    anthropicRequestToResponses,
     canonicalFromAnthropicResponse,
     canonicalFromAnthropicStreamChatResponse,
     getRelayConversationDiagnostics,
@@ -90,6 +91,7 @@ import {
     chatResponseToRelayResponses,
     chatRequestToRelayResponses,
     chatRequestToAnthropic,
+    renderCanonicalToAnthropic,
     responsesResponseToRelayChat
 } from './protocol-adapter.js';
 import {
@@ -242,6 +244,7 @@ export function createRelayRouteRuntime({tenantManager, logger = defaultLogger} 
         extractInputTokens,
         extractCacheHitTokens,
         chatRequestToRelayResponses,
+        anthropicRequestToResponses,
         prepareResponsesContinuationPayload,
         createResponsesWebSocket,
         releaseResponsesWebSocketConnection,
@@ -288,6 +291,7 @@ export function createRelayRouteRuntime({tenantManager, logger = defaultLogger} 
         streamAnthropicSSEToChatChunks,
         parseSSEBlock,
         canonicalFromAnthropicStreamChatResponse,
+        renderCanonicalToAnthropic,
         recordCompletedResponseState,
         recordUsage,
         extractCacheHitTokens,

@@ -65,8 +65,11 @@ test('anthropicRequestToResponses maps messages, tools, and reasoning into Respo
             ]
         },
         {
-            role: 'assistant',
-            content: [{type: 'output_text', text: 'Need file.'}]
+            type: 'reasoning',
+            summary: [{type: 'summary_text', text: 'Need file.'}],
+            x_relay_anthropic_thinking: [
+                {type: 'thinking', thinking: 'Need file.'}
+            ]
         },
         {
             type: 'function_call',
@@ -82,6 +85,51 @@ test('anthropicRequestToResponses maps messages, tools, and reasoning into Respo
     ]);
     assert.deepEqual(converted.stop, ['END']);
     assert.deepEqual(converted.metadata, {session: 's1'});
+});
+
+test('anthropicRequestToResponses preserves signed thinking for relay Responses bridge', () => {
+    const converted = anthropicRequestToResponses({
+        model: 'claude-sonnet-4',
+        messages: [
+            {
+                role: 'user',
+                content: [{type: 'text', text: 'Read README'}]
+            },
+            {
+                role: 'assistant',
+                content: [
+                    {type: 'thinking', thinking: 'Need file.', signature: 'sig_1'},
+                    {type: 'tool_use', id: 'toolu_1', name: 'read_file', input: {path: 'README.md'}}
+                ]
+            },
+            {
+                role: 'user',
+                content: [{type: 'tool_result', tool_use_id: 'toolu_1', content: 'README text'}]
+            }
+        ]
+    });
+
+    assert.deepEqual(converted.input, [
+        {role: 'user', content: [{type: 'input_text', text: 'Read README'}]},
+        {
+            type: 'reasoning',
+            summary: [{type: 'summary_text', text: 'Need file.'}],
+            x_relay_anthropic_thinking: [
+                {type: 'thinking', thinking: 'Need file.', signature: 'sig_1'}
+            ]
+        },
+        {
+            type: 'function_call',
+            call_id: 'toolu_1',
+            name: 'read_file',
+            arguments: '{"path":"README.md"}'
+        },
+        {
+            type: 'function_call_output',
+            call_id: 'toolu_1',
+            output: 'README text'
+        }
+    ]);
 });
 
 test('responsesResponseToAnthropic maps text, reasoning, tool calls, stop reason, and cache usage', () => {

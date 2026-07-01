@@ -141,6 +141,85 @@ test('handleAnthropicMessages disables Responses WS auto-link after continuation
     assert.deepEqual(res.calls, [['json', 200, {type: 'message', source: 'chat_from_resp_1'}]]);
 });
 
+test('handleAnthropicMessages preserves signed thinking when forwarding through Responses WS', async () => {
+    const res = createResponse();
+    let capturedCreatePayload = null;
+    let directConverterCalled = false;
+    const deps = createBaseDeps({
+        parseBody: async () => JSON.stringify({
+            model: 'claude-test',
+            stream: false,
+            messages: [
+                {role: 'user', content: [{type: 'text', text: 'Read README\nLast active: today'}]},
+                {
+                    role: 'assistant',
+                    content: [
+                        {type: 'thinking', thinking: 'Need file.', signature: 'sig_1'},
+                        {type: 'tool_use', id: 'toolu_1', name: 'read_file', input: {path: 'README.md'}}
+                    ]
+                },
+                {role: 'user', content: [{type: 'tool_result', tool_use_id: 'toolu_1', content: 'README text'}]}
+            ]
+        }),
+        isResponsesWebSocketUpstream: () => true,
+        chatRequestToRelayResponses: () => {
+            throw new Error('signed thinking must not be bridged through Chat');
+        },
+        anthropicRequestToResponses: (payload) => {
+            directConverterCalled = true;
+            assert.equal(payload.system, 'rule');
+            assert.deepEqual(payload.messages[0], {
+                role: 'user',
+                content: [{type: 'text', text: 'Read README\n'}]
+            });
+            return {
+                model: payload.model,
+                stream: payload.stream,
+                input: [
+                    {role: 'user', content: [{type: 'input_text', text: 'Read README'}]},
+                    {
+                        type: 'reasoning',
+                        summary: [{type: 'summary_text', text: 'Need file.'}],
+                        x_relay_anthropic_thinking: [
+                            {type: 'thinking', thinking: 'Need file.', signature: 'sig_1'}
+                        ]
+                    },
+                    {type: 'function_call', call_id: 'toolu_1', name: 'read_file', arguments: '{"path":"README.md"}'},
+                    {type: 'function_call_output', call_id: 'toolu_1', output: 'README text'}
+                ]
+            };
+        },
+        prepareResponsesContinuationPayload: ({request, conversationKey}) => ({
+            request,
+            conversationKey,
+            deltaAttempted: false,
+            deltaApplied: false,
+            autoLink: false
+        }),
+        createResponsesWebSocket: (payload, upstream, meta) => {
+            capturedCreatePayload = payload;
+            return {payload, upstream, meta};
+        },
+        collectResponsesWebSocketResponse: async () => ({
+            id: 'resp_1',
+            usage: {input_tokens: 1, output_tokens: 2}
+        }),
+        recordCompletedResponseState: (...args) => deps.calls.push(['recordCompletedResponseState', args]),
+        recordResponsesUsage: (...args) => deps.calls.push(['recordResponsesUsage', args]),
+        responsesResponseToRelayChat: (response) => ({id: `chat_from_${response.id}`})
+    });
+    const handleAnthropicMessages = createRelayAnthropicMessagesHandler(deps);
+
+    await handleAnthropicMessages({headers: {}}, res);
+
+    assert.equal(directConverterCalled, true);
+    assert.deepEqual(
+        capturedCreatePayload.input[1].x_relay_anthropic_thinking,
+        [{type: 'thinking', thinking: 'Need file.', signature: 'sig_1'}]
+    );
+    assert.deepEqual(res.calls, [['json', 200, {type: 'message', source: 'chat_from_resp_1'}]]);
+});
+
 test('handleAnthropicMessages disables Responses WS continuation when upstream opts out', async () => {
     const res = createResponse();
     let capturedContinuationOptions = null;

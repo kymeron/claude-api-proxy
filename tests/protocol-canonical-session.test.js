@@ -68,6 +68,34 @@ test('canonical session maps Responses call_id and item_id separately', () => {
     assert.equal(toolResult.call_id, 'call_resp_1');
 });
 
+test('canonical session restores relay Anthropic thinking signatures from Responses input', () => {
+    const session = canonicalFromResponsesRequest({
+        model: 'gpt-test',
+        input: [
+            {role: 'user', content: [{type: 'input_text', text: 'Read README'}]},
+            {
+                type: 'reasoning',
+                summary: [{type: 'summary_text', text: 'Need file contents.'}],
+                x_relay_anthropic_thinking: [
+                    {type: 'thinking', thinking: 'Need file contents.', signature: 'sig_1'}
+                ]
+            },
+            {type: 'function_call', call_id: 'toolu_1', name: 'read_file', arguments: '{"path":"README.md"}'},
+            {type: 'function_call_output', call_id: 'toolu_1', output: 'README text'}
+        ]
+    }, {tenantId: 'tenant-a', conversationKey: 'conv-a'});
+
+    const anthropic = renderCanonicalToAnthropic(session);
+
+    assert.deepEqual(anthropic.messages[1].content[0], {
+        type: 'thinking',
+        thinking: 'Need file contents.',
+        signature: 'sig_1'
+    });
+    assert.equal(anthropic.messages[1].content[1].type, 'tool_use');
+    assert.equal(anthropic.messages[2].content[0].tool_use_id, 'toolu_1');
+});
+
 test('canonical session maps Anthropic tool_use_id to every renderer', () => {
     const session = canonicalFromAnthropicRequest({
         model: 'claude-test',

@@ -140,20 +140,34 @@ export class RelayConversationStore {
         const base = chatRequestFromState(state, {model: request?.model, messages: []});
         const chatRequest = mergeChatRequests(base, visibleChat, request);
         const resolvedConversationKey = state?.conversationKey || conversationKey;
+        const visibleCanonical = canonicalFromResponsesRequest(request || {}, {
+            tenantId,
+            conversationKey: resolvedConversationKey
+        });
+        const useVisibleCanonical = shouldUseVisibleResponsesCanonical({
+            previousResponseId,
+            base,
+            visibleChat,
+            request
+        });
 
+        let savedState = null;
         if (resolvedConversationKey) {
-            this.saveChatRequest({
+            savedState = this.saveChatRequest({
                 tenantId,
                 conversationKey: resolvedConversationKey,
                 request: chatRequest,
-                canonicalMappingSession: canonicalFromResponsesRequest(request || {}, {
-                    tenantId,
-                    conversationKey: resolvedConversationKey
-                })
+                canonicalSession: useVisibleCanonical ? visibleCanonical : undefined,
+                canonicalMappingSession: visibleCanonical
             });
         }
 
-        return {conversationKey: resolvedConversationKey, chatRequest};
+        return {
+            conversationKey: resolvedConversationKey,
+            chatRequest,
+            canonicalSession: savedState?.canonicalSession
+                || (useVisibleCanonical ? visibleCanonical : state?.canonicalSession || null)
+        };
     }
 
     prepareResponsesPassthrough({tenantId, conversationKey, request}) {
@@ -848,6 +862,21 @@ function shouldReplaceWithVisibleHistory(baseMessages, visibleMessages) {
     // payload is full history. Prefer it over stored synthetic reminders that may
     // be absent from this request and would break ordinary prefix matching.
     return visibleMessages.slice(visibleOffset + 1).some(isHistoryBearingMessage);
+}
+
+function shouldUseVisibleResponsesCanonical({previousResponseId, base, visibleChat, request}) {
+    const baseMessages = base?.messages || [];
+    const visibleMessages = visibleChat?.messages || [];
+    if (!hasMessages(base)) return true;
+    if (!previousResponseId && responsesRequestHasRelayAnthropicThinking(request)) return true;
+    return shouldReplaceWithVisibleHistory(baseMessages, visibleMessages);
+}
+
+function responsesRequestHasRelayAnthropicThinking(request = {}) {
+    return (request.input || []).some((item) =>
+        Array.isArray(item?.x_relay_anthropic_thinking)
+        && item.x_relay_anthropic_thinking.length > 0
+    );
 }
 
 function isHistoryBearingMessage(message) {

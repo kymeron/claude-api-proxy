@@ -273,18 +273,20 @@ function anthropicMessagesToResponsesInput(messages) {
         }
 
         if (message.role === 'assistant' && Array.isArray(message.content)) {
-            const textBlocks = message.content.filter((block) => block?.type === 'text' || block?.type === 'thinking');
+            const thinkingBlocks = message.content.filter((block) =>
+                block?.type === 'thinking' || block?.type === 'redacted_thinking'
+            );
+            const textBlocks = message.content.filter((block) => block?.type === 'text');
             const toolUseBlocks = message.content.filter((block) => block?.type === 'tool_use');
+
+            if (thinkingBlocks.length > 0) {
+                input.push(anthropicThinkingBlocksToResponsesReasoning(thinkingBlocks));
+            }
 
             if (textBlocks.length > 0) {
                 input.push({
                     role: 'assistant',
-                    content: anthropicContentToResponsesContent(
-                        textBlocks.map((block) => block.type === 'thinking'
-                            ? {type: 'text', text: block.thinking || ''}
-                            : block),
-                        'output_text'
-                    )
+                    content: anthropicContentToResponsesContent(textBlocks, 'output_text')
                 });
             }
 
@@ -309,6 +311,35 @@ function anthropicMessagesToResponsesInput(messages) {
     }
 
     return input;
+}
+
+function anthropicThinkingBlocksToResponsesReasoning(blocks) {
+    const relayThinking = blocks
+        .map((block) => {
+            if (block?.type === 'thinking') {
+                return {
+                    type: 'thinking',
+                    thinking: block.thinking || '',
+                    ...(block.signature ? {signature: block.signature} : {})
+                };
+            }
+            if (block?.type === 'redacted_thinking') {
+                return {
+                    type: 'redacted_thinking',
+                    data: block.data || ''
+                };
+            }
+            return null;
+        })
+        .filter(Boolean);
+    const summary = relayThinking
+        .filter((block) => block.type === 'thinking' && block.thinking)
+        .map((block) => ({type: 'summary_text', text: block.thinking}));
+    return {
+        type: 'reasoning',
+        summary,
+        x_relay_anthropic_thinking: relayThinking
+    };
 }
 
 function anthropicSystemToResponsesInstructions(system) {

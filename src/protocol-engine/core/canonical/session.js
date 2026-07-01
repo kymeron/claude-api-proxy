@@ -61,6 +61,11 @@ function reasoningBlock(text, extra = {}) {
     return {type: 'reasoning', text: String(text), ...extra};
 }
 
+function redactedThinkingBlock(data, extra = {}) {
+    if (!data) return null;
+    return {type: 'redacted_thinking', data: String(data), ...extra};
+}
+
 function definedFields(value) {
     return Object.fromEntries(
         Object.entries(value).filter(([, fieldValue]) => fieldValue !== undefined && fieldValue !== null && fieldValue !== '')
@@ -79,6 +84,9 @@ function contentToBlocks(content, defaultTextType = 'text') {
         if (!part || typeof part !== 'object') return null;
         if (part.type === 'text' || part.type === 'input_text' || part.type === 'output_text') {
             return textBlock(part.text || part.input_text || part.output_text || '');
+        }
+        if (part.type === 'redacted_thinking') {
+            return redactedThinkingBlock(part.data);
         }
         if (part.type === 'image_url') {
             return {type: 'image', url: part.image_url?.url || part.image_url || ''};
@@ -419,10 +427,8 @@ export function canonicalFromResponsesRequest(responsesReq = {}, meta = {}) {
                 continue;
             }
             if (item.type === 'reasoning') {
-                const text = Array.isArray(item.summary)
-                    ? item.summary.map((part) => part.text || '').filter(Boolean).join('\n')
-                    : '';
-                addResponsesTurn(session, 'assistant', [reasoningBlock(text, {responsesItemId: item.id})]);
+                const blocks = responsesReasoningItemToBlocks(item);
+                addResponsesTurn(session, 'assistant', blocks);
                 continue;
             }
             if (item.type === 'function_call') {
@@ -456,6 +462,30 @@ export function canonicalFromResponsesRequest(responsesReq = {}, meta = {}) {
         }
     }
     return session;
+}
+
+function responsesReasoningItemToBlocks(item = {}) {
+    if (Array.isArray(item.x_relay_anthropic_thinking) && item.x_relay_anthropic_thinking.length > 0) {
+        return item.x_relay_anthropic_thinking
+            .map((block) => {
+                if (block?.type === 'thinking') {
+                    return reasoningBlock(block.thinking || '', {
+                        responsesItemId: item.id,
+                        signature: block.signature
+                    });
+                }
+                if (block?.type === 'redacted_thinking') {
+                    return redactedThinkingBlock(block.data || '', {responsesItemId: item.id});
+                }
+                return null;
+            })
+            .filter(Boolean);
+    }
+
+    const text = Array.isArray(item.summary)
+        ? item.summary.map((part) => part.text || '').filter(Boolean).join('\n')
+        : '';
+    return [reasoningBlock(text, {responsesItemId: item.id})].filter(Boolean);
 }
 
 export function canonicalFromAnthropicRequest(anthropicReq = {}, meta = {}) {
@@ -706,7 +736,23 @@ export function renderCanonicalToResponses(session = {}) {
                 input.push({
                     type: 'reasoning',
                     ...(block.responsesItemId ? {id: block.responsesItemId} : {}),
-                    summary: [{type: 'summary_text', text: block.text || ''}]
+                    summary: [{type: 'summary_text', text: block.text || ''}],
+                    ...(block.signature ? {
+                        x_relay_anthropic_thinking: [{
+                            type: 'thinking',
+                            thinking: block.text || '',
+                            signature: block.signature
+                        }]
+                    } : {})
+                });
+            } else if (block.type === 'redacted_thinking') {
+                input.push({
+                    type: 'reasoning',
+                    summary: [],
+                    x_relay_anthropic_thinking: [{
+                        type: 'redacted_thinking',
+                        data: block.data || ''
+                    }]
                 });
             }
         }
@@ -753,6 +799,8 @@ function blocksToAnthropicContent(blocks) {
     for (const block of blocks || []) {
         if (block.type === 'reasoning') {
             content.push({type: 'thinking', thinking: block.text || '', ...(block.signature ? {signature: block.signature} : {})});
+        } else if (block.type === 'redacted_thinking') {
+            content.push({type: 'redacted_thinking', data: block.data || ''});
         } else if (block.type === 'text') {
             content.push({type: 'text', text: block.text || ''});
         } else if (block.type === 'image') {

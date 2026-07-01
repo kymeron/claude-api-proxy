@@ -6,6 +6,7 @@ import {
     RelayStateMissingError
 } from '../src/services/session/conversation-state.js';
 import {prepareResponsesContinuationPayload} from '../src/services/session/responses-continuation.js';
+import {renderCanonicalToAnthropic} from '../src/protocol-engine/core/canonical/session.js';
 
 async function collect(iterable) {
     const events = [];
@@ -337,6 +338,65 @@ test('handleRelayResponsesWS hydrates tool-result deltas before Anthropic fallba
         );
         assert.equal(capturedChatPayload.messages[1].tool_calls[0].id, 'call_read');
         assert.equal(capturedChatPayload.messages[2].tool_call_id, 'call_read');
+    } finally {
+        store.dispose();
+    }
+});
+
+test('handleRelayResponsesWS preserves signed thinking in Anthropic fallback payload', async () => {
+    const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
+    const tenantId = 42;
+    let capturedAnthropicPayload = null;
+
+    try {
+        const deps = createBaseDeps({
+            isAnthropicUpstream: () => true,
+            relayConversationStore: store,
+            chatRequestToAnthropic: () => {
+                throw new Error('signed thinking must not be bridged through Chat');
+            },
+            renderCanonicalToAnthropic,
+            createAnthropicMessages: (payload, upstream, meta) => {
+                capturedAnthropicPayload = payload;
+                return {payload, upstream, meta};
+            },
+            getAnthropicRequestHeaders: () => ({}),
+            createChatStreamAccumulator: () => ({
+                feed: () => {},
+                toChatResponse: () => ({choices: [{message: {role: 'assistant', content: 'ok'}}]})
+            }),
+            streamAnthropicSSEToChatChunks: async function* () {
+                yield {id: 'chunk_1'};
+            },
+            canonicalFromAnthropicStreamChatResponse: () => null
+        });
+        const handleRelayResponsesWS = createRelayResponsesWebSocketHandler(deps);
+        const req = {tenantId};
+
+        await handleRelayResponsesWS({id: 'client'}, req);
+        await collect(deps.capturedOptions.handleRequest({
+            model: 'gpt-test',
+            input: [
+                {role: 'user', content: [{type: 'input_text', text: 'Read README'}]},
+                {
+                    type: 'reasoning',
+                    summary: [{type: 'summary_text', text: 'Need file.'}],
+                    x_relay_anthropic_thinking: [
+                        {type: 'thinking', thinking: 'Need file.', signature: 'sig_1'}
+                    ]
+                },
+                {type: 'function_call', call_id: 'toolu_1', name: 'read_file', arguments: '{"path":"README.md"}'},
+                {type: 'function_call_output', call_id: 'toolu_1', output: 'README text'}
+            ]
+        }, null, {signal: {aborted: false}}));
+
+        assert.deepEqual(capturedAnthropicPayload.messages[1].content[0], {
+            type: 'thinking',
+            thinking: 'Need file.',
+            signature: 'sig_1'
+        });
+        assert.equal(capturedAnthropicPayload.messages[1].content[1].type, 'tool_use');
+        assert.equal(capturedAnthropicPayload.messages[2].content[0].tool_use_id, 'toolu_1');
     } finally {
         store.dispose();
     }
