@@ -378,6 +378,80 @@ test('prepareResponsesContinuationPayload resets provider chain when previous_re
     assert.match(logs.join('\n'), /provider chain input items 1001\+1=1002 exceeds limit 1000/);
 });
 
+test('prepareResponsesContinuationPayload uses covered full-history length when stored snapshot is trimmed', () => {
+    const store = new RelayConversationStore({
+        ttlMs: 60_000,
+        cleanupIntervalMs: 0,
+        maxStoredChatMessages: 200,
+        maxCanonicalTurns: 200
+    });
+    const tenantId = 'tenant-a';
+    const conversationKey = 'conv-a';
+    const logs = [];
+
+    const previousMessages = Array.from({length: 1000}, (_, index) => ({
+        role: 'user',
+        content: `question ${index}`
+    }));
+    store.saveChatRequest({
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'client-model',
+            messages: previousMessages
+        }
+    });
+    store.recordResponsesResponse({
+        tenantId,
+        conversationKey,
+        response: {
+            id: 'resp_trimmed_chain',
+            model: 'client-model',
+            output: [{
+                type: 'message',
+                role: 'assistant',
+                content: [{type: 'output_text', text: 'previous answer'}]
+            }]
+        }
+    });
+
+    const previousInput = [
+        ...previousMessages.map((message) => ({
+            role: 'user',
+            content: [{type: 'input_text', text: message.content}]
+        })),
+        {role: 'assistant', content: [{type: 'output_text', text: 'previous answer'}]}
+    ];
+    const result = prepareResponsesContinuationPayload({
+        conversationStore: store,
+        tenantId,
+        conversationKey,
+        request: {
+            model: 'glm-5.2',
+            input: [
+                ...previousInput,
+                {role: 'user', content: [{type: 'input_text', text: 'latest question'}]}
+            ]
+        },
+        requestType: 'ResponsesWS',
+        logger: {info: (message) => logs.push(message)}
+    });
+
+    assert.equal(result.deltaAttempted, true);
+    assert.equal(result.deltaApplied, false);
+    assert.equal(result.chainReset, true);
+    assert.equal(result.chainInputLength, 1002);
+    assert.equal(result.autoLink, false);
+    assert.equal(result.truncated, true);
+    assert.equal('previous_response_id' in result.request, false);
+    assert.equal(result.request.input.length, 500);
+    assert.deepEqual(result.request.input.at(-1), {
+        role: 'user',
+        content: [{type: 'input_text', text: 'latest question'}]
+    });
+    assert.match(logs.join('\n'), /provider chain input items 1001\+1=1002 exceeds limit 1000/);
+});
+
 test('prepareResponsesContinuationPayload ignores changed leading system reminder for delta coverage', () => {
     const store = new RelayConversationStore({ttlMs: 60_000, cleanupIntervalMs: 0});
     const tenantId = 'tenant-a';

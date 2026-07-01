@@ -278,7 +278,7 @@ function selectBestContinuationDelta(input, candidates) {
         const matched = {
             ...delta,
             responseId: candidate.responseId,
-            previousInputLength: candidate.input.length,
+            previousInputLength: delta.coveredLength,
             emptyDelta: delta.retainedLength <= 0
         };
         if (!best || matched.coveredLength > best.coveredLength) {
