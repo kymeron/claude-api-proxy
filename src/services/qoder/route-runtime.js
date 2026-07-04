@@ -22,8 +22,19 @@ import {resolveQoderConversationId as resolveConversationId} from './conversatio
 import {createQoderChatCompletionsHandler} from './chat-completions-handler.js';
 import {createQoderAnthropicMessagesHandler} from './anthropic-messages-handler.js';
 import {createQoderMetadataHandlers} from './metadata-handler.js';
+import {createQoderResponsesCompactHandler} from './responses-compact-handler.js';
+import {createQoderResponsesAPIHandler} from './responses-api-handler.js';
+import {createQoderResponsesWebSocketHandler} from './responses-websocket-handler.js';
 import {anthropicToOpenAI, openAIToAnthropic} from './anthropic-adapter.js';
 import {sanitizeAnthropicPayload as defaultSanitizeAnthropicPayload} from './protocol-adapter.js';
+import {
+    chatResponseToCompact,
+    chatResponseToResponses,
+    compactRequestToChat,
+    createChatToResponsesStreamBridge,
+    responsesRequestToChat
+} from './protocol-adapter.js';
+import {handleWSConnection} from '../shared/index.js';
 
 /**
  * 读取 HTTP 请求体（UTF-8 字符串）
@@ -121,14 +132,49 @@ export function createQoderRouteRuntime({
         logger
     });
 
-    // === P4 Responses handler（P4 注入；未注入时返回 503） ===
-    const notReadyHandler = (req, res) => {
-        sendOpenAIError(res, 503, 'Qoder Responses handler not yet wired (P4 in progress)');
-    };
+    // === P4 Responses handler ===
+    const handleResponsesCompact = handlers.handleResponsesCompact || createQoderResponsesCompactHandler({
+        authenticateAndGetCredential,
+        tenantManager,
+        sendOpenAIError,
+        sendJson,
+        upstreamErrorStatus,
+        parseBody: readQoderRequestBody,
+        resolveConversationId,
+        compactRequestToChat,
+        mapModelName,
+        recordUsage: recordQoderUsage,
+        chatResponseToCompact,
+        logger
+    });
 
-    const handleResponsesCompact = handlers.handleResponsesCompact || notReadyHandler;
-    const handleResponsesAPI = handlers.handleResponsesAPI || notReadyHandler;
-    const handleQoderResponsesWS = handlers.handleQoderResponsesWS || (() => {});
+    const handleResponsesAPI = handlers.handleResponsesAPI || createQoderResponsesAPIHandler({
+        authenticateAndGetCredential,
+        tenantManager,
+        sendOpenAIError,
+        sendJson,
+        upstreamErrorStatus,
+        parseBody: readQoderRequestBody,
+        resolveConversationId,
+        responsesRequestToChat,
+        mapModelName,
+        createChatToResponsesBridge: createChatToResponsesStreamBridge,
+        recordUsage: recordQoderUsage,
+        chatResponseToResponses,
+        logger
+    });
+
+    const handleQoderResponsesWS = handlers.handleQoderResponsesWS || createQoderResponsesWebSocketHandler({
+        handleWSConnection,
+        resolveCredentialContext: authenticateAndGetCredential,
+        tenantManager,
+        resolveConversationId,
+        responsesRequestToChat,
+        mapModelName,
+        createChatToResponsesBridge: createChatToResponsesStreamBridge,
+        recordUsage: recordQoderUsage,
+        logger
+    });
 
     function handleRoot(req, res) {
         const tenantCount = tenantManager.listTenants().length;
