@@ -1,9 +1,8 @@
 /**
  * Qoder 路由运行时工厂
  *
- * 在 P3 / P4 完成 handler 之前，这里只暴露必要的依赖装配接口。
- * 当 P3 把 chat-completions-handler / anthropic-messages-handler / metadata-handler
- * 创建好后，会把对应的 handler 注册进 route 函数中。
+ * P3 阶段：在工厂内部装配所有基础 handler（chat / anthropic / metadata）。
+ * P4 阶段：通过 `handlers` 注入 Responses 系列（compact / api / ws）。
  *
  * @module services/qoder/route-runtime
  */
@@ -20,6 +19,11 @@ import {
 } from './response-writer.js';
 import {mapQoderModelName as mapModelName} from './model-mapping.js';
 import {resolveQoderConversationId as resolveConversationId} from './conversation-key.js';
+import {createQoderChatCompletionsHandler} from './chat-completions-handler.js';
+import {createQoderAnthropicMessagesHandler} from './anthropic-messages-handler.js';
+import {createQoderMetadataHandlers} from './metadata-handler.js';
+import {anthropicToOpenAI, openAIToAnthropic} from './anthropic-adapter.js';
+import {sanitizeAnthropicPayload as defaultSanitizeAnthropicPayload} from './protocol-adapter.js';
 
 /**
  * 读取 HTTP 请求体（UTF-8 字符串）
@@ -39,24 +43,24 @@ export async function readQoderRequestBody(req) {
  * @param {Object} options.tenantManager - 租户管理器（unifiedTenantManager）
  * @param {Function} options.resolveCredential - 从 headers + 凭证列表解析单个凭证
  * @param {Object} [options.logger] - 日志器
- * @param {Object} [options.handlers] - 由 P3/P4 注入的 handler 集合：
- *   - handleOpenAIChatCompletions
- *   - handleAnthropicMessages
+ * @param {Object} [options.handlers] - 由 P4 注入的 handler 集合：
  *   - handleResponsesCompact
  *   - handleResponsesAPI
  *   - handleQoderResponsesWS
- *   - handleOpenAIModels
- *   - handleAnthropicCountTokens
- *   - handleAnthropicModels
+ * @param {Function} [options.sanitizeAnthropicPayload] - Anthropic payload 清洗（默认从 protocol-adapter 拿）
  */
 export function createQoderRouteRuntime({
     tenantManager,
     resolveCredential,
     logger = defaultLogger,
-    handlers = {}
+    handlers = {},
+    sanitizeAnthropicPayload: sanitizeAnthropicPayloadOpt
 } = {}) {
     if (!tenantManager) {
         throw new Error('createQoderRouteRuntime requires a tenantManager');
+    }
+    if (typeof resolveCredential !== 'function') {
+        throw new Error('createQoderRouteRuntime requires resolveCredential');
     }
     if (typeof resolveCredential !== 'function') {
         throw new Error('createQoderRouteRuntime requires resolveCredential');
@@ -70,23 +74,61 @@ export function createQoderRouteRuntime({
     const resolveTenantManager = createQoderTenantCredentialManagerResolver({credentialService});
     const {recordUsage: recordQoderUsage} = createQoderUsageRecorder(tenantManager);
 
-    // handler 默认值：未注入则返回 503，保证路由层不会因为 P3 没完成而崩
+    // === 装配 P3 handler ===
+    const sanitizeAnthropicPayload = sanitizeAnthropicPayloadOpt || defaultSanitizeAnthropicPayload;
+
+    const handleOpenAIChatCompletions = createQoderChatCompletionsHandler({
+        authenticateAndGetCredential,
+        tenantManager,
+        sendOpenAIError,
+        sendJson,
+        upstreamErrorStatus,
+        parseBody: readQoderRequestBody,
+        mapModelName,
+        resolveConversationId,
+        recordUsage: recordQoderUsage,
+        logger
+    });
+
+    const handleAnthropicMessages = createQoderAnthropicMessagesHandler({
+        authenticateAndGetCredential,
+        tenantManager,
+        sendAnthropicError,
+        sendJson,
+        upstreamErrorStatus,
+        parseBody: readQoderRequestBody,
+        sanitizeAnthropicPayload,
+        anthropicToOpenAI,
+        mapModelName,
+        resolveConversationId,
+        openAIToAnthropic,
+        recordUsage: recordQoderUsage,
+        logger
+    });
+
+    const {
+        handleOpenAIModels,
+        handleAnthropicCountTokens,
+        handleAnthropicModels
+    } = createQoderMetadataHandlers({
+        authenticateAndGetCredential,
+        sendOpenAIError,
+        sendAnthropicError,
+        sendJson,
+        upstreamErrorStatus,
+        parseBody: readQoderRequestBody,
+        sanitizeAnthropicPayload,
+        logger
+    });
+
+    // === P4 Responses handler（P4 注入；未注入时返回 503） ===
     const notReadyHandler = (req, res) => {
-        sendOpenAIError(res, 503, 'Qoder handler not yet wired (P3 in progress)');
+        sendOpenAIError(res, 503, 'Qoder Responses handler not yet wired (P4 in progress)');
     };
 
-    const handleOpenAIChatCompletions = handlers.handleOpenAIChatCompletions || notReadyHandler;
-    const handleAnthropicMessages = handlers.handleAnthropicMessages || notReadyHandler;
     const handleResponsesCompact = handlers.handleResponsesCompact || notReadyHandler;
     const handleResponsesAPI = handlers.handleResponsesAPI || notReadyHandler;
     const handleQoderResponsesWS = handlers.handleQoderResponsesWS || (() => {});
-    const handleOpenAIModels = handlers.handleOpenAIModels || ((req, res) => {
-        sendJson(res, 200, {object: 'list', data: []});
-    });
-    const handleAnthropicCountTokens = handlers.handleAnthropicCountTokens || ((req, res) => {
-        sendJson(res, 200, {input_tokens: 0});
-    });
-    const handleAnthropicModels = handlers.handleAnthropicModels || handleOpenAIModels;
 
     function handleRoot(req, res) {
         const tenantCount = tenantManager.listTenants().length;
