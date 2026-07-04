@@ -123,14 +123,14 @@ test('unified admin console includes all service management surfaces', () => {
     assert.match(adminHtml, /function syncHashRoute\(/);
     assert.match(adminHtml, /function syncStatsHash\(/);
     assert.doesNotMatch(adminHtml, /history\.pushState|history\.replaceState/);
-    assert.match(adminHtml, /\['relay','codebuddy','copilot'\]\.includes\(tab\)\)\{setNav\(tab\);if\(!options\.skipHash\)syncHashRoute\(tab\)/);
+    assert.match(adminHtml, /\['relay','codebuddy','copilot','qoder'\]\.includes\(tab\)\)\{setNav\(tab\);if\(!options\.skipHash\)syncHashRoute\(tab\)/);
     assert.doesNotMatch(adminHtml, /syncHashRoute\('console'/);
     assert.doesNotMatch(adminHtml, /tab==='overview'\?'relay':tab/);
     assert.match(adminHtml, /function loadServiceStats\(type\)/);
     assert.match(adminHtml, /\/public\/js\/echarts\.min\.js/);
     assert.match(adminHtml, /function showFeedback\(\)/);
     assert.match(adminHtml, /function showStats\(\)/);
-    assert.match(adminHtml, /const consoleTitle=\{relay:'Relay',codebuddy:'CodeBuddy',copilot:'Copilot'\}\[tab\]\|\|'服务管理'/);
+    assert.match(adminHtml, /const consoleTitle=\{relay:'Relay',codebuddy:'CodeBuddy',copilot:'Copilot',qoder:'Qoder'\}\[tab\]\|\|'服务管理'/);
     assert.doesNotMatch(adminHtml, /textContent=tab==='overview'\?'APIKey':'服务管理'/);
     assert.match(adminHtml, /const ADMIN_STATS_TABS=\[\['monthly','月度统计'\],\['model-cache','模型分析'\]\]/);
     assert.doesNotMatch(adminHtml, /\['trend','用户趋势'\]|\['coach','使用建议'\]|趋势和使用建议|用户趋势/);
