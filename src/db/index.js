@@ -31,10 +31,12 @@ export async function initDb() {
     await sequelize.authenticate();
     await ensureTenantCredentialColumns();
     await ensureCopilotCredentialColumns();
+    await ensureQoderCredentialColumns();
     await ensureTenantUpstreamColumns();
     await sequelize.sync();
     await ensureTenantCredentialColumns();
     await ensureCopilotCredentialColumns();
+    await ensureQoderCredentialColumns();
     await ensureTenantUpstreamColumns();
 }
 
@@ -72,6 +74,30 @@ async function ensureCopilotCredentialColumns() {
         skip_tls_verify: {type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false},
         account_type: {type: DataTypes.STRING, allowNull: false, defaultValue: 'individual'},
         vscode_version: {type: DataTypes.STRING, allowNull: false, defaultValue: '1.109.2'},
+        is_active: {type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false},
+        sort_order: {type: DataTypes.INTEGER, allowNull: false, defaultValue: 0}
+    };
+
+    for (const [name, definition] of Object.entries(definitions)) {
+        if (!columns[name]) await queryInterface.addColumn(table, name, definition);
+    }
+}
+
+async function ensureQoderCredentialColumns() {
+    const queryInterface = sequelize.getQueryInterface();
+    const table = 'tenant_qoder_credentials';
+    let columns;
+    try {
+        columns = await queryInterface.describeTable(table);
+    } catch {
+        return;
+    }
+
+    const definitions = {
+        name: {type: DataTypes.STRING, allowNull: true},
+        bearer_token: {type: DataTypes.TEXT, allowNull: true},
+        backend: {type: DataTypes.STRING, allowNull: false, defaultValue: 'cn'},
+        enabled: {type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true},
         is_active: {type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false},
         sort_order: {type: DataTypes.INTEGER, allowNull: false, defaultValue: 0}
     };
