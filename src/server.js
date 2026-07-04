@@ -12,6 +12,7 @@ import logger from './utils/logger.js';
 import {routeCodebuddyRequest, handleCodebuddyResponsesWS} from './routes/codebuddy.js';
 import {routeRelayRequest, handleRelayResponsesWS} from './routes/relay.js';
 import {routeCopilotRequest, handleCopilotResponsesWS} from './routes/copilot.js';
+import {routeQoderRequest, handleQoderResponsesWS} from './routes/qoder.js';
 import {routeAdminFrontend} from './routes/dashboard-frontend.js';
 import {DASHBOARD_ENTRY_PATH, routeAuthRequest} from './routes/auth.js';
 import {routeStatsRequest} from './routes/stats.js';
@@ -31,7 +32,7 @@ const publicDir = join(__dirname, '..', 'public');
 const CODING_PROTOCOL_PREFIX = '/coding';
 const API_PREFIX = '/api';
 const API_CODING_PROTOCOL_PREFIX = '/api/coding';
-const PROTOCOL_ROUTE_PREFIXES = ['/relay', '/codebuddy', '/copilot'];
+const PROTOCOL_ROUTE_PREFIXES = ['/relay', '/codebuddy', '/copilot', '/qoder'];
 
 const MIME_TYPES = {
     '.js': 'application/javascript',
@@ -269,7 +270,7 @@ export function createServer() {
         }
 
         // 旧管理面板路径重定向
-        if (req.url.startsWith('/relayFE') || req.url.startsWith('/codebuddyFE') || req.url.startsWith('/copilotFE')) {
+        if (req.url.startsWith('/relayFE') || req.url.startsWith('/codebuddyFE') || req.url.startsWith('/copilotFE') || req.url.startsWith('/qoderFE')) {
             res.writeHead(301, {'Location': '/dashboard'});
             res.end();
             return;
@@ -353,6 +354,19 @@ export function createServer() {
             }
         }
 
+        // Qoder 路由
+        if (req.url.startsWith('/qoder')) {
+            try {
+                if (!requireApiAuth(req, res, unifiedTenantManager, 'qoder')) return;
+                await routeQoderRequest(req, res);
+                return;
+            } catch (err) {
+                logger.error('Qoder route error:', err);
+                sendError(res, 500, 'Internal server error');
+                return;
+            }
+        }
+
         // 根路径统一进入管理控制台；未登录时先进入登录页
         if (req.method === 'GET' && new URL(req.url, `http://${req.headers.host}`).pathname === '/') {
             const location = getSessionUser(req).authenticated ? DASHBOARD_ENTRY_PATH : '/login';
@@ -386,7 +400,8 @@ export function createServer() {
         const wsRoutes = {
             '/relay/v1/responses': handleRelayResponsesWS,
             '/codebuddy/v1/responses': handleCodebuddyResponsesWS,
-            '/copilot/v1/responses': handleCopilotResponsesWS
+            '/copilot/v1/responses': handleCopilotResponsesWS,
+            '/qoder/v1/responses': handleQoderResponsesWS
         };
 
         const handler = wsRoutes[pathname];
