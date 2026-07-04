@@ -797,6 +797,15 @@ export function normalizeResponsesPayload(payload, meta = {}) {
         }
     }
 
+    // 强制 store:true：
+    // responses 协议的 previous_response_id 续接依赖上游服务端存储。
+    // codex 等客户端默认 store:false，若原样透传，首响不会被上游保存，
+    // 后续轮次用 previous_response_id 引用必然 404 PreviousResponseNotFound。
+    // 首响（不带 previous_response_id）才是建立存储的那一轮，必须 store:true；
+    // 续接轮（带 previous_response_id）同样需要存住本轮以供再后续引用。
+    // 本函数仅服务于 responses HTTP 上游，强制 true 安全。
+    ordered.store = true;
+
     return ordered;
 }
 
@@ -820,6 +829,20 @@ export function openAIToAnthropic(openAIResponse, options = {}) {
 
     const message = choice.message || {};
     const content = [];
+
+    // 恢复 reasoning_content → thinking 块（chat 上游 reasoning 无签名来源，注入占位签名）
+    const reasoningText = message.reasoning_content
+        || (typeof message.thinking === 'string' ? message.thinking : null)
+        || (typeof message.thinking === 'object' && message.thinking !== null ? message.thinking.content : null)
+        || (typeof message.reasoning === 'string' ? message.reasoning : null)
+        || (typeof message.thought === 'string' ? message.thought : null);
+    if (reasoningText) {
+        content.push({
+            type: 'thinking',
+            thinking: reasoningText,
+            signature: generateId()
+        });
+    }
 
     if (message.content) {
         content.push({
