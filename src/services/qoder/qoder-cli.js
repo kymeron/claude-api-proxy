@@ -36,8 +36,8 @@ const DEFAULT_BACKEND = getQoderBackend();
 /**
  * 构造子进程环境变量
  *
- * - QODER_PAT 是 Qoder CLI 识别的 Personal Access Token 环境变量
- * - cn / global 走不同 PAT
+ * - QODER_PERSONAL_ACCESS_TOKEN 是 Qoder CLI 识别的 PAT 环境变量
+ * - 不同后端（cn / global）使用不同账号的 PAT
  * - 其他环境变量透传 PATH / HOME / LANG 等基础变量
  */
 export function buildChildEnv(credential, options = {}) {
@@ -45,47 +45,60 @@ export function buildChildEnv(credential, options = {}) {
     const backend = options.backend || credential?.backend || DEFAULT_BACKEND;
     const pat = credential?.bearer_token || '';
 
-    // 双后端共用同一个字段名，由 CLI 内部按 binary 区分
-    if (pat) env.QODER_PAT = pat;
+    // CLI 识别 QODER_PERSONAL_ACCESS_TOKEN
+    if (pat) env.QODER_PERSONAL_ACCESS_TOKEN = pat;
 
-    // 屏蔽可能干扰的代理变量（如需走代理可由调用方在外部 unset）
     return env;
 }
 
 /**
  * 构造 spawn 参数数组
  *
- * 必须按这个顺序：基础标志 → 模型 → 系统提示 → 附件 → 指令（用 `--` 分隔）
+ * 实际 CLI 接口（v1.0.37）：
+ *   qodercli -p "<prompt>" --output-format json|stream-json -m <model> \
+ *             --dangerously-skip-permissions --append-system-prompt <text> \
+ *             --attachment <file> --max-output-tokens <n>
+ *
+ * @param {Object} options
+ * @param {string} options.prompt - 发送给 CLI 的指令
+ * @param {string} options.model - CLI 模型名
+ * @param {string} [options.systemPrompt] - 追加的系统提示
+ * @param {string} [options.attachmentPath] - 附件文件路径
+ * @param {boolean}[options.stream] - 是否流式（--output-format stream-json）
+ * @param {number} [options.maxTokens] - 单条最大 token（>0 时传 --max-output-tokens）
  */
 export function buildCliArgs({prompt, model, systemPrompt, attachmentPath, stream = false, maxTokens = -1}) {
-    const args = ['--print'];
+    const args = [];
 
-    // 输出格式：流式 / 非流式
+    // 非交互模式（必须）
+    args.push('-p');
+
+    // 输出格式
     args.push('--output-format', stream ? 'stream-json' : 'json');
 
     // 模型
-    if (model) args.push('--model', model);
+    if (model) args.push('-m', model);
 
-    // 跳过权限确认（非交互模式必需）
+    // 跳过权限确认
     args.push('--dangerously-skip-permissions');
 
-    // 追加系统提示（工具调用指令由 prompt-builder 生成）
+    // 追加系统提示
     if (systemPrompt) {
         args.push('--append-system-prompt', systemPrompt);
     }
 
-    // 附件：base64 / 文件路径通过 --attachment 传入，避免命令行过长
+    // 附件
     if (attachmentPath) {
         args.push('--attachment', attachmentPath);
     }
 
-    // 单条最大 token（CLI 支持 --max-tokens，-1 时不传）
+    // 单条最大 token
     if (typeof maxTokens === 'number' && maxTokens > 0) {
-        args.push('--max-tokens', String(maxTokens));
+        args.push('--max-output-tokens', String(maxTokens));
     }
 
-    // 用 `--` 把指令放在末尾，避免与上面的 flag 混淆
-    args.push('--', prompt);
+    // 指令放在参数末尾
+    args.push(prompt);
 
     return args;
 }
@@ -308,7 +321,14 @@ export function runQoderCliStream({prompt, model, systemPrompt, credential, maxT
             }
 
             switch (evt.type) {
+                case 'system': {
+                    // 初始化事件：包含 tools / model / permissionMode 等元数据
+                    // 解析这个事件可以拿到 CLI 实际生效的工具列表，但目前只记录日志
+                    logger.debug(`Qoder CLI init: model=${evt.model}, tools=${(evt.tools || []).length}`);
+                    break;
+                }
                 case 'assistant': {
+                    // 流式 assistant 消息
                     const message = evt.message || {};
                     const content = Array.isArray(message.content) ? message.content : [];
                     for (const block of content) {
@@ -316,6 +336,7 @@ export function runQoderCliStream({prompt, model, systemPrompt, credential, maxT
                             fullContent += block.text;
                             onDelta?.({type: 'content', text: block.text});
                         } else if (block?.type === 'tool_use') {
+                            // CLI 原生 tool_use（来自内置工具调用，不是客户端定义的 tools）
                             const toolCall = {
                                 id: block.id || `call_${Date.now()}_${toolCalls.length}`,
                                 name: block.name,
@@ -327,35 +348,36 @@ export function runQoderCliStream({prompt, model, systemPrompt, credential, maxT
                     }
                     break;
                 }
-                case 'tool_use': {
-                    const toolCall = {
-                        id: evt.id || `call_${Date.now()}_${toolCalls.length}`,
-                        name: evt.name,
-                        arguments: evt.input || evt.arguments || {}
-                    };
-                    toolCalls.push(toolCall);
-                    onDelta?.({type: 'tool_call', toolCall});
-                    break;
-                }
-                case 'tool_result': {
-                    onDelta?.({type: 'tool_result', content: evt.content || ''});
-                    break;
-                }
-                case 'result': {
-                    // 最终结果（部分 CLI 在流式末尾输出）
-                    if (typeof evt.result === 'string' && !fullContent) {
-                        fullContent = evt.result;
-                        onDelta?.({type: 'content', text: evt.result});
+                case 'user': {
+                    // 工具结果回传（CLI 内置工具）
+                    const message = evt.message || {};
+                    const content = Array.isArray(message.content) ? message.content : [];
+                    for (const block of content) {
+                        if (block?.type === 'tool_result') {
+                            const resultContent = typeof block.content === 'string'
+                                ? block.content
+                                : JSON.stringify(block.content || '');
+                            onDelta?.({type: 'tool_result', content: resultContent});
+                        }
                     }
                     break;
                 }
-                case 'error':
-                case 'error_event': {
-                    logger.warn(`Qoder CLI stream error event: ${JSON.stringify(evt).slice(0, 200)}`);
+                case 'result': {
+                    // 最终结果事件
+                    if (typeof evt.result === 'string') {
+                        // CLI 有时 result 字段是完整的最终输出；只有当流中没有累积内容时才使用
+                        if (!fullContent) {
+                            fullContent = evt.result;
+                            onDelta?.({type: 'content', text: evt.result});
+                        }
+                    }
+                    if (evt.usage) {
+                        onDelta?.({type: 'usage', usage: evt.usage});
+                    }
                     break;
                 }
                 default:
-                    // 未知事件类型：尝试提取 text 字段
+                    // 未知事件：尝试提取 text/content
                     if (typeof evt.text === 'string') {
                         fullContent += evt.text;
                         onDelta?.({type: 'content', text: evt.text});
@@ -407,21 +429,27 @@ export function runQoderCliStream({prompt, model, systemPrompt, credential, maxT
 /**
  * 解析 `--output-format json` 的非流式输出
  *
- * CLI 返回结构可能是：
- *   - 顶层是 {result: "..."} 或 {content: "..."}
- *   - 顶层是 {message: {content: [...]}}
- *   - 直接的纯文本（罕见）
+ * 实际 CLI 1.0.37 返回结构：
+ *   {
+ *     "type": "result",
+ *     "subtype": "success",
+ *     "is_error": false,
+ *     "result": "实际回答内容",
+ *     "session_id": "...",
+ *     "stop_reason": "end_turn",
+ *     "usage": {input_tokens, output_tokens, ...},
+ *     ...
+ *   }
  */
 function parseNonStreamOutput(raw) {
     const trimmed = raw.trim();
     if (!trimmed) return {content: ''};
 
-    // 尝试解析为 JSON
     try {
         const parsed = JSON.parse(trimmed);
         return extractContentFromJson(parsed);
     } catch {
-        // 多行 JSON（某些 CLI 会换行输出）
+        // 容错：如果是多行 JSON，尝试截取第一段
         const firstBrace = trimmed.indexOf('{');
         if (firstBrace >= 0) {
             try {
@@ -438,10 +466,19 @@ function parseNonStreamOutput(raw) {
 function extractContentFromJson(parsed) {
     if (!parsed || typeof parsed !== 'object') return {content: ''};
 
+    // 错误情况：is_error=true，result 是错误描述
+    if (parsed.is_error && typeof parsed.result === 'string') {
+        return {content: parsed.result, isError: true};
+    }
+
+    // 正常 result 字段
     if (typeof parsed.result === 'string') return {content: parsed.result};
+
+    // 备选字段名
     if (typeof parsed.content === 'string') return {content: parsed.content};
     if (typeof parsed.text === 'string') return {content: parsed.text};
 
+    // Anthropic 风格 content blocks
     if (Array.isArray(parsed.content)) {
         const texts = parsed.content
             .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
@@ -449,6 +486,7 @@ function extractContentFromJson(parsed) {
         if (texts.length) return {content: texts.join('')};
     }
 
+    // OpenAI-style message.content
     if (parsed.message) {
         return extractContentFromJson(parsed.message);
     }

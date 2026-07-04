@@ -68,11 +68,18 @@ export function getQoderBackend() {
 }
 
 /**
- * 后端切换映射：'cn' → 'qoderclicn', 'global' → 'qodercli'
+ * 后端切换映射
+ *
+ * 现实情况：npm 包 @qoder-ai/qodercli 只提供 `qodercli` 单一二进制，
+ * 没有独立的 `qoderclicn`。后端通过环境变量 QODER_PERSONAL_ACCESS_TOKEN
+ * 关联的账号区域区分（CN vs Global），CLI 二进制不变。
+ *
+ * 为向后兼容保留 getQoderCliBinary(backend) 接口。
  */
 export function getQoderCliBinary(backend = getQoderBackend()) {
-    if (backend === 'global') return 'qodercli';
-    return 'qoderclicn';
+    // 历史 API：cn → 'qoderclicn'，但 npm 包无此二进制
+    // 当前所有 backend 都返回 'qodercli'
+    return 'qodercli';
 }
 
 /**

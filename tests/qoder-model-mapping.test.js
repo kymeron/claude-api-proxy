@@ -90,11 +90,10 @@ test('getQoderBackend - global', () => {
     else delete process.env.QODER_CLI_BACKEND;
 });
 
-test('getQoderCliBinary - cn returns qoderclicn', () => {
-    assert.equal(getQoderCliBinary('cn'), 'qoderclicn');
-});
-
-test('getQoderCliBinary - global returns qodercli', () => {
+test('getQoderCliBinary - both backends return qodercli', () => {
+    // 现实情况：@qoder-ai/qodercli npm 包只提供 qodercli 单一二进制
+    // 后端通过 PAT 账号区域区分
+    assert.equal(getQoderCliBinary('cn'), 'qodercli');
     assert.equal(getQoderCliBinary('global'), 'qodercli');
 });
 
