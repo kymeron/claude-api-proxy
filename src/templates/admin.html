@@ -504,10 +504,13 @@ function apiUrl(path){
     return origin?origin+path:path;
 }
 async function api(url,options={}){
-    const {timeoutMs,signal,...fetchOptions}=options;
+    const {timeoutMs,signal,silent401=false,...fetchOptions}=options;
     const headers=fetchOptions.body instanceof FormData?{}:{'Content-Type':'application/json'};
     const response=await fetchWithTimeout(apiUrl(url),{credentials:'include',headers,...fetchOptions,signal},timeoutMs);
-    if(response.status===401){location.href='/login';throw new Error('登录已过期');}
+    if(response.status===401){
+        if(!silent401)location.href='/login';
+        throw new Error('登录已过期');
+    }
     const text=await response.text();let data={};try{data=text?JSON.parse(text):{};}catch{data={error:text||'请求失败'};}
     if(!response.ok)throw new Error(data.error||data.message||`HTTP ${response.status}`);
     return data;
@@ -844,11 +847,18 @@ function renderQoderCredentials(){
 }
 function renderQoderModels(){
     const el=document.getElementById('qoderModelList');if(!el)return;
-    api('/qoder/v1/models').then(d=>{
-        const models=d.data||[];
-        if(!models.length){el.innerHTML='<div class="empty">暂无可用模型</div>';return;}
-        el.innerHTML='<div class="table-wrap"><table><thead><tr><th>Model ID</th><th>Owned By</th></tr></thead><tbody>'+models.map(m=>`<tr><td><code>${esc(m.id)}</code></td><td>${esc(m.owned_by||'-')}</td></tr>`).join('')+'</tbody></table></div>';
-    }).catch(()=>{el.innerHTML='<div class="empty">模型列表不可用（CLI 未安装或服务未启用）</div>';});
+    // /qoder/* 端点使用 API Key 鉴权，浏览器 fetch 不会自动带上 Authorization，
+    // 这里显式用 tenant 的统一 Key 调用，避免 401 触发 api() 跳转到 /login。
+    const apiKey=S.tenant?.api_key_plain||S.tenant?.api_key_prefix;
+    const headers=apiKey?{Authorization:`Bearer ${apiKey}`}:{};
+    fetch(apiUrl('/qoder/v1/models'),{credentials:'include',headers})
+        .then(r=>r.ok?r.json():Promise.reject(r.status))
+        .then(d=>{
+            const models=d.data||[];
+            if(!models.length){el.innerHTML='<div class="empty">暂无可用模型</div>';return;}
+            el.innerHTML='<div class="table-wrap"><table><thead><tr><th>Model ID</th><th>Owned By</th></tr></thead><tbody>'+models.map(m=>`<tr><td><code>${esc(m.id)}</code></td><td>${esc(m.owned_by||'-')}</td></tr>`).join('')+'</tbody></table></div>';
+        })
+        .catch(()=>{el.innerHTML='<div class="empty">模型列表不可用（CLI 未安装或服务未启用）</div>';});
 }
 function openQoderCredential(){
     qoderCredentialTitle.textContent='新增 Qoder PAT';
