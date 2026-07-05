@@ -26,6 +26,7 @@ const ADMIN_PAGE = readFileSync(join(__dirname, '..', 'templates', 'admin.html')
 const SERVICES = new Set(['relay', 'codebuddy', 'copilot', 'qoder']);
 
 function sendJson(res, status, data) {
+    if (res.headersSent) return;
     res.writeHead(status, {'Content-Type': 'application/json'});
     res.end(JSON.stringify(data));
 }
@@ -228,7 +229,7 @@ export async function routeAdminFrontend(req, res) {
             res.end();
             return;
         }
-        res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'});
+        res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate'});
         res.end(ADMIN_PAGE);
         return;
     }

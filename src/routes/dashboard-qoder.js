@@ -20,6 +20,7 @@ import {getQoderCredentialService} from '../services/qoder/index.js';
 const qoderCredentialService = getQoderCredentialService(unifiedTenantManager);
 
 function sendJson(res, status, data) {
+    if (res.headersSent) return;
     res.writeHead(status, {'Content-Type': 'application/json'});
     res.end(JSON.stringify(data));
 }
