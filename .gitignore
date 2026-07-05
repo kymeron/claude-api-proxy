@@ -24,3 +24,4 @@ claude-api-proxy-main
 # Copilot/Gateway token 存储目录
 .copilot/
 .gateway/
+pnpm-lock.yaml

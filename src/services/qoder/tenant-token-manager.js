@@ -51,20 +51,27 @@ class TenantTokenManager {
         return {
             name: record.name || '',
             bearer_token: record.bearer_token || '',
-            backend: record.backend || 'cn'
+            backend: record.backend || 'cn',
+            base_url: record.base_url || '',
+            user_id: record.user_id || '',
+            credential_created_at: record.credential_created_at || null
         };
     }
 
     _mapDataToRecord(data) {
+        const backend = data.backend || 'cn';
+        // 向后兼容：'intl' 映射为 'intl'（DB 已支持），'global' 也保留
         return {
             tenant_id: this.tenantId,
             name: data.name || null,
             bearer_token: data.bearer_token,
-            backend: ['cn', 'global'].includes(data.backend) ? data.backend : 'cn',
+            backend: ['cn', 'intl', 'global'].includes(backend) ? backend : 'cn',
+            base_url: data.base_url || null,
+            user_id: data.user_id || null,
             enabled: data.enabled !== false,
             is_active: !!data.is_active,
             sort_order: typeof data.sort_order === 'number' ? data.sort_order : 0,
-            credential_created_at: data.created_at || Math.floor(Date.now() / 1000)
+            credential_created_at: data.created_at || data.credential_created_at || Math.floor(Date.now() / 1000)
         };
     }
 
@@ -318,6 +325,9 @@ class TenantTokenManager {
             id: cred.id,
             name: cred.data.name || '',
             backend: cred.data.backend,
+            base_url: cred.data.base_url || '',
+            user_id: cred.data.user_id || '',
+            credential_created_at: cred.data.credential_created_at || null,
             enabled: !this.disabledIndexes.includes(index),
             hasToken: !!cred.data.bearer_token,
             tokenPreview: cred.data.bearer_token

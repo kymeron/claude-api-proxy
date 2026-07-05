@@ -8,8 +8,15 @@ export {TenantTokenManager} from './tenant-token-manager.js';
 
 export {
     QODER_MODELS,
+    BLOCKED_DOMAINS,
     getQoderModels,
     getQoderBackend,
+    getQoderBaseUrl,
+    getExtraBaseUrls,
+    getModelsForHost,
+    isPersonalHost,
+    getCustomSiteLabels,
+    getCustomSiteLabel,
     getQoderCliBinary,
     getQoderCliPath,
     getQoderDefaultModel,

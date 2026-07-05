@@ -55,38 +55,96 @@ src/
 
 ## 三、模块实现要点
 
-### 1. `config.js` — 配置模块
+### 1. `config.js` — 配置模块（参照 Codebuddy 模式）
 
-环境变量：
+#### 环境变量（.env 配置区块）
 
 ```bash
-QODER_CLI_BACKEND        # 'cn' | 'global'，默认 'cn'
-QODER_CLI_PATH           # CLI 可执行文件路径，默认自动检测
-QODER_CN_PAT             # CN 后端 Personal Access Token
-QODER_GLOBAL_PAT         # Global 后端 PAT
-QODER_MODELS             # 可用模型覆盖（JSON）
-QODER_DEFAULT_MODEL      # 默认模型，默认 'auto'
-QODER_STREAM_ENABLED     # 是否启用流式，默认 true
-QODER_TOOL_MAX_ROUNDS    # 工具调用最大轮次，默认 10
+# ================================================
+# Qoder
+# ================================================
+# 可选 cn 或 intl。cn 使用 qoderclicn，intl 使用 qodercli。
+QODER_REGION=cn
+# QODER_DEFAULT_BASE_URL=qoder.example.com
+# 控制台中非官方/自定义 Qoder 上游的显示标签，按 host 或完整 URL 映射。
+# QODER_CUSTOM_SITE_LABELS={"qoder.example.com":"自定义站"}
+# 控制台中额外展示的上游 base URL，多个值用英文逗号分隔。
+# QODER_EXTRA_BASE_URLS=https://qoder.example.com,https://qoder-intl.example.com
+# 可选：按 host 或完整 URL 覆盖模型列表。
+# QODER_MODEL_OVERRIDES={"qoder.example.com":[{"id":"custom:glm51","name":"GLM-5.1","tools":true,"vision":false}]}
+# QODER_DEFAULT_USER_ID=unknown
+# CLI 可执行文件绝对路径，留空则使用 PATH 中的 qodercli / qoderclicn
+# QODER_CLI_PATH=/usr/local/bin/qoderclicn
+# 默认模型（CLI 不识别时回退到此），默认 auto
+# QODER_DEFAULT_MODEL=auto
+# 是否启用流式响应（CLI --output-format stream-json），默认 true
+# QODER_STREAM_ENABLED=true
+# 工具调用最大轮次（CLI 不支持原生 tool_calls，需 prompt 内多轮循环），默认 10
+# QODER_TOOL_MAX_ROUNDS=10
+# 子进程超时（毫秒），默认 300000（5 分钟）
+# QODER_CLI_TIMEOUT_MS=300000
+# 工具调用 JSON 解析深度上限，默认 32
+# QODER_JSON_DEPTH_LIMIT=32
+# 单条响应最大 token 数（-1 表示由 CLI 决定），默认 -1
+# QODER_MAX_TOKENS=-1
+# 凭证存储：控制台管理 PAT，QODER_PAT 仅为环境变量覆盖（优先级低于 DB 凭证）
 ```
 
-模型列表（参考 qoder-proxy）：
+#### 配置映射（与 Codebuddy 对齐）
+
+| Codebuddy 配置 | Qoder 对应 | 说明 |
+|---------------|-----------|------|
+| `CODEBUDDY_REGION` | `QODER_REGION` | 区域切换（cn/intl）→ 决定 CLI 命令和默认上游 |
+| `CODEBUDDY_DEFAULT_BASE_URL` | `QODER_DEFAULT_BASE_URL` | 自定义上游 URL 覆盖 |
+| `CODEBUDDY_CUSTOM_SITE_LABELS` | `QODER_CUSTOM_SITE_LABELS` | 控制台显示标签（JSON: host→label） |
+| `CODEBUDDY_EXTRA_BASE_URLS` | `QODER_EXTRA_BASE_URLS` | 额外上游 URL（逗号分隔） |
+| `CODEBUDDY_MODEL_OVERRIDES` | `QODER_MODEL_OVERRIDES` | 按 host 覆盖模型列表（JSON: host→models） |
+| `CODEBUDDY_DEFAULT_USER_ID` | `QODER_DEFAULT_USER_ID` | 默认用户 ID |
+| — | `QODER_CLI_PATH` | CLI 可执行文件路径（Qoder 特有） |
+| — | `QODER_DEFAULT_MODEL` | 默认模型 |
+| — | `QODER_STREAM_ENABLED` | 是否启用流式 |
+| — | `QODER_TOOL_MAX_ROUNDS` | 工具调用最大轮次 |
+| — | `QODER_CLI_TIMEOUT_MS` | 子进程超时 |
+| — | `QODER_JSON_DEPTH_LIMIT` | JSON 解析深度上限 |
+| — | `QODER_MAX_TOKENS` | 单条响应最大 token 数 |
+
+#### 核心函数（与 Codebuddy config.js 对称）
 
 ```javascript
-const QODER_MODELS = [
-  {id: 'auto', name: 'Auto', tools: true},
-  {id: 'qwen3.7-max', name: 'Qwen3.7-Max', tools: true},
-  {id: 'glm-5.1', name: 'GLM-5.1', tools: true},
-  {id: 'kimi-k2.6', name: 'Kimi-K2.6', tools: true},
-  {id: 'qwen3.6-plus', name: 'Qwen3.6-Plus', tools: true},
-  {id: 'qwen3.6-flash', name: 'Qwen3.6-Flash', tools: false},
-  {id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', tools: true},
-  {id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', tools: false},
+// 区域 → CLI 命令映射
+getQoderCliCommand()     // cn → 'qoderclicn', intl → 'qodercli'
+getQoderBaseUrl(baseUrl) // 优先传入值 → QODER_DEFAULT_BASE_URL → 区域默认值
+getExtraBaseUrls()       // QODER_EXTRA_BASE_URLS 逗号分隔
+getCustomSiteLabels()    // QODER_CUSTOM_SITE_LABELS JSON 解析
+getHostModelOverrides()  // QODER_MODEL_OVERRIDES JSON 解析
+getModelsForHost(host)   // 特定站点覆盖 > 区域默认模型列表
+isPersonalHost(host)     // 个人版/企业版判断
+```
+
+#### 模型列表
+
+```javascript
+// 国内站可用模型（cn）
+const CN_MODELS = [
+  {id: 'auto', name: 'Auto', tools: true, vision: false},
+  {id: 'qwen3.7-max', name: 'Qwen3.7-Max', tools: true, vision: false},
+  {id: 'glm-5.1', name: 'GLM-5.1', tools: true, vision: false},
+  {id: 'kimi-k2.6', name: 'Kimi-K2.6', tools: true, vision: true},
+  {id: 'qwen3.6-plus', name: 'Qwen3.6-Plus', tools: true, vision: false},
+  {id: 'qwen3.6-flash', name: 'Qwen3.6-Flash', tools: false, vision: false},
+  {id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', tools: true, vision: false},
+  {id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', tools: false, vision: false},
   // 推理强度别名
-  {id: 'qwen3.7-max-effort-low', name: 'Qwen3.7-Max (Low)', tools: true},
-  {id: 'qwen3.7-max-effort-medium', name: 'Qwen3.7-Max (Medium)', tools: true},
-  {id: 'qwen3.7-max-effort-high', name: 'Qwen3.7-Max (High)', tools: true},
-  {id: 'qwen3.7-max-effort-max', name: 'Qwen3.7-Max (Max)', tools: true},
+  {id: 'qwen3.7-max-effort-low', name: 'Qwen3.7-Max (Low)', tools: true, vision: false},
+  {id: 'qwen3.7-max-effort-medium', name: 'Qwen3.7-Max (Medium)', tools: true, vision: false},
+  {id: 'qwen3.7-max-effort-high', name: 'Qwen3.7-Max (High)', tools: true, vision: false},
+  {id: 'qwen3.7-max-effort-max', name: 'Qwen3.7-Max (Max)', tools: true, vision: false},
+];
+
+// 国际站可用模型（intl）
+const INTL_MODELS = [
+  {id: 'auto', name: 'Auto', tools: true, vision: false},
+  // ... 根据国际站实际支持情况补充
 ];
 ```
 
@@ -188,7 +246,7 @@ export async function routeQoderRequest(req, res) {
 | 凭证管理 | 复用 TenantManager + Credential 表 | 统一多租户架构，支持凭证轮转 |
 | 模型回退 | 未知模型 → `auto` | 与 qoder-proxy 一致，避免请求失败 |
 | 附件文件 | `os.tmpdir()` + 请求后清理 | 避免 Windows 长命令行限制 |
-| 双后端支持 | `QODER_CLI_BACKEND` 切换 cn/global | 与 qoder-proxy 一致，支持国内/国际版 |
+| 双后端支持 | `QODER_REGION` 切换 cn/intl（与 Codebuddy 对齐） | 区域切换决定 CLI 命令和默认上游，与 Codebuddy 的 REGION 模式完全一致 |
 
 ---
 

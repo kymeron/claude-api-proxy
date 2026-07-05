@@ -99,7 +99,10 @@ async function ensureQoderCredentialColumns() {
         backend: {type: DataTypes.STRING, allowNull: false, defaultValue: 'cn'},
         enabled: {type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true},
         is_active: {type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false},
-        sort_order: {type: DataTypes.INTEGER, allowNull: false, defaultValue: 0}
+        sort_order: {type: DataTypes.INTEGER, allowNull: false, defaultValue: 0},
+        base_url: {type: DataTypes.STRING, allowNull: true},
+        user_id: {type: DataTypes.STRING, allowNull: true},
+        credential_created_at: {type: DataTypes.STRING, allowNull: true}
     };
 
     for (const [name, definition] of Object.entries(definitions)) {

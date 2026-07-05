@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 统一管理面板路由
  * @module routes/dashboard-frontend
  */
@@ -18,7 +18,8 @@ import {handleAdminUsers} from './dashboard-users.js';
 import {getCodebuddyAdminOptions, handleCodebuddyAdminRoute} from './dashboard-codebuddy.js';
 import {getCodebuddyCustomSiteLabels} from '../services/codebuddy/index.js';
 import {handleCopilotAdminRoute} from './dashboard-copilot.js';
-import {handleQoderAdminRoute} from './dashboard-qoder.js';
+import {getQoderAdminOptions, handleQoderAdminRoute} from './dashboard-qoder.js';
+import {getCustomSiteLabels as getQoderCustomSiteLabels} from '../services/qoder/index.js';
 import {sendNotFoundPage, wantsHtml} from './not-found.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -262,6 +263,10 @@ export async function routeAdminFrontend(req, res) {
 
     if (pathname === '/dashboard/codebuddy/options' && method === 'GET') {
         return sendJson(res, 200, {customSiteLabels: getCodebuddyCustomSiteLabels(), options: getCodebuddyAdminOptions()});
+    }
+
+    if (pathname === '/dashboard/qoder/options' && method === 'GET') {
+        return sendJson(res, 200, {customSiteLabels: getQoderCustomSiteLabels(), options: getQoderAdminOptions()});
     }
 
     if (pathname === '/dashboard/stats/overview' && method === 'GET') {

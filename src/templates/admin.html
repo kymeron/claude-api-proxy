@@ -437,14 +437,32 @@
 </div></div>
 
 <div class="modal" id="qoderCredentialModal"><div class="dialog">
-    <div class="card-head"><div><h2 id="qoderCredentialTitle">新增 Qoder PAT</h2><div class="muted">PAT 在 <a href="https://qoder.com/account/integrations" target="_blank" rel="noopener">Qoder 账号设置</a> 创建，本凭证仅保存到当前租户。</div></div><button class="btn btn-ghost" onclick="closeModal('qoderCredentialModal')">关闭</button></div>
+    <div class="card-head"><div><h2 id="qoderCredentialTitle">新增 Qoder PAT</h2><div class="muted">手动添加 Personal Access Token。PAT 在 <a href="https://qoder.com/account/integrations" target="_blank" rel="noopener">Qoder 账号设置</a> 创建，本凭证仅保存到当前租户。</div></div><button class="btn btn-ghost" onclick="closeModal('qoderCredentialModal')">关闭</button></div>
     <div class="card-body">
         <div class="field"><label>名称（可选）</label><input id="qoderName" autocomplete="off" placeholder="例如：个人 Qoder"></div>
         <div class="field"><label>Personal Access Token</label><input id="qoderToken" autocomplete="off" placeholder="qoder_pat_..."></div>
-        <div class="field"><label>后端</label><div class="select-control"><select id="qoderBackend" autocomplete="off"><option value="cn">CN（国内）</option><option value="global">Global（国际）</option></select></div></div>
+        <div class="field"><label>后端</label><div class="select-control"><select id="qoderBackend" autocomplete="off"><option value="cn">CN（国内）</option><option value="intl">INTL（国际）</option></select></div></div>
     </div>
     <div class="dialog-foot"><button class="btn" onclick="closeModal('qoderCredentialModal')">取消</button><button class="btn btn-primary" onclick="saveQoderCredential()">保存</button></div>
-</div>
+</div></div>
+
+<div class="modal" id="qoderOAuthModal"><div class="dialog">
+    <div class="card-head"><div><h2>添加 Qoder 凭证</h2><div class="muted">选择站点后启动登录授权，完成后页面会自动保存凭证。</div></div><button class="btn btn-ghost" onclick="closeQoderOAuth()">关闭</button></div>
+    <div id="qoderOAuthStart">
+        <div class="field"><label>Qoder 站点</label><div class="select-control"><select id="qoderOAuthBase"></select></div></div>
+        <button class="btn btn-primary" onclick="startQoderOAuth()">开始授权</button>
+    </div>
+    <div id="qoderOAuthPending" style="display:none">
+        <p class="muted">请在新窗口完成登录。完成后请保留此窗口，控制台会自动检查授权结果。</p>
+        <a class="oauth-link" id="qoderOAuthLink" target="_blank" rel="noopener">打开 Qoder 登录页面</a>
+        <div class="badge on" id="qoderOAuthStatusBadge">等待授权</div>
+        <div id="qoderOAuthManual" style="display:none;margin-top:12px">
+            <p class="muted">自动检测未成功，请手动粘贴 Token：</p>
+            <div class="field"><textarea id="qoderOAuthManualToken" placeholder="粘贴 access_token 或 PAT" rows="2"></textarea></div>
+            <button class="btn btn-primary" onclick="saveQoderOAuthManual()">保存 Token</button>
+        </div>
+    </div>
+</div></div>
 
 <div class="modal" id="copilotAuthModal"><div class="dialog">
     <div class="card-head"><div><h2>连接 GitHub Copilot</h2><div class="muted">在 GitHub 页面输入设备码，授权成功后这里会自动完成配置。</div></div><button class="btn btn-ghost" onclick="closeCopilotAuth()">关闭</button></div>
@@ -477,7 +495,7 @@
 
 <div class="toast" id="toast"></div>
 <script>
-const S={me:null,tenants:[],tenant:null,tab:'relay',statsTab:'relay',statsPage:'monthly',adminStats:null,adminStatsPageSize:20,adminStatsMonth:'',adminModelStartDate:'',adminModelEndDate:'',adminModelPageNo:1,adminModelCache:[],upstreams:[],credentials:[],currentCredential:0,codebuddyOptions:null,codebuddyCustomSiteLabels:{},editingUpstream:null,oauthState:null,oauthTimer:null,passwordUser:null,editingUser:null,copilotCredentials:[],editingCopilot:null,copilotAuthId:null,copilotDeviceCode:null,copilotAuthTimer:null,qoderCredentials:[],qoderActiveIndex:-1,feedbackItems:[],feedbackPage:1,feedbackPageSize:10,feedbackTotal:0,relayTestResults:{},relayTesting:false,relaySingleTesting:null};
+const S={me:null,tenants:[],tenant:null,tab:'relay',statsTab:'relay',statsPage:'monthly',adminStats:null,adminStatsPageSize:20,adminStatsMonth:'',adminModelStartDate:'',adminModelEndDate:'',adminModelPageNo:1,adminModelCache:[],upstreams:[],credentials:[],currentCredential:0,codebuddyOptions:null,codebuddyCustomSiteLabels:{},editingUpstream:null,oauthState:null,oauthTimer:null,passwordUser:null,editingUser:null,copilotCredentials:[],editingCopilot:null,copilotAuthId:null,copilotDeviceCode:null,copilotAuthTimer:null,qoderCredentials:[],qoderActiveIndex:-1,qoderOptions:null,qoderCustomSiteLabels:{},qoderOAuthState:null,qoderOAuthTimer:null,feedbackItems:[],feedbackPage:1,feedbackPageSize:10,feedbackTotal:0,relayTestResults:{},relayTesting:false,relaySingleTesting:null};
 const HASH_ROUTES=['#/relay','#/codebuddy','#/copilot','#/qoder','#/stats/relay/monthly','#/stats/relay/model-cache','#/stats/codebuddy/monthly','#/stats/codebuddy/model-cache','#/stats/copilot/monthly','#/stats/copilot/model-cache','#/stats/qoder/monthly','#/stats/qoder/model-cache'];
 const ADMIN_STATS_TABS=[['monthly','月度统计'],['model-cache','模型分析']];
 const ADMIN_STATS_SERVICES=[['relay','Relay'],['codebuddy','CodeBuddy'],['copilot','Copilot'],['qoder','Qoder']];
@@ -488,7 +506,7 @@ const jsArg=v=>esc(JSON.stringify(String(v??'')));
 const profile=(t,type)=>(t.serviceProfiles||[]).find(p=>p.service_type===type)||{service_type:type,enabled:false};
 const fmt=n=>new Intl.NumberFormat('zh-CN',{notation:Number(n)>=10000?'compact':'standard',maximumFractionDigits:1}).format(Number(n)||0);
 const pct=(hit,input)=>Number(input)>0?Math.round(Number(hit||0)/Number(input||0)*1000)/10:0;
-const SERVICE_META={relay:['relay','Relay','配置 OpenAI、Responses 或 Anthropic 兼容上游。','#7c9cff'],codebuddy:['codebuddy','CodeBuddy','通过 OAuth 添加腾讯 CodeBuddy 账号凭证。','#53d7c4'],copilot:['copilot','Copilot','通过 GitHub 设备授权接入 Chat、Responses 与 Anthropic 兼容端点。','#f59e0b'],qoder:['qoder','Qoder','通过 Personal Access Token (PAT) 接入 Qoder CLI 子进程调用。','#a78bfa']};
+const SERVICE_META={relay:['relay','Relay','配置 OpenAI、Responses 或 Anthropic 兼容上游。','#7c9cff'],codebuddy:['codebuddy','CodeBuddy','通过 OAuth 添加腾讯 CodeBuddy 账号凭证。','#53d7c4'],copilot:['copilot','Copilot','通过 GitHub 设备授权接入 Chat、Responses 与 Anthropic 兼容端点。','#f59e0b'],qoder:['qoder','Qoder','通过 OAuth2 浏览器登录或 PAT 接入 Qoder CLI 子进程调用。','#a78bfa']};
 function canUseService(type){return S.me?.isAdmin||profile(S.tenant,type).enabled===true;}
 function enabledServices(){return Object.values(SERVICE_META).filter(([type])=>canUseService(type));}
 function toast(message,type='success'){const el=document.getElementById('toast');el.textContent=message;el.className='toast show '+(type==='error'?'error':'');clearTimeout(el._t);el._t=setTimeout(()=>el.className='toast',3500);}
@@ -731,7 +749,7 @@ function serviceInsights(type){
     const key=esc(S.tenant.api_key_plain||S.tenant.api_key_prefix||'');
     const defaults=type==='codebuddy'?{haiku:'glm-5.1',sonnet:'glm-5.1',opus:'glm-5.0'}:type==='qoder'?{haiku:'qwen3.6-flash',sonnet:'auto',opus:'auto'}:{haiku:'haiku',sonnet:'sonnet',opus:'opus'};
     const guideConfig=`{\n  "env": {\n    "ANTHROPIC_AUTH_TOKEN": "${key}",\n    "ANTHROPIC_BASE_URL": "${base}/${type}/anthropic",\n    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "${defaults.haiku}",\n    "ANTHROPIC_DEFAULT_SONNET_MODEL": "${defaults.sonnet}",\n    "ANTHROPIC_DEFAULT_OPUS_MODEL": "${defaults.opus}"\n  }\n}`;
-    const firstStep={relay:['添加上游','先添加至少一个上游，填写 Base URL、API Key 和协议；模型名默认原样透传，必要时再配置映射。'],codebuddy:['添加凭证','点击“添加凭证”选择上游 CodeBuddy 服务地址，开始 OAuth2 认证流程，完成后凭证会保存到当前用户。'],copilot:['完成 GitHub 认证','新增 Copilot 凭据后点击“连接 GitHub”，使用设备码完成 GitHub OAuth 授权，获取 Copilot Token。'],qoder:['安装 qodercli','在服务器上运行 npm install -g @qoder-ai/qodercli，然后在右侧添加 Personal Access Token（从 qoder.com/account/integrations 创建）。']}[type];
+    const firstStep={relay:['添加上游','先添加至少一个上游，填写 Base URL、API Key 和协议；模型名默认原样透传，必要时再配置映射。'],codebuddy:['添加凭证','点击“添加凭证”选择上游 CodeBuddy 服务地址，开始 OAuth2 认证流程，完成后凭证会保存到当前用户。'],copilot:['完成 GitHub 认证','新增 Copilot 凭据后点击“连接 GitHub”，使用设备码完成 GitHub OAuth 授权，获取 Copilot Token。'],qoder:['安装 qodercli 并添加凭证','在服务器上运行 npm install -g @qoder-ai/qodercli，然后点击"浏览器登录"完成 OAuth2 授权，或点击"添加 PAT"手动输入 Personal Access Token。']}[type];
     const customMetricCards=`<div class="stats-grid stats-grid-${type==='codebuddy'?'6':'5'}"><div class="stat-item"><div class="stat-value" id="${type}CustomApiCalls">${fmt(p.total_api_calls)}</div><div class="stat-label">API 调用次数</div></div><div class="stat-item"><div class="stat-value" id="${type}CustomInputTokens">${fmt(p.total_input_tokens)}</div><div class="stat-label">输入 Tokens</div></div><div class="stat-item"><div class="stat-value" id="${type}CustomOutputTokens">${fmt(p.total_output_tokens)}</div><div class="stat-label">输出 Tokens</div></div><div class="stat-item"><div class="stat-value" id="${type}CustomCacheTokens">${fmt(p.total_cache_hit_tokens)}</div><div class="stat-label">缓存命中 Tokens</div></div><div class="stat-item"><div class="stat-value" id="${type}CustomCacheRate">${pct(p.total_cache_hit_tokens,p.total_input_tokens)}%</div><div class="stat-label">缓存命中率</div></div>${type==='codebuddy'?`<div class="stat-item"><div class="stat-value" id="${type}CustomCredit">${Number(p.total_credit||0).toFixed(2)}</div><div class="stat-label">CodeBuddy 积分</div></div>`:''}</div>`;
     return `${renderApiKeyCard()}${type==='codebuddy'?renderCodebuddyModelCard():''}<div id="section-guide" class="card" style="margin-top:16px"><div class="card-head"><div><h2>使用指南</h2><div class="muted">按原页面方式配置客户端，API Key 使用当前用户的统一 Key。</div></div></div><div class="guide-steps"><div class="guide-step"><div class="guide-step-num">1</div><div><div class="guide-step-title">${firstStep[0]}</div><div class="guide-step-desc">${firstStep[1]}</div></div></div><div class="guide-step"><div class="guide-step-num">2</div><div><div class="guide-step-title">兼容 Anthropic 接口协议工具</div><div class="guide-step-desc">如 Claude Code、Claude Desktop，编辑 <code>~/.claude/settings.json</code>。推荐使用 <code>ANTHROPIC_AUTH_TOKEN</code>，也兼容 <code>ANTHROPIC_API_KEY</code>；模型名会原样透传给上游，包括 <code>sonnet[1m]</code>、<code>opus[1m]</code>、<code>deepseek-v4-pro[1m]</code>。</div><div class="guide-code-block"><button class="btn btn-sm guide-copy-btn" onclick="copyGuideConfig('${type}')">复制</button><pre id="${type}GuideConfig">${esc(guideConfig)}</pre></div></div></div><div class="guide-step"><div class="guide-step-num">3</div><div><div class="guide-step-title">兼容 OpenAI 接口协议工具</div><div class="guide-step-desc">如 Cursor、Continue、Cline，将 Base URL 设置为：</div><div class="guide-code-block"><button class="btn btn-sm guide-copy-btn" onclick="copyGuideOpenAIUrl('${type}')">复制</button><pre id="${type}GuideOpenAIUrl">${base}/${type}/v1</pre></div><div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key</div></div></div><div class="guide-step"><div class="guide-step-num">4</div><div><div class="guide-step-title">兼容 OpenAI Responses API 工具</div><div class="guide-step-desc">如 Codex，将 Base URL 设置为：</div><div class="guide-code-block"><button class="btn btn-sm guide-copy-btn" onclick="copyGuideResponsesUrl('${type}')">复制</button><pre id="${type}GuideResponsesUrl">${base}/${type}/v1</pre></div><div class="guide-step-desc" style="margin-top:6px">API Key 使用上方显示的 Key，需在工具中选择 <code>Responses API</code> 模式</div></div></div></div></div><div id="section-custom-stats" class="card" style="margin-top:16px"><div class="card-head"><div><h2>自定义统计</h2><div class="muted">从上次重置起累计，仅影响 ${type}，适合测试上游缓存与成本。</div></div><div class="actions"><button class="btn btn-sm" onclick="refreshServiceStats('${type}')">刷新</button><button class="btn btn-danger btn-sm" onclick="resetServiceStats('${type}')">重置</button></div></div>${customMetricCards}</div>`;
 }
@@ -825,7 +843,7 @@ async function refreshCopilot(id){try{await api(`/dashboard/tenants/${S.tenant.i
 
 // === Qoder 渠道 ===
 function renderQoder(){
-    document.getElementById('tabBody').innerHTML=`<div class="content-with-anchor">${renderAnchorNav([['section-qoder-list','凭证配置列表'],['section-qoder-models','可用模型'],['section-guide','使用指南'],['section-custom-stats','自定义统计面板']])}<div id="section-qoder-list" class="card"><div class="card-head"><div><h2>Qoder 凭证</h2><div class="muted">通过 Personal Access Token (PAT) 接入本地 qodercli 子进程调用。可添加多个 PAT，CLI 调用时会话亲和复用同一凭证。</div></div><div class="actions"><span class="badge ${profile(S.tenant,'qoder').enabled?'on':'off'}">${profile(S.tenant,'qoder').enabled?'服务已启用':'服务已停用'}</span><button class="btn btn-primary" onclick="openQoderCredential()">新增凭证</button></div></div><div class="list" id="qoderCredentialList"><div class="empty">正在加载...</div></div></div><div id="section-qoder-models" class="card" style="margin-top:16px"><div class="card-head"><div><h2>Qoder 可用模型</h2><div class="muted">由 CLI 子进程代理调用，模型清单在 config.js 中静态定义。</div></div></div><div id="qoderModelList" class="empty">正在加载...</div></div>${serviceInsights('qoder')}</div>`;
+    document.getElementById('tabBody').innerHTML=`<div class="content-with-anchor">${renderAnchorNav([['section-qoder-list','凭证配置列表'],['section-qoder-models','可用模型'],['section-guide','使用指南'],['section-custom-stats','自定义统计面板']])}<div id="section-qoder-list" class="card"><div class="card-head"><div><h2>Qoder 凭证</h2><div class="muted">支持浏览器 OAuth2 登录或手动添加 PAT。可添加多个凭证，CLI 调用时会话亲和复用同一凭证。</div></div><div class="actions"><span class="badge ${profile(S.tenant,'qoder').enabled?'on':'off'}">${profile(S.tenant,'qoder').enabled?'服务已启用':'服务已停用'}</span><button class="btn btn-primary" onclick="openQoderOAuth()">浏览器登录</button><button class="btn" onclick="openQoderCredential()">添加 PAT</button></div></div><div class="list" id="qoderCredentialList"><div class="empty">正在加载...</div></div></div><div id="section-qoder-models" class="card" style="margin-top:16px"><div class="card-head"><div><h2>Qoder 可用模型</h2><div class="muted">由 CLI 子进程代理调用，模型清单在 config.js 中静态定义。</div></div></div><div id="qoderModelList" class="empty">正在加载...</div></div>${serviceInsights('qoder')}</div>`;
     renderQoderModels();
 }
 async function loadQoder(){
@@ -839,10 +857,16 @@ async function loadQoder(){
 function renderQoderCredentials(){
     const el=document.getElementById('qoderCredentialList');if(!el)return;
     const list=S.qoderCredentials||[];
-    if(!list.length){el.innerHTML='<div class="empty">还没有添加 Qoder PAT，点右上角“新增凭证”开始配置。</div>';return;}
+    if(!list.length){el.innerHTML='<div class="empty">暂无凭证。点击"浏览器登录"或"添加 PAT"完成 Qoder 授权。</div>';return;}
     el.innerHTML=list.map((c,i)=>{
         const active=i===S.qoderActiveIndex;
-        return `<div class="list-item ${active?'active':''} ${c.enabled?'':'disabled'}"><div class="list-item-main"><div class="list-item-title">${esc(c.name||'未命名凭证')}${active?' <span class="badge on">活跃</span>':''}${!c.enabled?' <span class="badge off">已停用</span>':''}</div><div class="list-item-sub">后端：${esc((c.backend||'cn').toUpperCase())} · Token: <code>${esc(c.tokenPreview||'')}</code></div></div><div class="list-item-actions"><button class="btn btn-sm" onclick="setQoderActive(${i})">设为活跃</button><button class="btn btn-sm" onclick="toggleQoderCredential(${i})">${c.enabled?'停用':'启用'}</button><button class="btn btn-sm" onclick="moveQoderCredential(${i},'up')" ${i===0?'disabled':''}>↑</button><button class="btn btn-sm" onclick="moveQoderCredential(${i},'down')" ${i===list.length-1?'disabled':''}>↓</button><button class="btn btn-sm btn-danger" onclick="deleteQoderCredential(${i})">删除</button></div></div>`;
+        const backendLabel=(c.backend||'cn')==='cn'?'CN':'INTL';
+        const siteInfo=c.base_url?esc(c.base_url):'-';
+        const userAndTime=[];
+        if(c.user_id) userAndTime.push(esc(c.user_id));
+        if(c.credential_created_at) userAndTime.push(new Date(c.credential_created_at*1000).toLocaleDateString());
+        const tokenPreview=c.tokenPreview?` · Token: ${esc(c.tokenPreview)}`:'';
+        return `<div class="item ${active&&!c.enabled===false?'active':''}"><div><h3>${esc(c.name||'未命名凭证')} ${active?'<span class="badge on">活跃</span>':''}</h3><p>${siteInfo}</p><p>${backendLabel}${userAndTime.length?' · '+userAndTime.join(' · '):''}${tokenPreview}</p></div><div class="actions">${!active?`<button class="btn btn-sm" onclick="setQoderActive(${i})">设为活跃</button>`:''}<button class="btn btn-sm" ${i===0?'disabled':''} onclick="moveQoderCredential(${i},'up')">上移</button><button class="btn btn-sm" ${i===list.length-1?'disabled':''} onclick="moveQoderCredential(${i},'down')">下移</button><button class="btn btn-sm" onclick="toggleQoderCredential(${i})">${c.enabled?'禁用':'启用'}</button><button class="btn btn-danger btn-sm" onclick="deleteQoderCredential(${i})">删除</button></div></div>`;
     }).join('');
 }
 function renderQoderModels(){
@@ -885,6 +909,94 @@ async function deleteQoderCredential(index){if(!confirm('确认删除这个 Qode
 async function setQoderActive(index){try{await api(`/dashboard/tenants/${S.tenant.id}/qoder/credentials/active`,{method:'POST',body:JSON.stringify({index})});await loadQoder();toast('已切换活跃凭证');}catch(e){toast(e.message,'error');}}
 async function toggleQoderCredential(index){try{await api(`/dashboard/tenants/${S.tenant.id}/qoder/credentials/toggle`,{method:'POST',body:JSON.stringify({index})});await loadQoder();toast('状态已更新');}catch(e){toast(e.message,'error');}}
 async function moveQoderCredential(index,direction){try{await api(`/dashboard/tenants/${S.tenant.id}/qoder/credentials/move-${direction}`,{method:'POST',body:JSON.stringify({index})});await loadQoder();toast('顺序已更新');}catch(e){toast(e.message,'error');}}
+
+// === Qoder OAuth2 ===
+async function loadQoderOptions(){
+    const d=await api('/dashboard/qoder/options');
+    S.qoderOptions=d.options||[];
+    S.qoderCustomSiteLabels=d.customSiteLabels||{};
+    return d;
+}
+
+function qoderOptionLabel(o){
+    return o.label||(o.personal?'个人站':S.qoderCustomSiteLabels[o.host]||'自定义站');
+}
+
+function renderQoderOption(o){
+    return `<option value="${esc(o.url)}">${esc(o.host)} (${esc(qoderOptionLabel(o))})</option>`;
+}
+
+async function openQoderOAuth(){
+    try{
+        const d=await loadQoderOptions();
+        qoderOAuthBase.innerHTML=(d.options||[]).map(renderQoderOption).join('');
+        qoderOAuthStart.style.display='';
+        qoderOAuthPending.style.display='none';
+        document.getElementById('qoderOAuthModal').classList.add('show');
+    }catch(e){toast(e.message,'error');}
+}
+
+async function startQoderOAuth(){
+    try{
+        const baseUrl=qoderOAuthBase.value;
+        const d=await api(`/dashboard/tenants/${S.tenant.id}/qoder/auth/start?base_url=${encodeURIComponent(baseUrl)}`);
+        S.qoderOAuthState=d.auth_state;
+        S.qoderOAuthBaseUrl=baseUrl;
+        S.qoderOAuthPollCount=0;
+        qoderOAuthStart.style.display='none';
+        qoderOAuthPending.style.display='';
+        document.getElementById('qoderOAuthManual').style.display='none';
+        document.getElementById('qoderOAuthStatusBadge').textContent='等待授权';
+        document.getElementById('qoderOAuthStatusBadge').className='badge on';
+        qoderOAuthLink.href=d.verification_uri_complete;
+        window.open(d.verification_uri_complete,'_blank','noopener');
+        clearInterval(S.qoderOAuthTimer);
+        S.qoderOAuthTimer=setInterval(pollQoderOAuth,2000);
+    }catch(e){toast(e.message,'error');}
+}
+
+async function pollQoderOAuth(){
+    if(!S.qoderOAuthState)return;
+    S.qoderOAuthPollCount=(S.qoderOAuthPollCount||0)+1;
+    try{
+        const d=await api(`/dashboard/tenants/${S.tenant.id}/qoder/auth/poll`,{method:'POST',body:JSON.stringify({auth_state:S.qoderOAuthState})});
+        if(d.status==='success'){
+            closeQoderOAuth();
+            await loadQoder();
+            toast('Qoder 凭证添加成功');
+        }else if(d.status==='error'){
+            closeQoderOAuth();
+            toast(d.message||'授权失败','error');
+        }else{
+            // pending — 超过 15 次轮询（约 30 秒）后显示手动输入框
+            if(S.qoderOAuthPollCount>=15 && document.getElementById('qoderOAuthManual').style.display==='none'){
+                document.getElementById('qoderOAuthManual').style.display='';
+                document.getElementById('qoderOAuthStatusBadge').textContent='等待授权（可手动粘贴）';
+            }
+        }
+    }catch(e){closeQoderOAuth();toast(e.message,'error');}
+}
+
+async function saveQoderOAuthManual(){
+    const token=document.getElementById('qoderOAuthManualToken').value.trim();
+    if(!token){toast('请输入 Token','error');return;}
+    try{
+        const baseUrl=S.qoderOAuthBaseUrl||'';
+        await api(`/dashboard/tenants/${S.tenant.id}/qoder/auth/save`,{method:'POST',body:JSON.stringify({base_url:baseUrl,token_data:{accessToken:token}})});
+        closeQoderOAuth();
+        await loadQoder();
+        toast('Qoder 凭证添加成功');
+    }catch(e){toast(e.message,'error');}
+}
+
+function closeQoderOAuth(){
+    clearInterval(S.qoderOAuthTimer);
+    S.qoderOAuthTimer=null;
+    S.qoderOAuthState=null;
+    S.qoderOAuthBaseUrl=null;
+    S.qoderOAuthPollCount=0;
+    closeModal('qoderOAuthModal');
+}
 function renderStatsDashboard(el,type,data){el.className='';el.innerHTML=`<pre style="white-space:pre-wrap;overflow:auto">${esc(JSON.stringify(data,null,2))}</pre>`;}
 function renderStatsTrendChart(id,title,labels,rows,type){const el=document.getElementById(id);if(!el||!window.echarts)return;const chart=echarts.init(el);chart.setOption({title:{text:title},xAxis:{type:'category',data:labels},yAxis:{type:'value'},series:[{type:'line',data:rows.map(r=>r.apiCalls||0)}]});}
 function renderModelCacheChart(id,models){const el=document.getElementById(id);if(!el||!window.echarts)return;const chart=echarts.init(el);chart.setOption({xAxis:{type:'value'},yAxis:{type:'category',data:models.map(m=>m.model)},series:[{type:'bar',data:models.map(m=>m.cacheHitRate||0)}]});}
@@ -1076,6 +1188,7 @@ Object.assign(window,{
     copyGuideConfig,copyGuideOpenAIUrl,copyGuideResponsesUrl,copyTextFromElement,
     openCopilotCredential,saveCopilotCredential,setCopilotActive,toggleCopilotCredential,deleteCopilotCredential,
     startCopilotAuth,closeCopilotAuth,clearCopilotAuth,refreshCopilot,moveCopilotCredential,
+    openQoderOAuth,startQoderOAuth,pollQoderOAuth,closeQoderOAuth,saveQoderOAuthManual,loadQoderOptions,
     renderStatsTabs,renderStatsServiceTabs,switchStatsTab,switchStatsPage,switchAdminStatsService,loadStatsPage,refreshAdminStats,renderAdminStatsMonthly,renderAdminStatsModelCache,applyAdminStatsMonth,applyAdminModelDateRange,changeAdminModelPage,queryAdminModelCache,openAdminModelCacheDaily,submitInlineFeedback,loadInlineFeedback,resetFeedbackSearch,renderFeedbackPagination,changeFeedbackPage,changeFeedbackPageSize,jumpFeedbackPage,inlineFeedbackStatus,inlineFeedbackDelete,
     openInlineFeedbackSubmit,openFeedbackDetail,openFeedback,submitFeedback,toggleUserService,openCreateUser,createUser,openUserEdit,saveUserEdit,openPassword,resetUserPassword,deleteUser,closeModal
 });

@@ -2,12 +2,10 @@ import {DataTypes} from 'sequelize';
 import {sequelize} from '../index.js';
 
 /**
- * Qoder 渠道凭证（Personal Access Token）
+ * Qoder 渠道凭证（Personal Access Token / OAuth2 Token）
  *
- * Qoder CLI 通过环境变量接收 PAT，与 Codebuddy 的 OAuth 流程差异较大，
- * 故独立成表（参考 TenantCopilotCredential 的设计）。
- *
- * 每个租户可配置多个 PAT，调用时按会话亲和性复用同一凭证以提升 KV Cache 命中。
+ * 支持 PAT 手动添加和 OAuth2 浏览器登录两种方式。
+ * 每个租户可配置多个凭证，调用时按会话亲和性复用同一凭证以提升 KV Cache 命中。
  */
 export const TenantQoderCredential = sequelize.define('tenant_qoder_credentials', {
     id: {
@@ -27,16 +25,31 @@ export const TenantQoderCredential = sequelize.define('tenant_qoder_credentials'
     bearer_token: {
         type: DataTypes.TEXT,
         allowNull: false,
-        comment: 'Qoder Personal Access Token'
+        comment: 'Qoder Personal Access Token 或 OAuth2 access_token'
     },
     backend: {
         type: DataTypes.STRING,
         allowNull: false,
         defaultValue: 'cn',
         validate: {
-            isIn: [['cn', 'global']]
+            isIn: [['cn', 'intl', 'global']]
         },
-        comment: 'CLI 后端：cn=国内版, global=国际版'
+        comment: 'CLI 后端：cn=国内版, intl/global=国际版'
+    },
+    base_url: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        comment: '凭证来源站点 URL（OAuth 登录时自动填充）'
+    },
+    user_id: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        comment: '用户标识（email / preferred_username / sub）'
+    },
+    credential_created_at: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        comment: '凭证创建时间（Unix 秒）'
     },
     enabled: {
         type: DataTypes.BOOLEAN,
