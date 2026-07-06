@@ -65,31 +65,38 @@ export const BLOCKED_DOMAINS = [];
 
 /**
  * CN 区域可用模型
+ *
+ * id 字段必须与 qodercli CLI 接受的模型名严格一致（大小写敏感）。
+ * qodercli 可用模型（实测）：
+ *   Auto, Qwen3.7-Max, Qwen3.7-Plus, Qwen3.6-Flash,
+ *   DeepSeek-V4-Pro, DeepSeek-V4-Flash, GLM-5.2,
+ *   Kimi-K2.7-Code, MiniMax-M2.7
  */
 export const CN_MODELS = [
-    {id: 'auto', name: 'Auto', tools: true, vision: false},
-    {id: 'qwen3.7-max', name: 'Qwen3.7-Max', tools: true, vision: false},
-    {id: 'glm-5.1', name: 'GLM-5.1', tools: true, vision: false},
-    {id: 'kimi-k2.6', name: 'Kimi-K2.6', tools: true, vision: false},
-    {id: 'qwen3.6-plus', name: 'Qwen3.6-Plus', tools: true, vision: false},
-    {id: 'qwen3.6-flash', name: 'Qwen3.6-Flash', tools: false, vision: false},
-    {id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', tools: true, vision: false},
-    {id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', tools: false, vision: false},
-    {id: 'qwen3.7-max-effort-low', name: 'Qwen3.7-Max (Low)', tools: true, vision: false},
-    {id: 'qwen3.7-max-effort-medium', name: 'Qwen3.7-Max (Medium)', tools: true, vision: false},
-    {id: 'qwen3.7-max-effort-high', name: 'Qwen3.7-Max (High)', tools: true, vision: false},
-    {id: 'qwen3.7-max-effort-max', name: 'Qwen3.7-Max (Max)', tools: true, vision: false}
+    {id: 'Auto', name: 'Auto', tools: true, vision: false},
+    {id: 'Qwen3.7-Max', name: 'Qwen3.7-Max', tools: true, vision: false},
+    {id: 'Qwen3.7-Plus', name: 'Qwen3.7-Plus', tools: true, vision: false},
+    {id: 'Qwen3.6-Flash', name: 'Qwen3.6-Flash', tools: false, vision: false},
+    {id: 'DeepSeek-V4-Pro', name: 'DeepSeek-V4-Pro', tools: true, vision: false},
+    {id: 'DeepSeek-V4-Flash', name: 'DeepSeek-V4-Flash', tools: false, vision: false},
+    {id: 'GLM-5.2', name: 'GLM-5.2', tools: true, vision: false},
+    {id: 'Kimi-K2.7-Code', name: 'Kimi-K2.7-Code', tools: true, vision: false},
+    {id: 'MiniMax-M2.7', name: 'MiniMax-M2.7', tools: true, vision: false}
 ];
 
 /**
  * INTL 区域可用模型
  */
 export const INTL_MODELS = [
-    {id: 'auto', name: 'Auto', tools: true, vision: false},
-    {id: 'glm-5.1', name: 'GLM-5.1', tools: true, vision: false},
-    {id: 'kimi-k2.6', name: 'Kimi-K2.6', tools: true, vision: false},
-    {id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', tools: true, vision: false},
-    {id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', tools: false, vision: false}
+    {id: 'Auto', name: 'Auto', tools: true, vision: false},
+    {id: 'Qwen3.7-Max', name: 'Qwen3.7-Max', tools: true, vision: false},
+    {id: 'Qwen3.7-Plus', name: 'Qwen3.7-Plus', tools: true, vision: false},
+    {id: 'Qwen3.6-Flash', name: 'Qwen3.6-Flash', tools: false, vision: false},
+    {id: 'DeepSeek-V4-Pro', name: 'DeepSeek-V4-Pro', tools: true, vision: false},
+    {id: 'DeepSeek-V4-Flash', name: 'DeepSeek-V4-Flash', tools: false, vision: false},
+    {id: 'GLM-5.2', name: 'GLM-5.2', tools: true, vision: false},
+    {id: 'Kimi-K2.7-Code', name: 'Kimi-K2.7-Code', tools: true, vision: false},
+    {id: 'MiniMax-M2.7', name: 'MiniMax-M2.7', tools: true, vision: false}
 ];
 
 /**

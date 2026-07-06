@@ -17,7 +17,7 @@
  */
 
 import {spawn} from 'child_process';
-import {writeFileSync, mkdtempSync, unlinkSync} from 'fs';
+import {writeFileSync, unlinkSync} from 'fs';
 import {tmpdir} from 'os';
 import {join} from 'path';
 
@@ -66,8 +66,9 @@ export function buildChildEnv(credential, options = {}) {
  * @param {string} [options.attachmentPath] - 附件文件路径
  * @param {boolean}[options.stream] - 是否流式（--output-format stream-json）
  * @param {number} [options.maxTokens] - 单条最大 token（>0 时传 --max-output-tokens）
+ * @param {boolean} [options.useStdin] - 是否通过 stdin 传入 prompt
  */
-export function buildCliArgs({prompt, model, systemPrompt, attachmentPath, stream = false, maxTokens = -1}) {
+export function buildCliArgs({prompt, model, systemPrompt, attachmentPath, stream = false, maxTokens = -1, useStdin = false}) {
     const args = [];
 
     // 非交互模式（必须）
@@ -75,6 +76,11 @@ export function buildCliArgs({prompt, model, systemPrompt, attachmentPath, strea
 
     // 输出格式
     args.push('--output-format', stream ? 'stream-json' : 'json');
+
+    // 输入格式：通过 stdin 传入时显式声明
+    if (useStdin) {
+        args.push('--input-format', 'text');
+    }
 
     // 模型
     if (model) args.push('-m', model);
@@ -97,26 +103,26 @@ export function buildCliArgs({prompt, model, systemPrompt, attachmentPath, strea
         args.push('--max-output-tokens', String(maxTokens));
     }
 
-    // 指令放在参数末尾
-    args.push(prompt);
+    // 指令：走 stdin 时不放在命令行参数里，避免命令行超长
+    if (!useStdin) {
+        args.push(prompt);
+    }
 
     return args;
 }
 
 /**
- * 把过长的 prompt 写入临时文件，返回文件路径
+ * 判断 prompt 是否需要走 stdin 路径
  *
- * CLI 命令行长度有限（Windows ~8K），附件内容超长时通过文件传递。
- * 调用方负责清理（见 spawnQoderChild 的 finally 块）。
+ * CLI 命令行长度有限（Windows ~8K，类 Unix 也建议 <128KB）。
+ * 长 prompt 通过 stdin + --input-format text 传递，避免命令行超长，
+ * 也避免被 Qoder CLI 当成 "@文件路径"附件读取。
  *
- * @returns {string|null} 临时文件路径，未写入时返回 null
+ * @returns {boolean}
  */
-function maybeWritePromptToFile(prompt) {
-    if (!prompt || prompt.length < 4096) return null;
-    const dir = mkdtempSync(join(tmpdir(), 'qoder-prompt-'));
-    const filePath = join(dir, 'prompt.txt');
-    writeFileSync(filePath, prompt, 'utf8');
-    return filePath;
+function shouldUseStdin(prompt) {
+    if (!prompt) return false;
+    return prompt.length >= 4096;
 }
 
 /**
@@ -145,18 +151,18 @@ export function spawnQoderChild({
     const cliPath = getQoderCliPath(backend);
     const binary = getQoderCliBinary(backend);
 
-    const attachmentPath = maybeWritePromptToFile(prompt);
-
-    // 如果用临时文件，指令里改为引用文件路径（CLI 会自动读取）
-    const finalPrompt = attachmentPath ? `@${attachmentPath}` : prompt;
+    // 长 prompt 走 stdin（避免命令行超长 + 避免 "@文件路径"被当成附件读取）
+    const useStdin = shouldUseStdin(prompt);
+    const attachmentPath = null; // 已不再使用临时文件附件路径，保留变量用于 cleanup / 日志
 
     const args = buildCliArgs({
-        prompt: finalPrompt,
+        prompt,
         model,
         systemPrompt,
-        attachmentPath: null, // 已经在 prompt 里引用，不重复
+        attachmentPath,
         stream,
-        maxTokens
+        maxTokens,
+        useStdin
     });
 
     const env = buildChildEnv(credential, {backend});
@@ -166,14 +172,23 @@ export function spawnQoderChild({
 
     logger.debug(
         `Spawning Qoder CLI: ${cliPath} ${args.slice(0, 6).join(' ')}... ` +
-        `(binary=${binary}, stream=${stream}, timeout=${timeout}ms)`
+        `(binary=${binary}, stream=${stream}, useStdin=${useStdin}, timeout=${timeout}ms)`
     );
 
     const child = spawn(cliPath, args, {
         env,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true
     });
+
+    // 通过 stdin 写入 prompt
+    if (useStdin) {
+        try {
+            child.stdin.end(prompt);
+        } catch (error) {
+            logger.warn(`Failed to write Qoder prompt to stdin: ${error.message}`);
+        }
+    }
 
     const cleanup = () => {
         if (attachmentPath) {

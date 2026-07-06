@@ -835,7 +835,10 @@ async function loadQoder(){
     try{
         const d=await api(`/dashboard/tenants/${S.tenant.id}/qoder/credentials`);
         S.qoderCredentials=d.credentials||[];
-        S.qoderActiveIndex=d.activeIndex||-1;
+        // 防御：若后端未返回 activeIndex 或为 -1，自动用第一条作为活跃凭证
+        S.qoderActiveIndex=(typeof d.activeIndex==='number' && d.activeIndex>=0)
+            ? d.activeIndex
+            : (S.qoderCredentials.length ? 0 : -1);
         renderQoderCredentials();
     }catch(e){const el=document.getElementById('qoderCredentialList');if(el)el.innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
 }
@@ -845,13 +848,9 @@ function renderQoderCredentials(){
     if(!list.length){el.innerHTML='<div class="empty">暂无凭证。点击"添加凭证"完成 Qoder 登录授权。</div>';return;}
     el.innerHTML=list.map((c,i)=>{
         const active=i===S.qoderActiveIndex;
-        const backendLabel=(c.backend||'cn')==='cn'?'CN':'INTL';
         const siteInfo=c.base_url?esc(c.base_url):'-';
-        const userAndTime=[];
-        if(c.user_id) userAndTime.push(esc(c.user_id));
-        if(c.credential_created_at) userAndTime.push(new Date(c.credential_created_at*1000).toLocaleDateString());
-        const tokenPreview=c.tokenPreview?` · Token: ${esc(c.tokenPreview)}`:'';
-        return `<div class="item ${active&&!c.enabled===false?'active':''}"><div><h3>${esc(c.name||'未命名凭证')} ${active?'<span class="badge on">活跃</span>':''}</h3><p>${siteInfo}</p><p>${backendLabel}${userAndTime.length?' · '+userAndTime.join(' · '):''}${tokenPreview}</p></div><div class="actions">${!active?`<button class="btn btn-sm" onclick="setQoderActive(${i})">设为活跃</button>`:''}<button class="btn btn-sm" ${i===0?'disabled':''} onclick="moveQoderCredential(${i},'up')">上移</button><button class="btn btn-sm" ${i===list.length-1?'disabled':''} onclick="moveQoderCredential(${i},'down')">下移</button><button class="btn btn-sm" onclick="toggleQoderCredential(${i})">${c.enabled?'禁用':'启用'}</button><button class="btn btn-danger btn-sm" onclick="deleteQoderCredential(${i})">删除</button></div></div>`;
+        const tokenLine=c.tokenPreview?`Bearer: <code>${esc(c.tokenPreview)}</code>`:'';
+        return `<div class="item ${active&&c.enabled?'active':''}"><div><h3>${esc(c.name||c.user_id||('凭证 #'+(i+1)))} ${active?'<span class="badge on">活跃</span>':''}</h3><p>${siteInfo}</p><p>${tokenLine}</p></div><div class="actions">${!active&&c.enabled?`<button class="btn btn-sm" onclick="setQoderActive(${i})">设为活跃</button>`:''}<button class="btn btn-sm" ${i===0?'disabled':''} onclick="moveQoderCredential(${i},'up')">上移</button><button class="btn btn-sm" ${i===list.length-1?'disabled':''} onclick="moveQoderCredential(${i},'down')">下移</button><button class="btn btn-sm" onclick="toggleQoderCredential(${i})">${c.enabled?'禁用':'启用'}</button><button class="btn btn-danger btn-sm" onclick="deleteQoderCredential(${i})">删除</button></div></div>`;
     }).join('');
 }
 function renderQoderModels(){

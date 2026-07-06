@@ -14,34 +14,50 @@
 
 /**
  * 模型别名表：把客户端常见的别名映射到 Qoder CLI 支持的模型
+ *
+ * 目标值必须与 CN_MODELS / INTL_MODELS 中的 id 一致（大小写敏感）。
  */
 const ALIAS_MAP = {
     // OpenAI 系列别名（多数客户端默认模型）
-    'gpt-4': 'auto',
-    'gpt-4o': 'auto',
-    'gpt-4o-mini': 'qwen3.6-flash',
-    'gpt-4-turbo': 'auto',
-    'gpt-3.5-turbo': 'qwen3.6-flash',
-    'o1': 'auto',
-    'o1-mini': 'qwen3.6-flash',
-    'o3-mini': 'qwen3.6-flash',
+    'gpt-4': 'Auto',
+    'gpt-4o': 'Auto',
+    'gpt-4o-mini': 'Qwen3.6-Flash',
+    'gpt-4-turbo': 'Auto',
+    'gpt-3.5-turbo': 'Qwen3.6-Flash',
+    'o1': 'Auto',
+    'o1-mini': 'Qwen3.6-Flash',
+    'o3-mini': 'Qwen3.6-Flash',
 
     // Anthropic 系列别名
-    'claude-3-5-sonnet': 'auto',
-    'claude-3-5-haiku': 'qwen3.6-flash',
-    'claude-3-opus': 'auto',
-    'claude-sonnet-4': 'auto',
-    'claude-haiku-4': 'qwen3.6-flash'
+    'claude-3-5-sonnet': 'Auto',
+    'claude-3-5-haiku': 'Qwen3.6-Flash',
+    'claude-3-opus': 'Auto',
+    'claude-sonnet-4': 'Auto',
+    'claude-haiku-4': 'Qwen3.6-Flash',
+
+    // 兼容旧的小写模型 ID（早期 config.js 使用小写）
+    'auto': 'Auto',
+    'qwen3.6-flash': 'Qwen3.6-Flash',
+    'qwen3.6-plus': 'Qwen3.7-Plus',
+    'qwen3.7-max': 'Qwen3.7-Max',
+    'deepseek-v4-flash': 'DeepSeek-V4-Flash',
+    'deepseek-v4-pro': 'DeepSeek-V4-Pro',
+    'glm-5.1': 'GLM-5.2',
+    'kimi-k2.6': 'Kimi-K2.7-Code',
+    // MiniMax 系列前缀归一化
+    'minimax-m3': 'Auto',
+    'minimax-m2.7': 'MiniMax-M2.7',
+    'minimax-m2': 'Auto'
 };
 
 /**
  * 把客户端模型名映射为 Qoder CLI 模型名
  *
  * @param {string} model - 客户端请求的模型名
- * @param {string} [fallback='auto'] - 未知模型回退目标
+ * @param {string} [fallback='Auto'] - 未知模型回退目标
  * @returns {string|null} 返回 null 表示客户端传了无效模型
  */
-export function mapQoderModelName(model, fallback = 'auto') {
+export function mapQoderModelName(model, fallback = 'Auto') {
     if (!model || typeof model !== 'string') return fallback;
     const trimmed = model.trim();
     if (!trimmed) return fallback;
@@ -53,10 +69,14 @@ export function mapQoderModelName(model, fallback = 'auto') {
 
     // 2. 通配符匹配（gpt-*, claude-* 等）
     if (lower.startsWith('gpt-') || lower.includes('mini')) {
-        return 'deepseek-v4-flash';
+        return 'DeepSeek-V4-Flash';
     }
     if (lower.startsWith('claude-')) {
-        return 'auto';
+        return 'Auto';
+    }
+    if (lower.startsWith('minimax-')) {
+        // 未知的 MiniMax 型号降级到 Auto，避免 CLI 报 Invalid model
+        return 'Auto';
     }
 
     // 3. 原样返回（调用方会与白名单对比做最终校验）

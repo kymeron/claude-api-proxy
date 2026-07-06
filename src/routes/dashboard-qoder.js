@@ -37,6 +37,19 @@ const QODER_CLIENT_ID = 'e883ade2-e6e3-4d6d-adf7-f92ceff5fdcb';
 
 const qoderCredentialService = getQoderCredentialService(unifiedTenantManager);
 
+// 添加凭证后自动启用 Qoder service（避免 service 未启用导致 API 调用 503）
+async function ensureQoderServiceEnabled(tenantId) {
+    try {
+        const tenant = unifiedTenantManager.getTenant(tenantId);
+        const profile = tenant?.serviceProfiles?.find(item => item.service_type === 'qoder');
+        if (!profile?.enabled) {
+            await unifiedTenantManager.setServiceEnabled(tenantId, 'qoder', true);
+        }
+    } catch (error) {
+        logger.warn(`Failed to auto-enable Qoder service for tenant ${tenantId}: ${error.message}`);
+    }
+}
+
 // OAuth2 认证状态存储
 const authStates = new Map();
 const AUTH_STATE_TTL = 30 * 60 * 1000;
@@ -352,6 +365,7 @@ async function saveTokenFromPoll(res, tenantId, authState, record, accessToken) 
     authStates.delete(authState);
     if (saved) {
         await qoderCredentialService.refreshCredentials(tenantId);
+        await ensureQoderServiceEnabled(tenantId);
     }
     return sendJson(res, saved ? 200 : 500, {
         status: saved ? 'success' : 'error',
@@ -391,6 +405,7 @@ async function saveBrowserAuth(req, res, tenantId) {
 
     if (saved) {
         await qoderCredentialService.refreshCredentials(tenantId);
+        await ensureQoderServiceEnabled(tenantId);
     }
     return sendJson(res, saved ? 200 : 500, {
         status: saved ? 'success' : 'error',
@@ -475,6 +490,10 @@ export async function handleQoderAdminRoute(req, res, tenantId, subPath) {
                 bearer_token,
                 backend: ['cn', 'intl', 'global'].includes(backend) ? backend : 'cn'
             });
+            if (ok) {
+                await qoderCredentialService.refreshCredentials(tenantId);
+                await ensureQoderServiceEnabled(tenantId);
+            }
             sendJson(res, ok ? 200 : 500, ok ? {message: '凭证已添加'} : {error: '保存失败'});
             return true;
         }

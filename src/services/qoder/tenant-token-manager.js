@@ -14,6 +14,7 @@
 
 import logger from '../../utils/logger.js';
 import {models} from '../../db/models/index.js';
+import {sequelize} from '../../db/index.js';
 
 class TenantTokenManager {
     /**
@@ -82,6 +83,27 @@ class TenantTokenManager {
         logger.debug(`Loading Qoder credentials from DB for tenant_id: ${this.tenantId}`);
 
         try {
+            // 去重：DB 中历史遗留的重复凭证（同一 tenant_id + bearer_token）合并保留最早一条
+            const dupRecords = await models.TenantQoderCredential.findAll({
+                where: {tenant_id: this.tenantId},
+                attributes: ['bearer_token', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
+                group: ['bearer_token'],
+                having: sequelize.literal('count > 1'),
+                raw: true
+            });
+            for (const dup of dupRecords) {
+                const records = await models.TenantQoderCredential.findAll({
+                    where: {tenant_id: this.tenantId, bearer_token: dup.bearer_token},
+                    order: [['id', 'ASC']]
+                });
+                const keepId = records[0].id;
+                const removeIds = records.slice(1).map(r => r.id);
+                if (removeIds.length) {
+                    await models.TenantQoderCredential.destroy({where: {id: removeIds}});
+                    logger.warn(`Qoder 去重: 移除 tenant_id=${this.tenantId} 的 ${removeIds.length} 条重复凭证 (bearer_token 前缀=${String(dup.bearer_token).slice(0, 6)}...)`);
+                }
+            }
+
             const records = await models.TenantQoderCredential.findAll({
                 where: {tenant_id: this.tenantId},
                 order: [['sort_order', 'ASC'], ['id', 'ASC']]
@@ -230,6 +252,26 @@ class TenantTokenManager {
         }
 
         try {
+            // 去重：相同 (tenant_id, bearer_token) 的凭证不重复插入
+            const existing = await models.TenantQoderCredential.findOne({
+                where: {
+                    tenant_id: this.tenantId,
+                    bearer_token: credentialData.bearer_token
+                }
+            });
+            if (existing) {
+                logger.info(`addCredentialWithData: 凭证已存在 (id=${existing.id})，跳过插入`);
+                // 同步到内存（如果还没加载）
+                if (!this.credentials.some(c => c.id === existing.id)) {
+                    this.credentials.push({
+                        id: existing.id,
+                        data: this._mapRecordToData(existing),
+                        disabled: !existing.enabled
+                    });
+                }
+                return true;
+            }
+
             const recordFields = this._mapDataToRecord(credentialData);
             recordFields.sort_order = this.credentials.length;
             const record = await models.TenantQoderCredential.create(recordFields);
