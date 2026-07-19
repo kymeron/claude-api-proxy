@@ -14,7 +14,6 @@
 
 import logger from '../../utils/logger.js';
 import {models} from '../../db/models/index.js';
-import {sequelize} from '../../db/index.js';
 
 class TenantTokenManager {
     /**
@@ -33,6 +32,10 @@ class TenantTokenManager {
         // 会话亲和性：conversationId → { index, lastAccess }
         // 同一会话始终使用同一 PAT，避免凭证切换导致 KV Cache miss
         this.sessionAffinity = new Map();
+
+        // loadAllTokens 串行化锁：防止并发请求导致 this.credentials 数组重复 push
+        // （多个请求同时 loadAllTokens 会让同一条 DB 记录被 push 多次）
+        this._loadLock = null;
     }
 
     static SESSION_AFFINITY_TTL = 30 * 60 * 1000;
@@ -77,45 +80,45 @@ class TenantTokenManager {
     }
 
     async loadAllTokens() {
-        this.credentials = [];
-        this.currentIndex = 0;
+        // 串行化：并发请求复用同一个加载过程，避免 this.credentials 数组重复 push
+        // （多个请求同时执行 loadAllTokens 会让同一条 DB 记录被 push 多次，导致前端看到重复凭证）
+        if (this._loadLock) {
+            return this._loadLock;
+        }
+        this._loadLock = this._doLoadAllTokens();
+        try {
+            await this._loadLock;
+        } finally {
+            this._loadLock = null;
+        }
+    }
 
+    async _doLoadAllTokens() {
         logger.debug(`Loading Qoder credentials from DB for tenant_id: ${this.tenantId}`);
 
         try {
-            // 去重：DB 中历史遗留的重复凭证（同一 tenant_id + bearer_token）合并保留最早一条
-            const dupRecords = await models.TenantQoderCredential.findAll({
-                where: {tenant_id: this.tenantId},
-                attributes: ['bearer_token', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
-                group: ['bearer_token'],
-                having: sequelize.literal('count > 1'),
-                raw: true
-            });
-            for (const dup of dupRecords) {
-                const records = await models.TenantQoderCredential.findAll({
-                    where: {tenant_id: this.tenantId, bearer_token: dup.bearer_token},
-                    order: [['id', 'ASC']]
-                });
-                const keepId = records[0].id;
-                const removeIds = records.slice(1).map(r => r.id);
-                if (removeIds.length) {
-                    await models.TenantQoderCredential.destroy({where: {id: removeIds}});
-                    logger.warn(`Qoder 去重: 移除 tenant_id=${this.tenantId} 的 ${removeIds.length} 条重复凭证 (bearer_token 前缀=${String(dup.bearer_token).slice(0, 6)}...)`);
-                }
-            }
-
+            // 注意：不要在读取时静默去重 DB 记录。
+            // 否则前端列表（基于 listCredentials 返回）与后端 loadAllTokens 状态可能不一致，
+            // 导致用户点击"下面一个"删除时 index 越界（deleteCredential 返回 false → "删除失败"）。
+            // 去重责任交给 addCredentialWithData（写入时按 user_id+base_url 或 bearer_token 去重）。
             const records = await models.TenantQoderCredential.findAll({
                 where: {tenant_id: this.tenantId},
                 order: [['sort_order', 'ASC'], ['id', 'ASC']]
             });
 
+            // 用局部变量构建新数组，最后一次性原子赋值
+            // 避免 this.credentials = [] 重置后、findAll 完成前被其他请求读到空数组
+            const newCredentials = [];
             for (const record of records) {
-                this.credentials.push({
+                newCredentials.push({
                     id: record.id,
                     data: this._mapRecordToData(record),
                     disabled: !record.enabled
                 });
             }
+
+            this.credentials = newCredentials;
+            this.currentIndex = 0;
 
             logger.debug(`Loaded ${this.credentials.length} Qoder credentials`);
         } catch (error) {
@@ -251,27 +254,40 @@ class TenantTokenManager {
             credentialData.created_at = Math.floor(Date.now() / 1000);
         }
 
-        try {
-            // 去重：相同 (tenant_id, bearer_token) 的凭证不重复插入
-            const existing = await models.TenantQoderCredential.findOne({
-                where: {
-                    tenant_id: this.tenantId,
-                    bearer_token: credentialData.bearer_token
-                }
-            });
-            if (existing) {
-                logger.info(`addCredentialWithData: 凭证已存在 (id=${existing.id})，跳过插入`);
-                // 同步到内存（如果还没加载）
-                if (!this.credentials.some(c => c.id === existing.id)) {
-                    this.credentials.push({
-                        id: existing.id,
-                        data: this._mapRecordToData(existing),
-                        disabled: !existing.enabled
-                    });
-                }
+        // 同一用户 + 同一 base_url 才视为重复凭证，更新而非新增
+        // 与 codebuddy 保持一致：OAuth2 每次登录 bearer_token 不同，但 user_id 相同
+        // 不同站点（不同 base_url）即使 user_id 相同也是独立凭证
+        // user_id 为 null 时（手动添加 PAT）退化为按 bearer_token 去重
+        const userId = credentialData.user_id;
+        const baseUrl = credentialData.base_url || '';
+        const existing = userId
+            ? this.credentials.find(
+                (c) => c.data.user_id === userId && (c.data.base_url || '') === baseUrl
+            )
+            : this.credentials.find(
+                (c) => c.data.bearer_token === credentialData.bearer_token
+            );
+        if (existing) {
+            try {
+                const recordFields = this._mapDataToRecord(credentialData);
+                delete recordFields.tenant_id;
+                delete recordFields.enabled;
+                delete recordFields.is_active;
+                delete recordFields.sort_order;
+                await models.TenantQoderCredential.update(recordFields, {where: {id: existing.id}});
+                existing.data = this._mapRecordToData({
+                    ...existing.data,
+                    ...recordFields
+                });
+                logger.debug(`Updated existing Qoder credential (id=${existing.id}, user=${userId || 'anonymous'})`);
                 return true;
+            } catch (error) {
+                logger.error(`Failed to update Qoder credential: ${error.message}`);
+                return false;
             }
+        }
 
+        try {
             const recordFields = this._mapDataToRecord(credentialData);
             recordFields.sort_order = this.credentials.length;
             const record = await models.TenantQoderCredential.create(recordFields);
