@@ -241,7 +241,7 @@ class UnifiedTenantManager {
      * 确保租户的增量追踪条目存在
      */
     _usageKey(tenantId, serviceType) {
-        if (!['relay', 'codebuddy'].includes(serviceType)) {
+        if (!['relay', 'codebuddy', 'qoder'].includes(serviceType)) {
             throw new Error(`Unsupported service type: ${serviceType}`);
         }
         return `${tenantId}:${serviceType}`;

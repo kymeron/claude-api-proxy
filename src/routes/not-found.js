@@ -12,6 +12,7 @@ export function wantsHtml(req) {
 }
 
 export function sendNotFoundPage(req, res) {
+    if (res.headersSent) return;
     res.writeHead(404, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store'

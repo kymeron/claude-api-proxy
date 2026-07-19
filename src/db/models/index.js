@@ -4,6 +4,7 @@ import {TenantUpstream} from './tenant-upstream.js';
 import {TenantDailyUsage} from './tenant-daily-usage.js';
 import {TenantState} from './tenant-state.js';
 import {TenantServiceProfile} from './tenant-service-profile.js';
+import {TenantQoderCredential} from './tenant-qoder-credential.js';
 import {Feedback} from './feedback.js';
 
 // Existing associations
@@ -23,9 +24,12 @@ TenantState.belongsTo(Tenant, {foreignKey: 'tenant_id', as: 'tenant'});
 Tenant.hasMany(TenantServiceProfile, {foreignKey: 'tenant_id', as: 'serviceProfiles', onDelete: 'CASCADE'});
 TenantServiceProfile.belongsTo(Tenant, {foreignKey: 'tenant_id', as: 'tenant'});
 
+Tenant.hasMany(TenantQoderCredential, {foreignKey: 'tenant_id', as: 'qoderCredentials', onDelete: 'CASCADE'});
+TenantQoderCredential.belongsTo(Tenant, {foreignKey: 'tenant_id', as: 'tenant'});
+
 export const models = {
     Tenant, TenantCredential, TenantUpstream, TenantDailyUsage, TenantState,
-    TenantServiceProfile,
+    TenantServiceProfile, TenantQoderCredential,
     Feedback
 };
 

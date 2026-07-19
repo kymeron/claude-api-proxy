@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 统一管理面板路由
  * @module routes/dashboard-frontend
  */
@@ -17,13 +17,16 @@ import {
 import {handleAdminUsers} from './dashboard-users.js';
 import {getCodebuddyAdminOptions, handleCodebuddyAdminRoute} from './dashboard-codebuddy.js';
 import {getCodebuddyCustomSiteLabels} from '../services/codebuddy/index.js';
+import {getQoderAdminOptions, handleQoderAdminRoute} from './dashboard-qoder.js';
+import {getCustomSiteLabels as getQoderCustomSiteLabels} from '../services/qoder/index.js';
 import {sendNotFoundPage, wantsHtml} from './not-found.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ADMIN_PAGE = readFileSync(join(__dirname, '..', 'templates', 'admin.html'), 'utf8');
-const SERVICES = new Set(['relay', 'codebuddy']);
+const SERVICES = new Set(['relay', 'codebuddy', 'qoder']);
 
 function sendJson(res, status, data) {
+    if (res.headersSent) return;
     res.writeHead(status, {'Content-Type': 'application/json'});
     res.end(JSON.stringify(data));
 }
@@ -226,7 +229,7 @@ export async function routeAdminFrontend(req, res) {
             res.end();
             return;
         }
-        res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'});
+        res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate'});
         res.end(ADMIN_PAGE);
         return;
     }
@@ -259,6 +262,10 @@ export async function routeAdminFrontend(req, res) {
 
     if (pathname === '/dashboard/codebuddy/options' && method === 'GET') {
         return sendJson(res, 200, {customSiteLabels: getCodebuddyCustomSiteLabels(), options: getCodebuddyAdminOptions()});
+    }
+
+    if (pathname === '/dashboard/qoder/options' && method === 'GET') {
+        return sendJson(res, 200, {customSiteLabels: getQoderCustomSiteLabels(), options: getQoderAdminOptions()});
     }
 
     if (pathname === '/dashboard/stats/overview' && method === 'GET') {
@@ -311,7 +318,7 @@ export async function routeAdminFrontend(req, res) {
             });
         }
 
-        const serviceMatch = subPath.match(/^\/services\/(relay|codebuddy)$/);
+        const serviceMatch = subPath.match(/^\/services\/(relay|codebuddy|qoder)$/);
         if (serviceMatch && method === 'PUT') {
             if (!isAdmin) return sendJson(res, 403, {error: '需要管理员权限'});
             if (!canManageDashboardTenant(session.role, unifiedTenantManager.getTenant(tenantId))) {
@@ -375,6 +382,9 @@ export async function routeAdminFrontend(req, res) {
 
         const codebuddyHandled = await handleCodebuddyAdminRoute(req, res, tenantId, subPath);
         if (codebuddyHandled) return;
+
+        const qoderHandled = await handleQoderAdminRoute(req, res, tenantId, subPath);
+        if (qoderHandled) return;
 
         const relayHandled = await relayOperation(req, res, tenantId, subPath);
         if (relayHandled) return;

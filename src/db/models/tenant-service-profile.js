@@ -15,7 +15,7 @@ export const TenantServiceProfile = sequelize.define('tenant_service_profiles', 
         type: DataTypes.STRING,
         allowNull: false,
         validate: {
-            isIn: [['relay', 'codebuddy']]
+            isIn: [['relay', 'codebuddy', 'qoder']]
         }
     },
     enabled: {

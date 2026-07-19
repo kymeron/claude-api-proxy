@@ -23,6 +23,7 @@ setInterval(() => {
 }, 10 * 60 * 1000).unref();
 
 function sendJson(res, status, data) {
+    if (res.headersSent) return;
     res.writeHead(status, {'Content-Type': 'application/json'});
     res.end(JSON.stringify(data));
 }

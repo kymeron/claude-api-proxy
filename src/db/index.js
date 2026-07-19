@@ -32,10 +32,12 @@ export async function initDb() {
     await sequelize.authenticate();
     await dropRetiredServiceTables();
     await ensureTenantCredentialColumns();
+    await ensureQoderCredentialColumns();
     await ensureTenantUpstreamColumns();
     await sequelize.sync();
     await dropRetiredServiceTables();
     await ensureTenantCredentialColumns();
+    await ensureQoderCredentialColumns();
     await ensureTenantUpstreamColumns();
 }
 
@@ -67,6 +69,33 @@ async function ensureTenantCredentialColumns() {
             allowNull: false,
             defaultValue: 0
         });
+    }
+}
+
+async function ensureQoderCredentialColumns() {
+    const queryInterface = sequelize.getQueryInterface();
+    const table = 'tenant_qoder_credentials';
+    let columns;
+    try {
+        columns = await queryInterface.describeTable(table);
+    } catch {
+        return;
+    }
+
+    const definitions = {
+        name: {type: DataTypes.STRING, allowNull: true},
+        bearer_token: {type: DataTypes.TEXT, allowNull: true},
+        backend: {type: DataTypes.STRING, allowNull: false, defaultValue: 'cn'},
+        enabled: {type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true},
+        is_active: {type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false},
+        sort_order: {type: DataTypes.INTEGER, allowNull: false, defaultValue: 0},
+        base_url: {type: DataTypes.STRING, allowNull: true},
+        user_id: {type: DataTypes.STRING, allowNull: true},
+        credential_created_at: {type: DataTypes.STRING, allowNull: true}
+    };
+
+    for (const [name, definition] of Object.entries(definitions)) {
+        if (!columns[name]) await queryInterface.addColumn(table, name, definition);
     }
 }
 
